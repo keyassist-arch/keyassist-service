@@ -1,0 +1,17 @@
+node_modules
+dist
+coverage
+.git
+.github
+.idea
+.vscode
+*.md
+.env
+.env.*
+!.env.example
+pnpm-debug.log*
+npm-debug.log*
+test
+*.spec.ts
+.prettierrc
+eslint.config.mjs

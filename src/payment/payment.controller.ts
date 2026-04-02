@@ -1,0 +1,123 @@
+import {
+  Body,
+  Controller,
+  Headers,
+  Logger,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
+import Stripe from 'stripe';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { PaymentService } from './payment.service';
+import { Public } from '../common/decorators/public.decorator';
+import { UsersService } from '../users/users.service';
+import { InitializePaymentDto } from './dto/initialize-payment.dto';
+import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
+
+@ApiTags('Payments')
+@Controller('payments')
+export class PaymentController {
+  private readonly logger = new Logger(PaymentController.name);
+
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly usersService: UsersService,
+  ) {}
+
+  @Post('initialize')
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
+  @ApiOperation({
+    summary: 'Start Paystack or Stripe Checkout for a pending order',
+  })
+  @UseGuards(JwtAuthGuard)
+  async initialize(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: InitializePaymentDto,
+  ) {
+    const u = await this.usersService.findById(user.sub);
+    return this.paymentService.initializePayment(dto, user.sub, u.email);
+  }
+
+  @Public()
+  @Post('webhooks/paystack')
+  @ApiOperation({
+    summary: 'Paystack webhook (server-to-server)',
+    description:
+      'Requires raw body + `x-paystack-signature`. Not for browser calls.',
+  })
+  async paystackWebhook(
+    @Req() req: RawBodyRequest<ExpressRequest & { rawBody?: Buffer }>,
+    @Headers('x-paystack-signature') signature: string,
+  ) {
+    const raw =
+      req.rawBody ?? Buffer.from(JSON.stringify((req.body as object) ?? {}));
+    const ok = this.paymentService.verifyPaystackSignature(raw, signature);
+    if (!ok) {
+      this.logger.warn('[payment] step=webhook_paystack reason=bad_signature');
+      return { received: false };
+    }
+    const body = req.body as {
+      event?: string;
+      data?: {
+        reference?: string;
+        metadata?: { orderId?: string };
+        channel?: string;
+        authorization?: {
+          brand?: string;
+          card_type?: string;
+          last4?: string;
+          bank?: string;
+          channel?: string;
+        };
+      };
+    };
+    this.logger.log(
+      `[payment] step=webhook_paystack event=${body.event ?? 'unknown'}`,
+    );
+    if (body.event === 'charge.success' && body.data) {
+      await this.paymentService.handlePaystackChargeSuccess(body.data);
+    }
+    return { received: true };
+  }
+
+  @Public()
+  @Post('webhooks/stripe')
+  @ApiOperation({
+    summary: 'Stripe webhook (server-to-server)',
+    description:
+      'Requires raw body + `stripe-signature`. Not for browser calls.',
+  })
+  async stripeWebhook(
+    @Req() req: RawBodyRequest<ExpressRequest & { rawBody?: Buffer }>,
+    @Headers('stripe-signature') signature: string,
+  ) {
+    const raw = req.rawBody;
+    if (!raw?.length) {
+      this.logger.warn('[payment] step=webhook_stripe reason=empty_body');
+      return { received: false };
+    }
+    let event: Stripe.Event;
+    try {
+      event = this.paymentService.parseStripeWebhookEvent(raw, signature);
+    } catch {
+      this.logger.warn(
+        '[payment] step=webhook_stripe reason=invalid_signature',
+      );
+      throw new UnauthorizedException('Invalid Stripe webhook signature');
+    }
+    this.logger.log(`[payment] step=webhook_stripe type=${event.type}`);
+    if (event.type === 'checkout.session.completed') {
+      await this.paymentService.handleStripeCheckoutSessionCompleted(
+        event.data.object,
+      );
+    }
+    return { received: true };
+  }
+}

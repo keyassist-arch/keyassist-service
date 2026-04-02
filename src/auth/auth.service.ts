@@ -1,0 +1,344 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
+import { CartService } from '../cart/cart.service';
+import { LocalCartItemDto } from '../cart/dto/local-cart-item.dto';
+import { UsersService } from '../users/users.service';
+import { UserRole } from '../common/enums/role.enum';
+import { JwtPayload } from './interfaces/jwt-payload.interface';
+import { NotificationsService } from '../notifications/notifications.service';
+import { authEmailTemplates } from './auth-email-templates';
+
+/** Claim set on password-reset JWTs (verified with `JWT_PASSWORD_RESET_SECRET`). */
+const PASSWORD_RESET_CLAIM = 'pwd_reset' as const;
+
+/** Claim set on email-verification JWTs. */
+const EMAIL_VERIFY_CLAIM = 'email_verify' as const;
+
+type PasswordResetJwtPayload = {
+  sub: string;
+  purpose: typeof PASSWORD_RESET_CLAIM;
+};
+
+type EmailVerifyJwtPayload = {
+  sub: string;
+  purpose: typeof EMAIL_VERIFY_CLAIM;
+};
+
+export const AUTH_ERROR_CODES = {
+  EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',
+} as const;
+
+@Injectable()
+export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly cartService: CartService,
+    private readonly jwt: JwtService,
+    private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  async register(
+    firstName: string,
+    lastName: string,
+    email: string,
+    password: string,
+    phone?: string,
+  ) {
+    const user = await this.usersService.create(
+      firstName,
+      lastName,
+      email,
+      password,
+      phone,
+    );
+    this.logger.log(`[auth] step=register_ok userId=${user.id}`);
+    try {
+      await this.sendVerificationEmail(user, 'initial');
+    } catch (err) {
+      this.logger.error(
+        `[auth] step=verification_email_failed userId=${user.id}`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
+    return {
+      requiresEmailVerification: true,
+      email: user.email,
+      message:
+        'Check your inbox to verify your email. You can sign in after you confirm your address.',
+    };
+  }
+
+  async login(email: string, password: string, localCart?: LocalCartItemDto[]) {
+    const user = await this.usersService.findByEmail(email);
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    if (!user.emailVerifiedAt) {
+      let verificationEmailSent = false;
+      try {
+        await this.sendVerificationEmail(user, 'resend');
+        verificationEmailSent = true;
+      } catch (err) {
+        this.logger.error(
+          `[auth] step=login_verification_email_failed userId=${user.id}`,
+          err instanceof Error ? err.stack : err,
+        );
+      }
+      throw new ForbiddenException({
+        message: verificationEmailSent
+          ? 'Please verify your email before signing in. We sent another confirmation link to your inbox.'
+          : 'Please verify your email before signing in.',
+        code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED,
+        email: user.email,
+        verificationEmailSent,
+      });
+    }
+    this.logger.log(`[auth] step=login_ok userId=${user.id}`);
+    const tokens = await this.issueTokens(user.id, user.email, user.role);
+    if (localCart?.length) {
+      const cart = await this.cartService.mergeLocalCart(user.id, localCart);
+      return { ...tokens, cart };
+    }
+    return tokens;
+  }
+
+  async verifyEmail(token: string, localCart?: LocalCartItemDto[]) {
+    let payload: EmailVerifyJwtPayload;
+    try {
+      payload = await this.jwt.verifyAsync(token, {
+        secret: this.emailVerificationSecret(),
+      });
+    } catch {
+      throw new BadRequestException('Invalid or expired verification link');
+    }
+    if (
+      !payload?.sub ||
+      typeof payload.sub !== 'string' ||
+      payload.purpose !== EMAIL_VERIFY_CLAIM
+    ) {
+      throw new BadRequestException('Invalid or expired verification link');
+    }
+    const user = await this.usersService.findById(payload.sub);
+    if (!user.emailVerifiedAt) {
+      await this.usersService.markEmailVerified(user.id);
+      this.logger.log(`[auth] step=email_verified userId=${user.id}`);
+    }
+    const tokens = await this.issueTokens(user.id, user.email, user.role);
+    if (localCart?.length) {
+      const cart = await this.cartService.mergeLocalCart(user.id, localCart);
+      return { ...tokens, cart };
+    }
+    return tokens;
+  }
+
+  /**
+   * Same privacy pattern as forgot-password: generic message.
+   */
+  async resendVerificationEmail(email: string): Promise<{ message: string }> {
+    const user = await this.usersService.findByEmailInsensitive(email);
+    if (user && !user.emailVerifiedAt) {
+      try {
+        await this.sendVerificationEmail(user, 'resend');
+      } catch (err) {
+        this.logger.error(
+          `[auth] step=resend_verification_email_failed userId=${user.id}`,
+          err instanceof Error ? err.stack : err,
+        );
+      }
+    }
+    return {
+      message:
+        'If an account exists and is not yet verified, we sent a confirmation link.',
+    };
+  }
+
+  async rotateRefresh(userId: string, email: string, role: UserRole) {
+    return this.issueTokens(userId, email, role);
+  }
+
+  /**
+   * Always returns the same message (do not reveal whether the email is registered).
+   * Sends Resend email when user exists and `RESEND_API_KEY` is set.
+   */
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    const user = await this.usersService.findByEmailInsensitive(email);
+    if (user) {
+      const ttl = this.config.get<string>('PASSWORD_RESET_TOKEN_EXPIRES', '1h');
+      const secret = this.passwordResetSecret();
+      const token = await this.jwt.signAsync(
+        {
+          sub: user.id,
+          purpose: PASSWORD_RESET_CLAIM,
+        } as PasswordResetJwtPayload,
+        {
+          secret,
+          expiresIn: ttl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+        },
+      );
+      const baseUrl = this.frontendBaseUrl();
+      const resetUrl = `${baseUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
+      const tpl = authEmailTemplates.passwordReset({
+        resetUrl,
+        ttlLabel: ttl,
+      });
+      try {
+        await this.notifications.sendEmail({
+          to: user.email,
+          subject: tpl.subject,
+          text: tpl.text,
+          html: tpl.html,
+        });
+      } catch (err) {
+        this.logger.error(
+          `[auth] step=forgot_password_email_failed userId=${user.id}`,
+          err instanceof Error ? err.stack : err,
+        );
+      }
+    }
+    return {
+      message:
+        'If an account exists for that email, we sent a link to reset your password.',
+    };
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    let payload: PasswordResetJwtPayload;
+    try {
+      payload = await this.jwt.verifyAsync(token, {
+        secret: this.passwordResetSecret(),
+      });
+    } catch {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+    if (
+      !payload?.sub ||
+      typeof payload.sub !== 'string' ||
+      payload.purpose !== PASSWORD_RESET_CLAIM
+    ) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+    const user = await this.usersService.findById(payload.sub);
+    await this.usersService.updatePassword(payload.sub, newPassword);
+    this.logger.log(`[auth] step=password_reset_ok userId=${payload.sub}`);
+    const pwdTpl = authEmailTemplates.passwordChanged();
+    try {
+      await this.notifications.sendEmail({
+        to: user.email,
+        subject: pwdTpl.subject,
+        text: pwdTpl.text,
+        html: pwdTpl.html,
+      });
+    } catch (err) {
+      this.logger.error(
+        `[auth] step=password_changed_email_failed userId=${payload.sub}`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
+  }
+
+  private async sendVerificationEmail(
+    user: {
+      id: string;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+    },
+    kind: 'initial' | 'resend',
+  ): Promise<void> {
+    const ttl = this.config.get<string>(
+      'EMAIL_VERIFICATION_TOKEN_EXPIRES',
+      '48h',
+    );
+    const secret = this.emailVerificationSecret();
+    const token = await this.jwt.signAsync(
+      {
+        sub: user.id,
+        purpose: EMAIL_VERIFY_CLAIM,
+      } as EmailVerifyJwtPayload,
+      {
+        secret,
+        expiresIn: ttl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+      },
+    );
+    const baseUrl = this.frontendBaseUrl();
+    const verifyUrl = `${baseUrl.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
+    const displayName =
+      [user.firstName, user.lastName].filter(Boolean).join(' ') || null;
+    const tpl =
+      kind === 'resend'
+        ? authEmailTemplates.resendVerification({
+            verifyUrl,
+            ttlLabel: ttl,
+            displayName,
+          })
+        : authEmailTemplates.verifyEmail({
+            verifyUrl,
+            ttlLabel: ttl,
+            displayName,
+          });
+    await this.notifications.sendEmail({
+      to: user.email,
+      subject: tpl.subject,
+      text: tpl.text,
+      html: tpl.html,
+    });
+  }
+
+  private passwordResetSecret(): string {
+    const dedicated = this.config.get<string>('JWT_PASSWORD_RESET_SECRET');
+    if (dedicated?.trim()) {
+      return dedicated.trim();
+    }
+    return this.config.getOrThrow<string>('JWT_REFRESH_SECRET');
+  }
+
+  private emailVerificationSecret(): string {
+    const dedicated = this.config.get<string>('JWT_EMAIL_VERIFICATION_SECRET');
+    if (dedicated?.trim()) {
+      return dedicated.trim();
+    }
+    const pwd = this.config.get<string>('JWT_PASSWORD_RESET_SECRET');
+    if (pwd?.trim()) {
+      return pwd.trim();
+    }
+    return this.config.getOrThrow<string>('JWT_REFRESH_SECRET');
+  }
+
+  private frontendBaseUrl(): string {
+    const url =
+      this.config.get<string>('FRONTEND_URL') ||
+      this.config.get<string>('PUBLIC_APP_URL');
+    if (url?.trim()) {
+      return url.trim();
+    }
+    return 'http://localhost:3000';
+  }
+
+  private async issueTokens(userId: string, email: string, role: UserRole) {
+    const payload: JwtPayload = { sub: userId, email, role };
+    const accessTtl = this.config.get<string>('JWT_ACCESS_EXPIRES', '15m');
+    const refreshTtl = this.config.get<string>('JWT_REFRESH_EXPIRES', '7d');
+    const accessToken = await this.jwt.signAsync(payload, {
+      secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+      expiresIn: accessTtl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+    });
+    const refreshToken = await this.jwt.signAsync(payload, {
+      secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+      expiresIn: refreshTtl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+    });
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+    await this.usersService.setRefreshTokenHash(userId, refreshTokenHash);
+    return { accessToken, refreshToken, expiresIn: accessTtl };
+  }
+}
