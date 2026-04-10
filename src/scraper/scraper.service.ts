@@ -9,6 +9,9 @@ import { AmazonAdapter } from './adapters/amazon.adapter';
 import { NikeAdapter } from './adapters/nike.adapter';
 import { AppleAdapter } from './adapters/apple.adapter';
 import { SheinAdapter } from './adapters/shein.adapter';
+import { GoatAdapter } from './adapters/goat.adapter';
+import { ZaraAdapter } from './adapters/zara.adapter';
+import { ConverseAdapter } from './adapters/converse.adapter';
 import { GenericAdapter } from './adapters/generic.adapter';
 
 @Injectable()
@@ -22,6 +25,9 @@ export class ScraperService {
     private readonly nike: NikeAdapter,
     private readonly apple: AppleAdapter,
     private readonly shein: SheinAdapter,
+    private readonly goat: GoatAdapter,
+    private readonly zara: ZaraAdapter,
+    private readonly converse: ConverseAdapter,
     private readonly generic: GenericAdapter,
   ) {
     const entries: [ProductSource, ScraperAdapter][] = [
@@ -30,6 +36,9 @@ export class ScraperService {
       [ProductSource.NIKE, nike],
       [ProductSource.APPLE, apple],
       [ProductSource.SHEIN, shein],
+      [ProductSource.GOAT, goat],
+      [ProductSource.ZARA, zara],
+      [ProductSource.CONVERSE, converse],
       [ProductSource.GENERIC, generic],
     ];
     this.adapters = new Map(entries);

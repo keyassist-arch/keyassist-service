@@ -20,8 +20,9 @@ export interface ScrapedProduct {
    */
   configurationSummaries?: string[];
   /**
-   * Structured per-configuration **supplier** prices (decimal strings), e.g. each Apple metrics SKU.
-   * Persisted as `Product.configurationPrices`; API adds `salePrice` per row from `markupPercent`.
+   * Structured per-option **supplier** prices (decimal strings).
+   * When `variantAxis` + `optionValue` are set, align rows with `variants` for store-style selectors (GOAT sizes, Zara colors, etc.).
+   * API adds `salePrice` per row from `markupPercent`.
    */
   configurationPrices?: ProductConfigurationPrice[];
 }

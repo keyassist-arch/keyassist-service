@@ -548,9 +548,83 @@ Returns `status` (`QUEUED` | `PROCESSING` | `COMPLETED` | `FAILED`), the same **
 
 `GET /products/:idOrSlug` — pass either the product **`id`** (UUID) or the human-readable **`slug`** (same value as in JSON responses). Use **`slug`** in storefront URLs for readable paths (e.g. `/products/iphone-air-256gb-light-gold`); cart and orders still use **`productId`** = UUID.
 
-Typical product fields include: `id`, `slug`, `sourceUrl`, `scrapeUrl` (same value as `sourceUrl`, the normalized URL used for scrapes and future periodic rescrapes), `rescrapeEnabled` (default `true`; set `false` to exclude from cron rescrape jobs), `source`, `title`, `description`, `brand`, `originalPrice`, `salePrice`, `currency`, `markupPercent`, `images`, `variants`, `availability`, `stockQuantity` (`null` = unlimited), `lastScrapedAt`, `lastVerifiedAt`, timestamps. **`description`** is assembled from scraper output: e.g. **Apple** may include JSON-LD excerpt, an optional configuration **price range**, and **Configurations:** lines from the matrix; **Amazon** may append a **retailer list price** sentence when the PDP shows a markdown (there is no separate `compareAtPrice` field on the product JSON). **`configurationPrices`** (`label`, `originalPrice`, `salePrice`, optional `partNumber` / `sku`) lists per-configuration prices when the scraper provides them (**Apple** metrics SKUs). **`availability`** is sometimes set to human-readable strings (e.g. Amazon **In stock** / **Out of stock**).
+Typical product fields include: `id`, `slug`, `sourceUrl`, `scrapeUrl` (same value as `sourceUrl`, the normalized URL used for scrapes and future periodic rescrapes), `rescrapeEnabled` (default `true`; set `false` to exclude from cron rescrape jobs), `source`, `title`, `description`, `brand`, `originalPrice`, `salePrice`, `currency`, `markupPercent`, `images`, `variants`, `availability`, `stockQuantity` (`null` = unlimited), `lastScrapedAt`, `lastVerifiedAt`, timestamps. **`description`** is assembled from scraper output: e.g. **Apple** may include JSON-LD excerpt, an optional configuration **price range**, and **Configurations:** lines from the matrix; **Amazon** may append a **retailer list price** sentence when the PDP shows a markdown (there is no separate `compareAtPrice` field on the product JSON). **`configurationPrices`** lists per-option supplier prices as `originalPrice` plus your storefront **`salePrice`** (from `markupPercent`). Rows may include **`variantAxis`** (e.g. `Size`, `Color`) and **`optionValue`** so you can match **`variants[].options`** and render retailer-style selectors; optional **`displayLabel`**, **`currency`**, **`available`**, **`metadata`** (store-specific). **Apple** uses metrics SKUs (`partNumber` / `sku`); **GOAT** / **Zara** / **Converse** adapters populate axis + option when the scrape exposes them. **`availability`** is sometimes set to human-readable strings (e.g. Amazon **In stock** / **Out of stock**).
 
-**Frontend layout:** see **`PRODUCT_PAGE_UI_GUIDE.md`** for how to display pricing, variants, images, and description on product pages and cards.
+**Frontend layout:** see **`PRODUCT_PAGE_UI_GUIDE.md`**. For a **single PDP implementation** across retailers, follow **[Store-agnostic product details](#store-agnostic-product-details-frontend)** below.
+
+### Store-agnostic product details (frontend)
+
+Use one product detail screen (and cart line logic) that **never assumes** every store fills the same optional fields. Treat **`GET /products/:idOrSlug`** (and the embedded **`product`** on import completion) as a **union**: core fields are always meaningful; everything else is **best-effort** per `source` / scraper.
+
+#### 1. Core vs optional fields
+
+| Always use | Meaning |
+|------------|---------|
+| `id`, `slug` | Identity; cart and orders use **`productId`** = UUID. |
+| `title`, `images[]` | Headline and gallery (may be empty in edge failures — guard UI). |
+| `originalPrice`, `salePrice`, `currency` | Storefront line price **before** picking a priced configuration. |
+| `source` | Retailer enum (e.g. `amazon`, `apple`, `goat`, `generic`, …). Use for **badges**, analytics, or thin styling — not as the only key for business logic. |
+
+| Use when present | Meaning |
+|------------------|---------|
+| `variants[]` | `Array<{ name: string; options: string[] }>`. Each **`name`** is an axis label (**`Size`**, **`Color`**, …). **`options`** are the selectable values for that axis. |
+| `configurationPrices[]` | Per-option (or per-SKU) **supplier** `originalPrice` plus API-computed **`salePrice`**. Structured rows link options to prices when **`variantAxis`** + **`optionValue`** are set. |
+| `description` | Long, unstructured copy (matrix text, legal, retailer notes). Show in body / accordion; do not parse as JSON. |
+| `brand`, `availability`, `stockQuantity` | Optional merchandising / stock (`stockQuantity` **`null`** = unlimited / not enforced). |
+| `metadata` (on `configurationPrices` rows) | Opaque object for **store-specific** UI (e.g. GOAT `sizeValue`). Safe to ignore if you do not need it. |
+
+#### 2. Rendering variant selectors
+
+1. If **`variants.length === 0`**, show no selectors; use product-level **`salePrice`** only.
+2. For each **`variants[i]`**, render one control (dropdown, swatch row, etc.):
+   - **Label** = **`variants[i].name`** (this string is the **key** in **`variantSelection`** for cart APIs).
+   - **Values** = **`variants[i].options`**.
+3. **Cart / sync:** `POST /cart/items` and **`localCart`** use **`variantSelection`** shaped like `{ [axisName]: chosenOption }`, e.g. `{ "Size": "10", "Color": "Black" }`. Keys **must match** `variants[].name` exactly for that product.
+
+#### 3. Resolving price for the current selection (`configurationPrices`)
+
+Many retailers expose **different prices per size or color**; others only expose a single PDP price.
+
+**Recommended algorithm:**
+
+1. Build the current map **`selection`**: `{ [variants[j].name]: chosenOption }` from user input (omit axes not yet chosen if you use a stepped UI).
+2. If **`configurationPrices`** is empty → use product **`salePrice`** (and **`originalPrice`** if you show strike/compare).
+3. Otherwise, find rows where **`variantAxis`** and **`optionValue`** are set:
+   - **Single-axis products (e.g. GOAT sizes):** pick the row with **`variantAxis`** matching the size axis and **`optionValue`** equal to the selected size string.
+   - **Multi-axis products:** if the API only provides one row per combination, match on **all** axes you have rows for; if rows only tag one axis (e.g. Zara **Color** with flat price), match that axis and use the row’s prices for the whole line.
+4. If no row matches but **`configurationPrices.length > 0`** → fall back to product-level **`salePrice`** (or the cheapest **`salePrice`** among rows if you prefer a “from” display — product policy choice).
+5. For display copy, prefer **`displayLabel`** when present; otherwise format from **`optionValue`** + **`salePrice`** / **`originalPrice`**.
+6. If **`available === false`** on the matched row, disable the add-to-cart control or show OOS for that combination.
+
+**`configurationPrices` row shape (API):**
+
+```json
+{
+  "label": "Size 10",
+  "originalPrice": "425.00",
+  "salePrice": "467.50",
+  "variantAxis": "Size",
+  "optionValue": "10",
+  "currency": "USD",
+  "available": true,
+  "displayLabel": "10 — from USD 425.00",
+  "partNumber": "optional-apple-sku",
+  "sku": "optional",
+  "metadata": { "source": "goat", "sizeValue": 10 }
+}
+```
+
+Not every row includes every field; **`partNumber` / `sku`** are typical for **Apple**-style matrices.
+
+#### 4. Store differences without forking the whole page
+
+- **Prefer** `variants` + `configurationPrices` + **`variantAxis` / `optionValue`** for behavior; use **`source`** only for cosmetic or analytics branches.
+- Put retailer-specific extras in **`metadata`** on configuration rows (or future extensions) instead of hard-coding URLs to `source` in dozens of places.
+- **`description`** will **differ wildly** in length and format — always treat as **rich text / pre-wrap** content, not a fixed template.
+
+#### 5. Product cards (list view)
+
+**`GET /products`** returns the same object shape. For cards, use **`title`**, first **`images[0]`**, **`salePrice`**, **`currency`**, optional **`availability`**. Avoid relying on **`variants`** on list unless you show a “from” badge; detail view is the place for full option/price resolution.
 
 ### List recent products (public)
 

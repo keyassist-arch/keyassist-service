@@ -15,6 +15,7 @@ import { AddProductSourceShein1743280000000 } from './migrations/1743280000000-A
 import { AddProductConfigurationPrices1743320000000 } from './migrations/1743320000000-AddProductConfigurationPrices';
 import { AddProductSlug1743340000000 } from './migrations/1743340000000-AddProductSlug';
 import { AddUserEmailVerifiedAt1743400000000 } from './migrations/1743400000000-AddUserEmailVerifiedAt';
+import { AddProductSourceGoatZaraConverse1743410000000 } from './migrations/1743410000000-AddProductSourceGoatZaraConverse';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -40,6 +41,7 @@ export default new DataSource({
     AddProductConfigurationPrices1743320000000,
     AddProductSlug1743340000000,
     AddUserEmailVerifiedAt1743400000000,
+    AddProductSourceGoatZaraConverse1743410000000,
   ],
   synchronize: false,
 });

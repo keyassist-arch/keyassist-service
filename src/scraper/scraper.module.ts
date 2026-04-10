@@ -6,6 +6,9 @@ import { AmazonAdapter } from './adapters/amazon.adapter';
 import { NikeAdapter } from './adapters/nike.adapter';
 import { AppleAdapter } from './adapters/apple.adapter';
 import { SheinAdapter } from './adapters/shein.adapter';
+import { GoatAdapter } from './adapters/goat.adapter';
+import { ZaraAdapter } from './adapters/zara.adapter';
+import { ConverseAdapter } from './adapters/converse.adapter';
 import { ScraperService } from './scraper.service';
 
 @Global()
@@ -18,6 +21,9 @@ import { ScraperService } from './scraper.service';
     NikeAdapter,
     AppleAdapter,
     SheinAdapter,
+    GoatAdapter,
+    ZaraAdapter,
+    ConverseAdapter,
     ScraperService,
   ],
   exports: [ScraperService, PlaywrightService],

@@ -12,12 +12,27 @@ import { ImportedProduct } from './imported-product.entity';
 
 export type ProductVariant = { name: string; options: string[] };
 
-/** Per-configuration supplier prices (e.g. Apple storage × color SKUs from `script#metrics`). */
+/**
+ * Per-option supplier prices (Apple SKUs, GOAT per-size asks, Zara color rows, etc.).
+ * Use `variantAxis` + `optionValue` to build selectors like the retailer PDP; `displayLabel` is optional shop copy.
+ */
 export type ProductConfigurationPrice = {
   label: string;
   originalPrice: string;
   partNumber?: string;
   sku?: string;
+  /** Variant dimension this row belongs to (e.g. `Size`, `Color`, `Width`). */
+  variantAxis?: string;
+  /** Stable value for that axis — matches an entry in `Product.variants[].options` when both are set. */
+  optionValue?: string;
+  /** Per-row currency when it differs from product `currency` (usually omitted). */
+  currency?: string;
+  /** `false` = show disabled / OOS in UI. */
+  available?: boolean;
+  /** Human-readable line (e.g. `9.5 — from USD 425.00`); omit to build from option + prices in the client. */
+  displayLabel?: string;
+  /** Store-specific fields (condition, retailer ids, etc.). */
+  metadata?: Record<string, unknown>;
 };
 
 @Entity('products')

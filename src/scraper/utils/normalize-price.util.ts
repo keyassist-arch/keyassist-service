@@ -17,6 +17,22 @@ export function parseFirstUsdInString(text: string): string | null {
   return null;
 }
 
+/**
+ * Normalize money tokens for `parseFloat`, including EU decimals (`49,95`, `1.234,56`).
+ */
+function normalizeMoneyToken(raw: string): string {
+  let s = raw.trim().replace(/\s*(EUR|USD|GBP|ZAR|CHF|NOK|SEK|DKK|\$|€|£)\s*/gi, ' ');
+  s = s.trim();
+  if (/^\d+,\d{2}$/.test(s)) {
+    return s.replace(',', '.');
+  }
+  const euThousands = s.match(/^(\d{1,3}(?:\.\d{3})*),(\d{2})$/);
+  if (euThousands) {
+    return `${euThousands[1].replace(/\./g, '')}.${euThousands[2]}`;
+  }
+  return s;
+}
+
 export function parsePriceToDecimalString(
   price: number | string,
 ): string | null {
@@ -28,7 +44,8 @@ export function parsePriceToDecimalString(
     if (usd) {
       return usd;
     }
-    const cleaned = price.replace(/[^\d.,-]/g, '').replace(/,/g, '');
+    const normalized = normalizeMoneyToken(price);
+    const cleaned = normalized.replace(/[^\d.,-]/g, '').replace(/,/g, '');
     const n = parseFloat(cleaned);
     if (!Number.isNaN(n)) {
       return n.toFixed(2);

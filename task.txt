@@ -1,0 +1,1 @@
+so what I want to use an external llm from open router possibly is to properly extract pricing and variant related pricing for different products, so far I've not been able to be accurate with it
