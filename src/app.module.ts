@@ -7,6 +7,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { validateEnv } from './config/env.validation';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RedisModule } from './redis/redis.module';
+import { LlmModule } from './llm/llm.module';
 import { ScraperModule } from './scraper/scraper.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuthModule } from './auth/auth.module';
@@ -55,6 +56,7 @@ import { HealthController } from './health.controller';
     }),
     RedisModule,
     NotificationsModule,
+    LlmModule,
     ScraperModule,
     QueuesModule,
     AuthModule,

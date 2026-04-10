@@ -10,6 +10,7 @@ import { GoatAdapter } from './adapters/goat.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { ScraperService } from './scraper.service';
+import { OpenRouterScrapeRefinementService } from './services/openrouter-scrape-refinement.service';
 
 @Global()
 @Module({
@@ -25,6 +26,7 @@ import { ScraperService } from './scraper.service';
     ZaraAdapter,
     ConverseAdapter,
     ScraperService,
+    OpenRouterScrapeRefinementService,
   ],
   exports: [ScraperService, PlaywrightService],
 })

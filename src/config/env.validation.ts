@@ -142,6 +142,44 @@ class EnvironmentVariables {
   @IsOptional()
   SCRAPE_TIMEZONE_ID?: string;
 
+  /** `true` / `1` — after adapter scrape, normalize pricing/variants via OpenRouter (requires OPEN_ROUTER_ENABLED + key) */
+  @IsString()
+  @IsOptional()
+  SCRAPE_OPENROUTER_REFINE?: string;
+
+  /** Must be `true` to enable the OpenRouter LLM gateway (Stepfun flash by default). */
+  @IsString()
+  @IsOptional()
+  OPEN_ROUTER_ENABLED?: string;
+
+  /** OpenRouter API key (alias: OPENROUTER_API_KEY). */
+  @IsString()
+  @IsOptional()
+  OPEN_ROUTER_API_KEY?: string;
+
+  @IsString()
+  @IsOptional()
+  OPENROUTER_API_KEY?: string;
+
+  /** e.g. stepfun/step-3.5-flash:free (alias: OPENROUTER_MODEL) */
+  @IsString()
+  @IsOptional()
+  OPEN_ROUTER_MODEL?: string;
+
+  @IsString()
+  @IsOptional()
+  OPENROUTER_MODEL?: string;
+
+  /** Optional; OpenRouter may require an HTTP Referer for some keys */
+  @IsString()
+  @IsOptional()
+  OPENROUTER_HTTP_REFERER?: string;
+
+  /** Default system prompt for `LlmGatewayService` (optional). */
+  @IsString()
+  @IsOptional()
+  LLM_SYSTEM_PROMPT?: string;
+
   @Transform(({ value }) =>
     value === undefined || value === '' ? 10 : Number(value),
   )

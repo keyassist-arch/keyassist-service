@@ -13,6 +13,7 @@ import { GoatAdapter } from './adapters/goat.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { GenericAdapter } from './adapters/generic.adapter';
+import { OpenRouterScrapeRefinementService } from './services/openrouter-scrape-refinement.service';
 
 @Injectable()
 export class ScraperService {
@@ -20,6 +21,7 @@ export class ScraperService {
   private readonly adapters: Map<ProductSource, ScraperAdapter>;
 
   constructor(
+    private readonly openRouterRefine: OpenRouterScrapeRefinementService,
     private readonly jumia: JumiaAdapter,
     private readonly amazon: AmazonAdapter,
     private readonly nike: NikeAdapter,
@@ -53,7 +55,10 @@ export class ScraperService {
     const adapter = this.adapters.get(s) ?? this.generic;
     this.logger.log(`[scrape] step=adapter source=${s} url=${previewUrl(url)}`);
     try {
-      const result = await adapter.scrape(url);
+      let result = await adapter.scrape(url);
+      if (this.openRouterRefine.isEnabled()) {
+        result = await this.openRouterRefine.refine(url, result);
+      }
       this.logger.log(
         `[scrape] step=ok source=${s} title=${previewText(result.title, 60)}`,
       );
