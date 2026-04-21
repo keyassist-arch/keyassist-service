@@ -5,6 +5,7 @@ import type { BrowserContextOptions } from 'playwright';
  */
 export function parseScrapeProxy(
   raw: string | undefined,
+  geoCode?: string,
 ): BrowserContextOptions['proxy'] {
   const s = raw?.trim();
   if (!s) {
@@ -15,7 +16,14 @@ export function parseScrapeProxy(
     const port = u.port || (u.protocol === 'https:' ? '443' : '80');
     const server = `${u.protocol}//${u.hostname}:${port}`;
     const username = u.username ? decodeURIComponent(u.username) : undefined;
-    const password = u.password ? decodeURIComponent(u.password) : undefined;
+    let password = u.password ? decodeURIComponent(u.password) : undefined;
+    const normalizedGeo = geoCode?.trim().toLowerCase();
+    const isScrapeDo = /(^|\.)scrape\.do$/i.test(u.hostname);
+    if (isScrapeDo && normalizedGeo) {
+      const params = new URLSearchParams(password ?? '');
+      params.set('geoCode', normalizedGeo);
+      password = params.toString();
+    }
     return {
       server,
       ...(username ? { username } : {}),

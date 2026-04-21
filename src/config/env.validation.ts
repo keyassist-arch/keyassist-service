@@ -71,6 +71,81 @@ class EnvironmentVariables {
 
   @IsString()
   @IsOptional()
+  PAYPAL_CLIENT_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  PAYPAL_SECRET_KEY?: string;
+
+  /** `sandbox` (default) or `live` */
+  @IsString()
+  @IsOptional()
+  PAYPAL_MODE?: string;
+
+  @IsString()
+  @IsOptional()
+  PAYPAL_RETURN_URL?: string;
+
+  @IsString()
+  @IsOptional()
+  PAYPAL_CANCEL_URL?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_API_KEY?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_BASE_URL?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_CHAIN?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_TOKEN?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_EXPIRES_MINUTES?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_RETURN_URL?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_CANCEL_URL?: string;
+
+  @IsString()
+  @IsOptional()
+  MYAZA_WEBHOOK_SECRET?: string;
+
+  /** Optional absolute webhook URL override sent to Myaza when creating sessions */
+  @IsString()
+  @IsOptional()
+  MYAZA_WEBHOOK_URL?: string;
+
+  /** Optional temporary kill-switches for checkout method availability (set to `true` / `1` to hide+disable). */
+  @IsString()
+  @IsOptional()
+  PAYMENT_DISABLE_PAYSTACK?: string;
+
+  @IsString()
+  @IsOptional()
+  PAYMENT_DISABLE_STRIPE?: string;
+
+  @IsString()
+  @IsOptional()
+  PAYMENT_DISABLE_PAYPAL?: string;
+
+  @IsString()
+  @IsOptional()
+  PAYMENT_DISABLE_MYAZA?: string;
+
+  @IsString()
+  @IsOptional()
   RESEND_API_KEY?: string;
 
   /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain in production */
@@ -126,6 +201,11 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   SCRAPE_PROXY?: string;
+
+  /** Optional geotarget for Scrape.do proxy auth params (e.g. `us`, `gb`, `de`). */
+  @IsString()
+  @IsOptional()
+  SCRAPE_PROXY_GEO_CODE?: string;
 
   /** Playwright BCP 47 locale (avoids wrong storefront HTML e.g. ko-KR vs en-US) */
   @IsString()

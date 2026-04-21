@@ -9,6 +9,66 @@ import {
 import { parseScrapeProxy } from './utils/parse-scrape-proxy.util';
 import { pickScrapeUserAgent } from './utils/user-agent-rotation.util';
 
+type GeoProfile = {
+  geoCode?: string;
+  locale: string;
+  timezoneId: string;
+  acceptLanguage: string;
+};
+
+const GEO_PROFILES: Record<string, Omit<GeoProfile, 'geoCode'>> = {
+  us: {
+    locale: 'en-US',
+    timezoneId: 'America/Los_Angeles',
+    acceptLanguage: 'en-US,en;q=0.9',
+  },
+  gb: {
+    locale: 'en-GB',
+    timezoneId: 'Europe/London',
+    acceptLanguage: 'en-GB,en;q=0.9',
+  },
+  de: {
+    locale: 'de-DE',
+    timezoneId: 'Europe/Berlin',
+    acceptLanguage: 'de-DE,de;q=0.9,en;q=0.7',
+  },
+  fr: {
+    locale: 'fr-FR',
+    timezoneId: 'Europe/Paris',
+    acceptLanguage: 'fr-FR,fr;q=0.9,en;q=0.7',
+  },
+  it: {
+    locale: 'it-IT',
+    timezoneId: 'Europe/Rome',
+    acceptLanguage: 'it-IT,it;q=0.9,en;q=0.7',
+  },
+  es: {
+    locale: 'es-ES',
+    timezoneId: 'Europe/Madrid',
+    acceptLanguage: 'es-ES,es;q=0.9,en;q=0.7',
+  },
+  nl: {
+    locale: 'nl-NL',
+    timezoneId: 'Europe/Amsterdam',
+    acceptLanguage: 'nl-NL,nl;q=0.9,en;q=0.7',
+  },
+  pl: {
+    locale: 'pl-PL',
+    timezoneId: 'Europe/Warsaw',
+    acceptLanguage: 'pl-PL,pl;q=0.9,en;q=0.7',
+  },
+  ng: {
+    locale: 'en-NG',
+    timezoneId: 'Africa/Lagos',
+    acceptLanguage: 'en-NG,en;q=0.9',
+  },
+  ae: {
+    locale: 'en-AE',
+    timezoneId: 'Asia/Dubai',
+    acceptLanguage: 'en-AE,en;q=0.9,ar;q=0.6',
+  },
+};
+
 @Injectable()
 export class PlaywrightService implements OnModuleDestroy {
   private readonly logger = new Logger(PlaywrightService.name);
@@ -40,23 +100,60 @@ export class PlaywrightService implements OnModuleDestroy {
    * Browser context for retail scrapes: optional proxy (also at launch if set),
    * default rotating User-Agent, adapter can override via `overrides`.
    */
+  private countryFromUrl(targetUrl?: string): string | undefined {
+    if (!targetUrl) return undefined;
+    try {
+      const h = new URL(targetUrl).hostname.toLowerCase();
+      const suffixMap: Record<string, string> = {
+        'co.uk': 'gb',
+        'com.ng': 'ng',
+        'com.tr': 'tr',
+      };
+      for (const [suffix, country] of Object.entries(suffixMap)) {
+        if (h.endsWith(`.${suffix}`) || h === suffix) {
+          return country;
+        }
+      }
+      const parts = h.split('.');
+      const tld = parts[parts.length - 1];
+      if (tld && /^[a-z]{2}$/i.test(tld)) {
+        return tld.toLowerCase();
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private resolveGeoProfile(targetUrl?: string): GeoProfile {
+    const forcedGeo = this.config.get<string>('SCRAPE_PROXY_GEO_CODE')?.trim();
+    const inferredGeo = this.countryFromUrl(targetUrl);
+    const geoCode = (forcedGeo || inferredGeo || '').toLowerCase() || undefined;
+    const base = (geoCode && GEO_PROFILES[geoCode]) || GEO_PROFILES.us;
+    return {
+      geoCode,
+      locale: this.config.get<string>('SCRAPE_LOCALE') ?? base.locale,
+      timezoneId: this.config.get<string>('SCRAPE_TIMEZONE_ID') ?? base.timezoneId,
+      acceptLanguage:
+        this.config.get<string>('SCRAPE_ACCEPT_LANGUAGE') ?? base.acceptLanguage,
+    };
+  }
+
   async newScrapeContext(
     overrides: BrowserContextOptions = {},
+    targetUrl?: string,
   ): Promise<BrowserContext> {
     const browser = await this.getBrowser();
+    const profile = this.resolveGeoProfile(targetUrl);
     const proxyFromEnv = parseScrapeProxy(
       this.config.get<string>('SCRAPE_PROXY'),
+      profile.geoCode,
     );
     const proxy = overrides.proxy ?? proxyFromEnv;
     const userAgent = overrides.userAgent ?? pickScrapeUserAgent();
-    const locale =
-      overrides.locale ?? this.config.get<string>('SCRAPE_LOCALE') ?? 'en-US';
-    const timezoneId =
-      overrides.timezoneId ??
-      this.config.get<string>('SCRAPE_TIMEZONE_ID') ??
-      'America/Los_Angeles';
-    const acceptLang =
-      this.config.get<string>('SCRAPE_ACCEPT_LANGUAGE') ?? 'en-US,en;q=0.9';
+    const locale = overrides.locale ?? profile.locale;
+    const timezoneId = overrides.timezoneId ?? profile.timezoneId;
+    const acceptLang = profile.acceptLanguage;
     return browser.newContext({
       ...overrides,
       locale,

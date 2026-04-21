@@ -25,6 +25,82 @@ export class PaymentService {
     private readonly ordersService: OrdersService,
   ) {}
 
+  private isDisabled(flagName: string): boolean {
+    const raw = this.config.get<string>(flagName)?.trim().toLowerCase();
+    return raw === '1' || raw === 'true';
+  }
+
+  getAvailableMethods() {
+    const stripeConfigured = Boolean(
+      this.config.get<string>('STRIPE_SECRET_KEY')?.trim(),
+    );
+    const paystackConfigured = Boolean(
+      this.config.get<string>('PAYSTACK_SECRET_KEY')?.trim(),
+    );
+    const paypalConfigured = Boolean(
+      this.config.get<string>('PAYPAL_CLIENT_ID')?.trim() &&
+        this.config.get<string>('PAYPAL_SECRET_KEY')?.trim(),
+    );
+    const myazaConfigured = Boolean(
+      this.config.get<string>('MYAZA_API_KEY')?.trim(),
+    );
+
+    const methods = [
+      {
+        provider: PaymentProvider.PAYSTACK,
+        available:
+          paystackConfigured && !this.isDisabled('PAYMENT_DISABLE_PAYSTACK'),
+        reason: !paystackConfigured
+          ? 'not_configured'
+          : this.isDisabled('PAYMENT_DISABLE_PAYSTACK')
+            ? 'temporarily_disabled'
+            : null,
+      },
+      {
+        provider: PaymentProvider.STRIPE,
+        available: stripeConfigured && !this.isDisabled('PAYMENT_DISABLE_STRIPE'),
+        reason: !stripeConfigured
+          ? 'not_configured'
+          : this.isDisabled('PAYMENT_DISABLE_STRIPE')
+            ? 'temporarily_disabled'
+            : null,
+      },
+      {
+        provider: PaymentProvider.PAYPAL,
+        available: paypalConfigured && !this.isDisabled('PAYMENT_DISABLE_PAYPAL'),
+        reason: !paypalConfigured
+          ? 'not_configured'
+          : this.isDisabled('PAYMENT_DISABLE_PAYPAL')
+            ? 'temporarily_disabled'
+            : null,
+      },
+      {
+        provider: PaymentProvider.MYAZA,
+        available: myazaConfigured && !this.isDisabled('PAYMENT_DISABLE_MYAZA'),
+        reason: !myazaConfigured
+          ? 'not_configured'
+          : this.isDisabled('PAYMENT_DISABLE_MYAZA')
+            ? 'temporarily_disabled'
+            : null,
+      },
+    ];
+
+    return {
+      methods,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private assertMethodAvailable(provider: PaymentProvider): void {
+    const availability = this.getAvailableMethods();
+    const method = availability.methods.find((m) => m.provider === provider);
+    if (!method || !method.available) {
+      throw new BadRequestException(
+        `Payment method ${provider} is currently unavailable`,
+      );
+    }
+  }
+
   private getStripe(): Stripe {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
     if (!key) {
@@ -44,11 +120,80 @@ export class PaymentService {
     return key;
   }
 
+  private paypalBaseUrl(): string {
+    const mode = this.config.get<string>('PAYPAL_MODE')?.trim().toLowerCase();
+    return mode === 'live'
+      ? 'https://api-m.paypal.com'
+      : 'https://api-m.sandbox.paypal.com';
+  }
+
+  private paypalCredentials(): { clientId: string; secret: string } {
+    const clientId = this.config.get<string>('PAYPAL_CLIENT_ID')?.trim();
+    const secret = this.config.get<string>('PAYPAL_SECRET_KEY')?.trim();
+    if (!clientId || !secret) {
+      throw new BadRequestException('PayPal is not configured');
+    }
+    return { clientId, secret };
+  }
+
+  private async paypalAccessToken(): Promise<string> {
+    const { clientId, secret } = this.paypalCredentials();
+    const basic = Buffer.from(`${clientId}:${secret}`).toString('base64');
+    const { data } = await axios.post<{ access_token?: string }>(
+      `${this.paypalBaseUrl()}/v1/oauth2/token`,
+      'grant_type=client_credentials',
+      {
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      },
+    );
+    const token = data?.access_token;
+    if (!token) {
+      throw new BadRequestException('Could not authenticate with PayPal');
+    }
+    return token;
+  }
+
+  private myazaConfig(): {
+    baseUrl: string;
+    apiKey: string;
+    chain: string;
+    token: string;
+    expiresInMinutes: number;
+    webhookUrl?: string;
+  } {
+    const baseUrl =
+      this.config.get<string>('MYAZA_BASE_URL')?.trim() ||
+      'https://api.myaza.io';
+    const apiKey = this.config.get<string>('MYAZA_API_KEY')?.trim();
+    const chain = this.config.get<string>('MYAZA_CHAIN')?.trim() || 'polygon';
+    const token = this.config.get<string>('MYAZA_TOKEN')?.trim() || 'USDC';
+    const expiresRaw = this.config.get<string>('MYAZA_EXPIRES_MINUTES')?.trim();
+    const expiresInMinutes = Number.isFinite(Number(expiresRaw))
+      ? Number(expiresRaw)
+      : 15;
+    const webhookUrl = this.config.get<string>('MYAZA_WEBHOOK_URL')?.trim();
+    if (!apiKey) {
+      throw new BadRequestException('Myaza is not configured');
+    }
+    return {
+      baseUrl: baseUrl.replace(/\/+$/, ''),
+      apiKey,
+      chain,
+      token,
+      expiresInMinutes,
+      webhookUrl: webhookUrl || undefined,
+    };
+  }
+
   async initializePayment(
     dto: InitializePaymentDto,
     userId: string,
     email: string,
   ) {
+    this.assertMethodAvailable(dto.provider);
     this.logger.log(
       `[payment] step=initialize_begin orderId=${dto.orderId} provider=${dto.provider} userId=${userId}`,
     );
@@ -58,7 +203,179 @@ export class PaymentService {
     if (dto.provider === PaymentProvider.STRIPE) {
       return this.initStripe(dto.orderId, userId, email, dto);
     }
+    if (dto.provider === PaymentProvider.PAYPAL) {
+      return this.initPaypal(dto.orderId, userId, email, dto);
+    }
+    if (dto.provider === PaymentProvider.MYAZA) {
+      return this.initMyaza(dto.orderId, userId, email, dto);
+    }
     throw new BadRequestException('Unsupported payment provider');
+  }
+
+  private async initMyaza(
+    orderId: string,
+    userId: string,
+    email: string,
+    dto: InitializePaymentDto,
+  ) {
+    const order = await this.ordersService.findById(orderId);
+    if (order.userId !== userId) {
+      throw new BadRequestException('Order not found');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Order is not payable in current state');
+    }
+    const { baseUrl, apiKey, chain, token, expiresInMinutes, webhookUrl } =
+      this.myazaConfig();
+    const returnUrl =
+      dto.myazaReturnUrl ?? this.config.get<string>('MYAZA_RETURN_URL');
+    const cancelUrl =
+      dto.myazaCancelUrl ?? this.config.get<string>('MYAZA_CANCEL_URL');
+    if (!returnUrl || !cancelUrl) {
+      throw new BadRequestException(
+        'Set MYAZA_RETURN_URL and MYAZA_CANCEL_URL (or pass myazaReturnUrl / myazaCancelUrl)',
+      );
+    }
+    const body: Record<string, unknown> = {
+      amount: order.total,
+      currency: order.currency,
+      chain,
+      token,
+      expiresInMinutes,
+      metadata: { orderId: order.id, userId },
+      returnUrl,
+      cancelUrl,
+      ...(webhookUrl ? { webhookUrl } : {}),
+    };
+    const headers: Record<string, string> = {
+      'X-API-Key': apiKey,
+      'Content-Type': 'application/json',
+    };
+    const { data } = await axios.post<{
+      id?: string;
+      sessionId?: string;
+      address?: string;
+      depositAddress?: string;
+      qrCode?: string;
+      qrCodeDataUrl?: string;
+      qrCodeUrl?: string;
+      amount?: string;
+      symbol?: string;
+      token?: string;
+      chain?: string;
+      status?: string;
+      expiresAt?: string;
+      createdAt?: string;
+      checkoutUrl?: string;
+      hostedUrl?: string;
+      paymentUrl?: string;
+      reference?: string;
+      txId?: string;
+      txHash?: string;
+    }>(`${baseUrl}/api/v1/pos/sessions`, body, { headers });
+    const checkoutUrl = data?.paymentUrl || data?.checkoutUrl || data?.hostedUrl;
+    const paymentId = data?.sessionId || data?.id || data?.reference;
+    const depositAddress = data?.depositAddress || data?.address;
+    if (!paymentId || !depositAddress) {
+      throw new BadRequestException('Myaza initialization failed');
+    }
+    await this.ordersService.setPendingCheckoutReference(order.id, userId, {
+      provider: PaymentProvider.MYAZA,
+      checkoutId: paymentId,
+      details: {
+        myazaSessionId: paymentId,
+        depositAddress,
+        chain: data?.chain ?? chain,
+        token: data?.symbol ?? data?.token ?? token,
+        amount: data?.amount ?? order.total,
+      },
+    });
+    return {
+      provider: PaymentProvider.MYAZA,
+      paymentId,
+      sessionId: paymentId,
+      checkoutUrl: checkoutUrl ?? null,
+      depositAddress,
+      qrCode: data?.qrCode ?? data?.qrCodeDataUrl ?? data?.qrCodeUrl ?? null,
+      chain: data?.chain ?? chain,
+      token: data?.symbol ?? data?.token ?? token,
+      amount: data?.amount ?? order.total,
+      status: data?.status ?? 'pending',
+      expiresAt: data?.expiresAt ?? null,
+      createdAt: data?.createdAt ?? null,
+    };
+  }
+
+  private async initPaypal(
+    orderId: string,
+    userId: string,
+    email: string,
+    dto: InitializePaymentDto,
+  ) {
+    const order = await this.ordersService.findById(orderId);
+    if (order.userId !== userId) {
+      throw new BadRequestException('Order not found');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Order is not payable in current state');
+    }
+    const returnUrl =
+      dto.paypalReturnUrl ?? this.config.get<string>('PAYPAL_RETURN_URL');
+    const cancelUrl =
+      dto.paypalCancelUrl ?? this.config.get<string>('PAYPAL_CANCEL_URL');
+    if (!returnUrl || !cancelUrl) {
+      throw new BadRequestException(
+        'Set PAYPAL_RETURN_URL and PAYPAL_CANCEL_URL (or pass paypalReturnUrl / paypalCancelUrl)',
+      );
+    }
+    const token = await this.paypalAccessToken();
+    const currencyCode = (order.currency || 'USD').toUpperCase();
+    const body = {
+      intent: 'CAPTURE',
+      purchase_units: [
+        {
+          reference_id: order.id,
+          amount: {
+            currency_code: currencyCode,
+            value: order.total,
+          },
+          custom_id: order.id,
+        },
+      ],
+      payer: { email_address: email },
+      application_context: {
+        return_url: returnUrl,
+        cancel_url: cancelUrl,
+        user_action: 'PAY_NOW',
+      },
+    };
+    const { data } = await axios.post<{
+      id?: string;
+      links?: Array<{ rel?: string; href?: string }>;
+    }>(`${this.paypalBaseUrl()}/v2/checkout/orders`, body, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const paypalOrderId = data?.id;
+    const approveUrl = data?.links?.find((l) => l.rel === 'approve')?.href;
+    if (!paypalOrderId || !approveUrl) {
+      throw new BadRequestException('PayPal initialization failed');
+    }
+    await this.ordersService.setPendingCheckoutReference(order.id, userId, {
+      provider: PaymentProvider.PAYPAL,
+      checkoutId: paypalOrderId,
+      details: {
+        paypalOrderId,
+        paypalApprovalUrl: approveUrl,
+      },
+    });
+    return {
+      provider: PaymentProvider.PAYPAL,
+      paypalOrderId,
+      approvalUrl: approveUrl,
+    };
   }
 
   private async initPaystack(
@@ -106,6 +423,14 @@ export class PaymentService {
     this.logger.log(
       `[payment] step=paystack_initialized orderId=${orderId} reference=${data.data.reference as string}`,
     );
+    await this.ordersService.setPendingCheckoutReference(order.id, userId, {
+      provider: PaymentProvider.PAYSTACK,
+      checkoutId: String(data.data.reference),
+      paystackReference: String(data.data.reference),
+      details: {
+        paystackAccessCode: data.data.access_code as string,
+      },
+    });
     return {
       provider: PaymentProvider.PAYSTACK,
       authorizationUrl: data.data.authorization_url as string,
@@ -162,6 +487,21 @@ export class PaymentService {
         },
       },
     }));
+    const subtotal = parseFloat(order.subtotal);
+    const total = parseFloat(order.total);
+    const netFees = total - subtotal;
+    if (Number.isFinite(netFees) && netFees > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: amountToMinorUnits(netFees.toFixed(2), order.currency),
+          product_data: {
+            name: 'Service charge',
+          },
+        },
+      });
+    }
 
     const pmTypes = normalizeStripePaymentMethodTypes(
       dto.stripePaymentMethodTypes,
@@ -183,11 +523,14 @@ export class PaymentService {
     }
 
     const session = await stripe.checkout.sessions.create(sessionParams);
-    await this.ordersService.setStripeCheckoutSession(
-      order.id,
-      userId,
-      session.id,
-    );
+    await this.ordersService.setPendingCheckoutReference(order.id, userId, {
+      provider: PaymentProvider.STRIPE,
+      checkoutId: session.id,
+      stripeCheckoutSessionId: session.id,
+      details: {
+        stripeCheckoutUrl: session.url ?? null,
+      },
+    });
 
     return {
       provider: PaymentProvider.STRIPE,
@@ -206,6 +549,18 @@ export class PaymentService {
     }
     const hash = crypto
       .createHmac('sha512', secret)
+      .update(rawBody)
+      .digest('hex');
+    return hash === signature;
+  }
+
+  verifyMyazaSignature(rawBody: Buffer, signature: string | undefined) {
+    const secret = this.config.get<string>('MYAZA_WEBHOOK_SECRET');
+    if (!secret || !signature) {
+      return false;
+    }
+    const hash = crypto
+      .createHmac('sha256', secret)
       .update(rawBody)
       .digest('hex');
     return hash === signature;
@@ -291,6 +646,108 @@ export class PaymentService {
       stripeCheckoutSessionId: session.id,
       stripePaymentIntentId: paymentIntentId ?? null,
       paymentMethodDetails: method,
+    });
+  }
+
+  async capturePaypalOrder(
+    orderId: string,
+    userId: string,
+    paypalOrderId: string,
+  ) {
+    const order = await this.ordersService.findById(orderId);
+    if (order.userId !== userId) {
+      throw new BadRequestException('Order not found');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Order is not payable in current state');
+    }
+    const token = await this.paypalAccessToken();
+    const { data } = await axios.post<{
+      id?: string;
+      status?: string;
+      purchase_units?: Array<{
+        reference_id?: string;
+        payments?: {
+          captures?: Array<{
+            id?: string;
+            status?: string;
+            amount?: { value?: string; currency_code?: string };
+          }>;
+        };
+      }>;
+      payer?: { payer_id?: string; email_address?: string };
+    }>(
+      `${this.paypalBaseUrl()}/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}/capture`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    const pu = data.purchase_units?.[0];
+    if (pu?.reference_id && pu.reference_id !== orderId) {
+      throw new BadRequestException('PayPal order does not match this order');
+    }
+    const capture = pu?.payments?.captures?.[0];
+    if (!capture?.id || capture.status !== 'COMPLETED') {
+      throw new BadRequestException('PayPal capture not completed');
+    }
+    await this.ordersService.markOrderPaid(orderId, {
+      provider: PaymentProvider.PAYPAL,
+      paymentMethodDetails: {
+        provider: PaymentProvider.PAYPAL,
+        label: 'PayPal',
+        paypalOrderId: data.id ?? paypalOrderId,
+        paypalCaptureId: capture.id,
+        payerId: data.payer?.payer_id,
+        payerEmail: data.payer?.email_address,
+      },
+    });
+    return {
+      provider: PaymentProvider.PAYPAL,
+      orderId,
+      paypalOrderId: data.id ?? paypalOrderId,
+      paypalCaptureId: capture.id,
+      status: 'PAID',
+    };
+  }
+
+  async handleMyazaPaymentSuccess(data: {
+    reference?: string;
+    status?: string;
+    txHash?: string;
+    transactionHash?: string;
+    txId?: string;
+    address?: string;
+    chain?: string;
+    amount?: string;
+    symbol?: string;
+    id?: string;
+    metadata?: { orderId?: string };
+  }) {
+    const orderId = data.metadata?.orderId || data.reference;
+    const status = (data.status || '').toLowerCase();
+    if (
+      !orderId ||
+      !['paid', 'completed', 'confirmed', 'success', 'delivered'].includes(status)
+    ) {
+      return;
+    }
+    await this.ordersService.markOrderPaid(orderId, {
+      provider: PaymentProvider.MYAZA,
+      paymentMethodDetails: {
+        provider: PaymentProvider.MYAZA,
+        label: 'Myaza Crypto',
+        myazaPaymentId: data.id ?? null,
+        txHash: data.txHash ?? data.transactionHash ?? data.txId ?? null,
+        address: data.address ?? null,
+        chain: data.chain ?? null,
+        amount: data.amount ?? null,
+        symbol: data.symbol ?? null,
+        status: data.status ?? null,
+      },
     });
   }
 }

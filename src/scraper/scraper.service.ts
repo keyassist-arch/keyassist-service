@@ -10,6 +10,8 @@ import { NikeAdapter } from './adapters/nike.adapter';
 import { AppleAdapter } from './adapters/apple.adapter';
 import { SheinAdapter } from './adapters/shein.adapter';
 import { GoatAdapter } from './adapters/goat.adapter';
+import { StockxAdapter } from './adapters/stockx.adapter';
+import { EbayAdapter } from './adapters/ebay.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { GenericAdapter } from './adapters/generic.adapter';
@@ -28,6 +30,8 @@ export class ScraperService {
     private readonly apple: AppleAdapter,
     private readonly shein: SheinAdapter,
     private readonly goat: GoatAdapter,
+    private readonly stockx: StockxAdapter,
+    private readonly ebay: EbayAdapter,
     private readonly zara: ZaraAdapter,
     private readonly converse: ConverseAdapter,
     private readonly generic: GenericAdapter,
@@ -39,6 +43,8 @@ export class ScraperService {
       [ProductSource.APPLE, apple],
       [ProductSource.SHEIN, shein],
       [ProductSource.GOAT, goat],
+      [ProductSource.STOCKX, stockx],
+      [ProductSource.EBAY, ebay],
       [ProductSource.ZARA, zara],
       [ProductSource.CONVERSE, converse],
       [ProductSource.GENERIC, generic],

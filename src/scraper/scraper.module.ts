@@ -7,6 +7,8 @@ import { NikeAdapter } from './adapters/nike.adapter';
 import { AppleAdapter } from './adapters/apple.adapter';
 import { SheinAdapter } from './adapters/shein.adapter';
 import { GoatAdapter } from './adapters/goat.adapter';
+import { StockxAdapter } from './adapters/stockx.adapter';
+import { EbayAdapter } from './adapters/ebay.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { ScraperService } from './scraper.service';
@@ -23,6 +25,8 @@ import { OpenRouterScrapeRefinementService } from './services/openrouter-scrape-
     AppleAdapter,
     SheinAdapter,
     GoatAdapter,
+    StockxAdapter,
+    EbayAdapter,
     ZaraAdapter,
     ConverseAdapter,
     ScraperService,

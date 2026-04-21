@@ -548,11 +548,10 @@ export class ZaraAdapter implements ScraperAdapter {
         '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       locale: 'en-US',
       extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9',
         Accept:
           'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
-    });
+    }, url);
     const page = await context.newPage();
 
     let lastResult: ScrapedProduct | undefined;

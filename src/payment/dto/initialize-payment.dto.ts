@@ -1,4 +1,5 @@
 import { IsArray, IsEnum, IsOptional, IsUrl, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentProvider } from '../../common/enums/payment-provider.enum';
 
 const PAYSTACK_CHANNELS = [
@@ -26,9 +27,17 @@ export type PaystackChannel = (typeof PAYSTACK_CHANNELS)[number];
 export type StripeCheckoutPmType = (typeof STRIPE_PM_TYPES)[number];
 
 export class InitializePaymentDto {
+  @ApiProperty({
+    format: 'uuid',
+    description: 'Order id to initialize payment for',
+  })
   @IsUUID()
   orderId: string;
 
+  @ApiProperty({
+    enum: PaymentProvider,
+    description: 'Payment provider to initialize',
+  })
   @IsEnum(PaymentProvider)
   provider: PaymentProvider;
 
@@ -38,6 +47,10 @@ export class InitializePaymentDto {
    */
   @IsOptional()
   @IsArray()
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Optional Paystack channel allowlist',
+  })
   paystackChannels?: string[];
 
   /**
@@ -46,17 +59,59 @@ export class InitializePaymentDto {
    */
   @IsOptional()
   @IsArray()
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Optional Stripe Checkout payment method type allowlist',
+  })
   stripePaymentMethodTypes?: string[];
 
   /** Overrides STRIPE_CHECKOUT_SUCCESS_URL when using Stripe */
   @IsOptional()
   @IsUrl({ require_tld: false })
+  @ApiPropertyOptional({
+    description: 'Optional Stripe success URL override',
+  })
   stripeSuccessUrl?: string;
 
   /** Overrides STRIPE_CHECKOUT_CANCEL_URL when using Stripe */
   @IsOptional()
   @IsUrl({ require_tld: false })
+  @ApiPropertyOptional({
+    description: 'Optional Stripe cancel URL override',
+  })
   stripeCancelUrl?: string;
+
+  /** Overrides PAYPAL_RETURN_URL when using PayPal */
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  @ApiPropertyOptional({
+    description: 'Optional PayPal return URL override',
+  })
+  paypalReturnUrl?: string;
+
+  /** Overrides PAYPAL_CANCEL_URL when using PayPal */
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  @ApiPropertyOptional({
+    description: 'Optional PayPal cancel URL override',
+  })
+  paypalCancelUrl?: string;
+
+  /** Overrides MYAZA_RETURN_URL when using Myaza crypto checkout */
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  @ApiPropertyOptional({
+    description: 'Optional Myaza return URL override',
+  })
+  myazaReturnUrl?: string;
+
+  /** Overrides MYAZA_CANCEL_URL when using Myaza crypto checkout */
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  @ApiPropertyOptional({
+    description: 'Optional Myaza cancel URL override',
+  })
+  myazaCancelUrl?: string;
 }
 
 export function normalizePaystackChannels(

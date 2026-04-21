@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   Logger,
   Post,
@@ -8,7 +9,12 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request as ExpressRequest } from 'express';
 import Stripe from 'stripe';
@@ -20,6 +26,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { UsersService } from '../users/users.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
+import { CapturePaypalPaymentDto } from './dto/capture-paypal-payment.dto';
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -31,10 +38,46 @@ export class PaymentController {
     private readonly usersService: UsersService,
   ) {}
 
+  @Get('methods')
+  @ApiOperation({
+    summary:
+      'List currently available payment methods for checkout rendering',
+  })
+  @ApiOkResponse({
+    description: 'Currently available payment methods for checkout',
+    schema: {
+      type: 'object',
+      properties: {
+        methods: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              provider: {
+                type: 'string',
+                enum: ['paystack', 'stripe', 'paypal', 'myaza'],
+              },
+              available: { type: 'boolean' },
+              reason: {
+                type: 'string',
+                nullable: true,
+                enum: ['not_configured', 'temporarily_disabled'],
+              },
+            },
+          },
+        },
+        updatedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  getMethods() {
+    return this.paymentService.getAvailableMethods();
+  }
+
   @Post('initialize')
   @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @ApiOperation({
-    summary: 'Start Paystack or Stripe Checkout for a pending order',
+    summary: 'Start Paystack, Stripe, PayPal, or Myaza checkout for a pending order',
   })
   @UseGuards(JwtAuthGuard)
   async initialize(
@@ -43,6 +86,23 @@ export class PaymentController {
   ) {
     const u = await this.usersService.findById(user.sub);
     return this.paymentService.initializePayment(dto, user.sub, u.email);
+  }
+
+  @Post('paypal/capture')
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
+  @ApiOperation({
+    summary: 'Capture an approved PayPal order and mark order as paid',
+  })
+  @UseGuards(JwtAuthGuard)
+  async capturePaypal(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CapturePaypalPaymentDto,
+  ) {
+    return this.paymentService.capturePaypalOrder(
+      dto.orderId,
+      user.sub,
+      dto.paypalOrderId,
+    );
   }
 
   @Public()
@@ -118,6 +178,59 @@ export class PaymentController {
         event.data.object,
       );
     }
+    return { received: true };
+  }
+
+  @Public()
+  @Post('webhooks/myaza')
+  @ApiOperation({
+    summary: 'Myaza webhook (server-to-server)',
+    description:
+      'Optional signature verification via `x-myaza-signature` + MYAZA_WEBHOOK_SECRET.',
+  })
+  async myazaWebhook(
+    @Req() req: RawBodyRequest<ExpressRequest & { rawBody?: Buffer }>,
+    @Headers('x-myaza-signature') signature: string,
+  ) {
+    const raw =
+      req.rawBody ?? Buffer.from(JSON.stringify((req.body as object) ?? {}));
+    const shouldVerify =
+      Boolean(process.env.MYAZA_WEBHOOK_SECRET) && Boolean(signature);
+    if (shouldVerify && !this.paymentService.verifyMyazaSignature(raw, signature)) {
+      this.logger.warn('[payment] step=webhook_myaza reason=bad_signature');
+      return { received: false };
+    }
+    const body = req.body as {
+      event?: string;
+      data?: {
+        reference?: string;
+        status?: string;
+        txHash?: string;
+        transactionHash?: string;
+        txId?: string;
+        address?: string;
+        chain?: string;
+        amount?: string;
+        symbol?: string;
+        id?: string;
+        metadata?: { orderId?: string };
+      };
+      reference?: string;
+      status?: string;
+      txHash?: string;
+      transactionHash?: string;
+      txId?: string;
+      address?: string;
+      chain?: string;
+      amount?: string;
+      symbol?: string;
+      id?: string;
+      metadata?: { orderId?: string };
+    };
+    this.logger.log(
+      `[payment] step=webhook_myaza event=${body.event ?? 'unknown'}`,
+    );
+    await this.paymentService.handleMyazaPaymentSuccess(body.data ?? body);
     return { received: true };
   }
 }

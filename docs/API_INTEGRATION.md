@@ -122,7 +122,8 @@ Use `role` to show/hide admin UI; the API still enforces roles server-side.
 | `GET /me`, `PATCH /me` | Bearer access token |
 | `GET /cart`, cart mutations | Bearer |
 | `POST /orders`, `GET /orders`, `GET /orders/:id` | Bearer |
-| `POST /payments/initialize` | Bearer |
+| `GET /payments/methods` | None (recommended before checkout) |
+| `POST /payments/initialize`, `POST /payments/paypal/capture` | Bearer |
 | `GET /admin/*`, `PATCH /admin/*`, `POST /admin/scrape-preview` | Bearer + `ADMIN_SUPER` or `ADMIN_STAFF` |
 
 Webhook routes (`POST /payments/webhooks/*`) are server-to-server — not called from the browser.
@@ -563,7 +564,7 @@ Use one product detail screen (and cart line logic) that **never assumes** every
 | `id`, `slug` | Identity; cart and orders use **`productId`** = UUID. |
 | `title`, `images[]` | Headline and gallery (may be empty in edge failures — guard UI). |
 | `originalPrice`, `salePrice`, `currency` | Storefront line price **before** picking a priced configuration. |
-| `source` | Retailer enum (e.g. `amazon`, `apple`, `goat`, `generic`, …). Use for **badges**, analytics, or thin styling — not as the only key for business logic. |
+| `source` | Retailer enum (e.g. `amazon`, `apple`, `ebay`, `goat`, `stockx`, `generic`, …). Use for **badges**, analytics, or thin styling — not as the only key for business logic. |
 
 | Use when present | Meaning |
 |------------------|---------|
@@ -644,7 +645,16 @@ All routes require Bearer.
 
 `GET /cart`
 
-Response includes `id` and `items[]` with `id`, `quantity`, `variantSelection`, and nested `product` (or minimal `{ id }` if relation missing).
+Response includes server-computed pricing fields so the frontend does not perform checkout math:
+
+- `subtotal`
+- `serviceCharge` (20% of subtotal)
+- `discount` (20% of subtotal when subtotal is strictly greater than `1000`)
+- `fees` (`serviceCharge - discount`)
+- `total` (`subtotal + fees`)
+- `currency`
+
+Plus `id` and `items[]` with `id`, `quantity`, `variantSelection`, and nested `product` (or minimal `{ id }` if relation missing).
 
 ### Add line
 
@@ -733,6 +743,7 @@ Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set
 **Order response highlights:**
 
 - `status` — `PENDING` | `PAID` | `PROCESSING` | `ORDERED_FROM_SUPPLIER` | `SHIPPED` | `DELIVERED` | `CANCELLED`
+- `subtotal`, `serviceCharge`, `discount`, `fees`, `total`, `currency` — server-computed checkout totals (same pricing rules as cart)
 - `items[]` — snapshots: `title`, `price`, `currency`, `quantity`, `images`, `variant`, etc.
 - `payment` — after payment:
   - `provider` — `paystack` | `stripe`
@@ -745,6 +756,30 @@ Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set
 ## Payments
 
 Bearer required for initialization only.
+
+### Available methods
+
+`GET /payments/methods`
+
+Use this before rendering checkout payment options. Response includes all known providers and whether each is currently available.
+
+```json
+{
+  "methods": [
+    { "provider": "paystack", "available": true, "reason": null },
+    { "provider": "stripe", "available": false, "reason": "temporarily_disabled" },
+    { "provider": "paypal", "available": true, "reason": null },
+    { "provider": "myaza", "available": false, "reason": "not_configured" }
+  ],
+  "updatedAt": "2026-04-15T12:34:56.000Z"
+}
+```
+
+`reason` values:
+- `not_configured` — provider keys/settings are missing on server
+- `temporarily_disabled` — provider was manually disabled by ops/env flag
+
+Frontend should only show methods where `available === true`.
 
 ### Initialize payment
 
@@ -769,7 +804,29 @@ or
 }
 ```
 
-**`provider` values:** `paystack` | `stripe` (lowercase strings).
+or
+
+```json
+{
+  "orderId": "uuid",
+  "provider": "paypal",
+  "paypalReturnUrl": "https://app.example/checkout/paypal/success",
+  "paypalCancelUrl": "https://app.example/checkout/paypal/cancel"
+}
+```
+
+or
+
+```json
+{
+  "orderId": "uuid",
+  "provider": "myaza",
+  "myazaReturnUrl": "https://app.example/checkout/myaza/success",
+  "myazaCancelUrl": "https://app.example/checkout/myaza/cancel"
+}
+```
+
+**`provider` values:** `paystack` | `stripe` | `paypal` | `myaza` (lowercase strings).
 
 **Paystack optional:** `paystackChannels` — e.g. `["card","bank","ussd","qr","mobile_money","bank_transfer","eft"]`. Omit to use Paystack account defaults.
 
@@ -802,6 +859,49 @@ Redirect the browser to `authorizationUrl` (or open in WebView). Paystack will c
 ```
 
 Redirect to `url`. After Checkout, Stripe hits the **backend** webhook; poll `GET /orders/:id` on your success page until `PAID`.
+
+**PayPal initialize response:**
+
+```json
+{
+  "provider": "paypal",
+  "paypalOrderId": "2GG279541U471931P",
+  "approvalUrl": "https://www.paypal.com/checkoutnow?token=2GG279541U471931P"
+}
+```
+
+Redirect to `approvalUrl`. After buyer approval, call:
+
+`POST /payments/paypal/capture`
+
+```json
+{
+  "orderId": "uuid",
+  "paypalOrderId": "2GG279541U471931P"
+}
+```
+
+On success the API captures PayPal payment and marks order status as `PAID`.
+
+**Myaza initialize response:**
+
+```json
+{
+  "provider": "myaza",
+  "paymentId": "sess_123",
+  "sessionId": "sess_123",
+  "checkoutUrl": "https://checkout.myaza.io/...",
+  "depositAddress": "0x1A2B3C4D5E6F...",
+  "qrCode": "data:image/png;base64,...",
+  "chain": "polygon",
+  "token": "USDC",
+  "amount": "100.00",
+  "status": "pending",
+  "expiresAt": "2026-04-15T12:45:00.000Z"
+}
+```
+
+Render `depositAddress` / `qrCode` for wallet transfer UX (and optionally open `checkoutUrl` if present). Myaza should call `POST /payments/webhooks/myaza` after on-chain confirmation (e.g. `status: "delivered"`); then order status becomes `PAID`. Frontend should poll `GET /orders/:id` while waiting.
 
 **Frontend keys:** You may use **Paystack public key** or **Stripe publishable key** only if you build a custom client-side flow. This API’s default flows are **redirect-based** (Paystack URL / Stripe Checkout URL) after `initialize`.
 
@@ -927,7 +1027,7 @@ Nest validation errors often look like:
 ## Suggested frontend flows
 
 1. **Browse / import:** `POST /products/import` → open Socket.IO **`import.subscribe`** with `importId` and apply **`import.updated`** when `status === "COMPLETED"` (use **`product`** from the event—no wait for a poll). Optionally keep polling `GET /products/import/:id` as a fallback. After a **re-import**, the next **`import.updated`** with **`COMPLETED`** again carries the refreshed **`product`**.
-2. **Checkout:** `POST /cart/items` … → `POST /orders` → `POST /payments/initialize` → redirect to Paystack or Stripe URL → success page polls `GET /orders/:id`.
+2. **Checkout:** `POST /cart/items` … → render cart totals from API (`subtotal`, `serviceCharge`, `discount`, `fees`, `total`) → `POST /orders` → render checkout totals from order response using the same fields (no frontend recalculation) → `POST /payments/initialize` → redirect to Paystack / Stripe / PayPal approval URL → on return, for PayPal call `POST /payments/paypal/capture`, then poll `GET /orders/:id`.
 3. **Account:** register → verify email (`POST /auth/verify-email` or link from inbox) → login; handle login **`403`** + **`EMAIL_NOT_VERIFIED`** with resend. `GET /me` / `PATCH /me`; keep cart and orders behind auth.
 4. **Admin:** gate routes on `role`; use `/admin/*` (e.g. **`GET /admin/products`** for the full catalog). Storefront home can use public **`GET /products?limit=…`** for recent items.
 
@@ -965,7 +1065,10 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | POST | `/orders` | Bearer |
 | GET | `/orders` | Bearer |
 | GET | `/orders/:id` | Bearer |
+| GET | `/payments/methods` | — |
 | POST | `/payments/initialize` | Bearer |
+| POST | `/payments/paypal/capture` | Bearer |
+| POST | `/payments/webhooks/myaza` | Server-to-server |
 | GET | `/admin/orders` | Bearer admin |
 | PATCH | `/admin/orders/:id` | Bearer admin |
 | GET | `/admin/products` | Bearer admin |

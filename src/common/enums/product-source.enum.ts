@@ -5,6 +5,8 @@ export enum ProductSource {
   APPLE = 'apple',
   SHEIN = 'shein',
   GOAT = 'goat',
+  STOCKX = 'stockx',
+  EBAY = 'ebay',
   ZARA = 'zara',
   CONVERSE = 'converse',
   GENERIC = 'generic',

@@ -24,6 +24,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
+import { computePricing } from '../common/utils/pricing.util';
 
 @Injectable()
 export class OrdersService {
@@ -107,11 +108,14 @@ export class OrdersService {
       });
     }
 
-    const fees = 0;
-    const total = subtotal + fees;
+    const pricing = computePricing(subtotal);
+    const fees = pricing.fees;
+    const total = pricing.total;
 
     this.logger.log(
-      `[order] step=transaction_begin userId=${userId} subtotal=${subtotal.toFixed(2)} currency=${currency}`,
+      `[order] step=transaction_begin userId=${userId} subtotal=${subtotal.toFixed(2)} ` +
+        `serviceCharge=${pricing.serviceCharge.toFixed(2)} discount=${pricing.discount.toFixed(2)} ` +
+        `fees=${fees.toFixed(2)} total=${total.toFixed(2)} currency=${currency}`,
     );
 
     const order = await this.dataSource.transaction(async (em) => {
@@ -238,6 +242,40 @@ export class OrdersService {
     return this.orders.save(o);
   }
 
+  async setPendingCheckoutReference(
+    orderId: string,
+    userId: string,
+    input: {
+      provider: PaymentProvider;
+      checkoutId: string;
+      paystackReference?: string | null;
+      stripeCheckoutSessionId?: string | null;
+      details?: Record<string, unknown>;
+    },
+  ): Promise<Order> {
+    const o = await this.findById(orderId);
+    if (o.userId !== userId) {
+      throw new BadRequestException('Order not found');
+    }
+    if (o.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Order is not payable in current state');
+    }
+    o.paymentProvider = input.provider;
+    if (input.paystackReference != null) {
+      o.paystackReference = input.paystackReference;
+    }
+    if (input.stripeCheckoutSessionId != null) {
+      o.stripeCheckoutSessionId = input.stripeCheckoutSessionId;
+    }
+    o.paymentMethodDetails = {
+      ...(o.paymentMethodDetails ?? {}),
+      ...(input.details ?? {}),
+      checkoutId: input.checkoutId,
+      checkoutProvider: input.provider,
+    } as Record<string, unknown>;
+    return this.orders.save(o);
+  }
+
   async markOrderPaid(
     orderId: string,
     input: {
@@ -320,12 +358,16 @@ export class OrdersService {
   }
 
   toResponse(o: Order, admin = false) {
+    const subtotal = parseFloat(o.subtotal);
+    const pricing = computePricing(Number.isFinite(subtotal) ? subtotal : 0);
     return {
       id: o.id,
       userId: o.userId,
       ...(admin && o.user ? { userEmail: o.user.email } : {}),
       status: o.status,
       subtotal: o.subtotal,
+      serviceCharge: pricing.serviceCharge.toFixed(2),
+      discount: pricing.discount.toFixed(2),
       fees: o.fees,
       total: o.total,
       currency: o.currency,

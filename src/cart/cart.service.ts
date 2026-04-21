@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { Cart } from './entities/cart.entity';
 import { CartItem } from './entities/cart-item.entity';
 import { ProductsService } from '../products/products.service';
+import { computePricing } from '../common/utils/pricing.util';
 
 @Injectable()
 export class CartService {
@@ -134,8 +135,27 @@ export class CartService {
   }
 
   private toResponse(cart: Cart) {
+    let subtotal = 0;
+    let currency = 'USD';
+    for (const i of cart.items || []) {
+      if (!i.product) continue;
+      const unit = parseFloat(i.product.salePrice);
+      if (Number.isFinite(unit)) {
+        subtotal += unit * i.quantity;
+      }
+      if (i.product.currency) {
+        currency = i.product.currency;
+      }
+    }
+    const pricing = computePricing(subtotal);
     return {
       id: cart.id,
+      subtotal: subtotal.toFixed(2),
+      serviceCharge: pricing.serviceCharge.toFixed(2),
+      discount: pricing.discount.toFixed(2),
+      fees: pricing.fees.toFixed(2),
+      total: pricing.total.toFixed(2),
+      currency,
       items: (cart.items || []).map((i) => ({
         id: i.id,
         quantity: i.quantity,

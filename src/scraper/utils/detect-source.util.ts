@@ -8,6 +8,8 @@ export function detectProductSource(url: string): ProductSource {
   if (u.includes('apple.')) return ProductSource.APPLE;
   if (u.includes('shein.')) return ProductSource.SHEIN;
   if (u.includes('goat.com')) return ProductSource.GOAT;
+  if (u.includes('stockx.com')) return ProductSource.STOCKX;
+  if (u.includes('ebay.')) return ProductSource.EBAY;
   if (u.includes('zara.com')) return ProductSource.ZARA;
   if (u.includes('converse.com')) return ProductSource.CONVERSE;
   return ProductSource.GENERIC;
