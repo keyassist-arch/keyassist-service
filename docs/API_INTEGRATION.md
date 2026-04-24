@@ -6,7 +6,7 @@ This document describes how a web or mobile client should talk to the **unified-
 
 - **JSON** bodies: `Content-Type: application/json`
 - **Validation**: Unknown fields in JSON bodies are rejected (`403` with validation details is possible; invalid payloads return `400` with Nest’s default error shape).
-- **CORS**: The API enables CORS automatically. With **`CORS_ORIGIN` unset**, the server **echoes the request’s `Origin`** (works for local dev, e.g. frontend `http://localhost:3000` → API `http://localhost:3030`). In production, set **`CORS_ORIGIN`** to a comma-separated allowlist (e.g. `https://app.example.com,https://www.example.com`).
+- **CORS**: With **`CORS_ORIGIN` unset**, the server **echoes the request’s `Origin`** (any site can call the API — fine for quick local tests; lock down in production). If **`CORS_ORIGIN` is set** (comma-separated allowlist), the browser **`Origin` must match exactly** (scheme + host + port), e.g. `http://localhost:3000` for a local Next app calling a **hosted** API. To keep a production allowlist and still allow local dev against Railway, set **`CORS_ALLOW_LOCALHOST=true`** (appends `http://localhost:3000` and `http://127.0.0.1:3000`). Preflight uses whatever headers the client requests; do not rely on a tiny fixed `Access-Control-Allow-Headers` list on the server.
 
 ### OpenAPI (Swagger)
 

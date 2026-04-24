@@ -13,26 +13,44 @@ function normalizeCorsOriginEntry(raw: string): string {
   return `http://${o}`;
 }
 
+const LOCAL_DEV_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+function buildCorsOrigin(configService: ConfigService): boolean | string[] {
+  const raw = configService.get<string>('CORS_ORIGIN')?.trim();
+  const mergeLocal =
+    configService.get<string>('CORS_ALLOW_LOCALHOST')?.trim().toLowerCase() ===
+    'true';
+  if (!raw) {
+    return true;
+  }
+  const list = [
+    ...new Set(
+      raw
+        .split(',')
+        .map((o) => normalizeCorsOriginEntry(o))
+        .filter(Boolean),
+    ),
+  ];
+  if (mergeLocal) {
+    for (const o of LOCAL_DEV_ORIGINS) {
+      if (!list.includes(o)) {
+        list.push(o);
+      }
+    }
+  }
+  return list;
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalFilters(new AllExceptionsFilter());
 
   const configService = app.get(ConfigService);
-  const corsOrigins = configService.get<string>('CORS_ORIGIN');
-  const origin = corsOrigins?.trim()
-    ? [
-        ...new Set(
-          corsOrigins
-            .split(',')
-            .map((o) => normalizeCorsOriginEntry(o))
-            .filter(Boolean),
-        ),
-      ]
-    : true;
+  const origin = buildCorsOrigin(configService);
   app.enableCors({
     origin,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    // Omit allowedHeaders so preflight mirrors Access-Control-Request-Headers (RTK Query, Sentry, etc.)
     credentials: true,
     maxAge: 86_400,
   });

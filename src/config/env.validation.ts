@@ -238,6 +238,14 @@ class EnvironmentVariables {
   @IsOptional()
   CORS_ORIGIN?: string;
 
+  /**
+   * When `true`, append `http://localhost:3000` and `http://127.0.0.1:3000` to the `CORS_ORIGIN` allowlist
+   * (for a prod API on Railway while the Next/React app runs on localhost).
+   */
+  @IsString()
+  @IsOptional()
+  CORS_ALLOW_LOCALHOST?: string;
+
   /** Optional Playwright proxy (e.g. Bright Data / Smartproxy): http://user:pass@host:port */
   @IsString()
   @IsOptional()
