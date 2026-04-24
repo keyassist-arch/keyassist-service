@@ -13,17 +13,32 @@ function normalizeCorsOriginEntry(raw: string): string {
   return `http://${o}`;
 }
 
-const LOCAL_DEV_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+/** `http(s)://localhost:<port>` or `http(s)://127.0.0.1:<port>` — any port when using local dev against a hosted API. */
+function isLocalLoopbackOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  try {
+    const u = new URL(origin);
+    const h = u.hostname.toLowerCase();
+    return (
+      (h === 'localhost' || h === '127.0.0.1') &&
+      (u.protocol === 'http:' || u.protocol === 'https:')
+    );
+  } catch {
+    return false;
+  }
+}
 
-function buildCorsOrigin(configService: ConfigService): boolean | string[] {
+function buildCorsOptions(configService: ConfigService) {
   const raw = configService.get<string>('CORS_ORIGIN')?.trim();
   const mergeLocal =
     configService.get<string>('CORS_ALLOW_LOCALHOST')?.trim().toLowerCase() ===
     'true';
+
   if (!raw) {
-    return true;
+    return { origin: true as const, credentials: true as const };
   }
-  const list = [
+
+  const allowlist = [
     ...new Set(
       raw
         .split(',')
@@ -31,14 +46,28 @@ function buildCorsOrigin(configService: ConfigService): boolean | string[] {
         .filter(Boolean),
     ),
   ];
-  if (mergeLocal) {
-    for (const o of LOCAL_DEV_ORIGINS) {
-      if (!list.includes(o)) {
-        list.push(o);
+
+  return {
+    credentials: true as const,
+    origin: (
+      requestOrigin: string | undefined,
+      cb: (err: Error | null, allow?: boolean | string) => void,
+    ) => {
+      if (!requestOrigin) {
+        cb(null, true);
+        return;
       }
-    }
-  }
-  return list;
+      if (allowlist.includes(requestOrigin)) {
+        cb(null, requestOrigin);
+        return;
+      }
+      if (mergeLocal && isLocalLoopbackOrigin(requestOrigin)) {
+        cb(null, requestOrigin);
+        return;
+      }
+      cb(null, false);
+    },
+  };
 }
 
 async function bootstrap() {
@@ -46,12 +75,12 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   const configService = app.get(ConfigService);
-  const origin = buildCorsOrigin(configService);
+  const { origin, credentials } = buildCorsOptions(configService);
   app.enableCors({
     origin,
+    credentials,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     // Omit allowedHeaders so preflight mirrors Access-Control-Request-Headers (RTK Query, Sentry, etc.)
-    credentials: true,
     maxAge: 86_400,
   });
 

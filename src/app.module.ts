@@ -67,6 +67,12 @@ import { HealthController } from './health.controller';
             'postgres://postgres:postgres@127.0.0.1:5432/unified_commerce',
           autoLoadEntities: true,
           synchronize,
+          /** Passed to `pg` Pool — reduces stale sockets (common cause of `read ECONNRESET`). */
+          extra: {
+            max: 15,
+            idleTimeoutMillis: 20_000,
+            connectionTimeoutMillis: 15_000,
+          },
         };
       },
     }),

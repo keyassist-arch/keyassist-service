@@ -239,8 +239,7 @@ class EnvironmentVariables {
   CORS_ORIGIN?: string;
 
   /**
-   * When `true`, append `http://localhost:3000` and `http://127.0.0.1:3000` to the `CORS_ORIGIN` allowlist
-   * (for a prod API on Railway while the Next/React app runs on localhost).
+   * When `true`, allow any `http(s)://localhost:*` or `http(s)://127.0.0.1:*` Origin in addition to `CORS_ORIGIN` entries.
    */
   @IsString()
   @IsOptional()

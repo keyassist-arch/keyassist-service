@@ -8,6 +8,20 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+function isTransientPostgresTcpError(err: Error): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT') {
+    return true;
+  }
+  const m = err.message;
+  return (
+    m.includes('ECONNRESET') ||
+    m.includes('ECONNREFUSED') ||
+    m.includes('ETIMEDOUT') ||
+    m.includes('Connection terminated unexpectedly')
+  );
+}
+
 /**
  * Never exposes raw Error messages, paths, or stacks to clients.
  * HttpException responses are passed through except 5xx bodies are replaced with a generic message.
@@ -53,6 +67,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const err =
       exception instanceof Error ? exception : new Error(String(exception));
     this.logger.error(`${req.method} ${req.url}`, err.stack ?? err.message);
+
+    if (isTransientPostgresTcpError(err)) {
+      res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message:
+          'Database connection was interrupted. Retry the request; if this persists, check DATABASE_URL and Postgres availability.',
+        error: 'Service Unavailable',
+      });
+      return;
+    }
 
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
