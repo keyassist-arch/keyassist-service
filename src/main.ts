@@ -34,18 +34,23 @@ function buildCorsOptions(configService: ConfigService) {
     configService.get<string>('CORS_ALLOW_LOCALHOST')?.trim().toLowerCase() ===
     'true';
 
-  if (!raw) {
-    return { origin: true as const, credentials: true as const };
-  }
+  // Hardcoded production and development origins
+  const defaultOrigins = [
+    'https://unified-commerce-frontend-production.up.railway.app',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+  ];
 
-  const allowlist = [
-    ...new Set(
-      raw
+  const envOrigins = raw
+    ? raw
         .split(',')
         .map((o) => normalizeCorsOriginEntry(o))
-        .filter(Boolean),
-    ),
-  ];
+        .filter(Boolean)
+    : [];
+
+  const allowlist = [...new Set([...defaultOrigins, ...envOrigins])];
 
   return {
     credentials: true as const,
@@ -80,7 +85,10 @@ async function bootstrap() {
     origin,
     credentials,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    // Omit allowedHeaders so preflight mirrors Access-Control-Request-Headers (RTK Query, Sentry, etc.)
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    exposedHeaders: ['Content-Type', 'X-Total-Count'],
+    preflightContinue: false,
+    optionsSuccessStatus: 200,
     maxAge: 86_400,
   });
 
