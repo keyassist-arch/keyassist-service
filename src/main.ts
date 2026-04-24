@@ -5,6 +5,14 @@ import { AppModule } from './app.module';
 import { setupSwagger } from './swagger';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
+/** Browser `Origin` values always include a scheme; accept `localhost:3000` as shorthand. */
+function normalizeCorsOriginEntry(raw: string): string {
+  const o = raw.trim().replace(/\/+$/, '');
+  if (!o) return '';
+  if (/^https?:\/\//i.test(o)) return o;
+  return `http://${o}`;
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalFilters(new AllExceptionsFilter());
@@ -12,7 +20,14 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const corsOrigins = configService.get<string>('CORS_ORIGIN');
   const origin = corsOrigins?.trim()
-    ? corsOrigins.split(',').map((o) => o.trim())
+    ? [
+        ...new Set(
+          corsOrigins
+            .split(',')
+            .map((o) => normalizeCorsOriginEntry(o))
+            .filter(Boolean),
+        ),
+      ]
     : true;
   app.enableCors({
     origin,

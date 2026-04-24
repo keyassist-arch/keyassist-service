@@ -20,7 +20,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed": "ts-node -r tsconfig-paths/register src/seed/seed.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
-    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts"
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
+    "db:reset-catalog": "ts-node -r tsconfig-paths/register src/scripts/reset-catalog-commerce.ts"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",
