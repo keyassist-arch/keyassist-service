@@ -9,7 +9,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import { ImportedProduct } from '../products/entities/imported-product.entity';
 import { ImportStatus } from '../common/enums/import-status.enum';
 import { ScraperService } from '../scraper/scraper.service';
@@ -234,20 +234,14 @@ export class ProductImportService {
       relations: ['product'],
     });
 
-    if (existing?.status === ImportStatus.COMPLETED && existing.product) {
+    if (existing?.status === ImportStatus.COMPLETED) {
+      if (!existing.product) {
+        const p = await this.productsService.findBySourceUrl(normalized);
+        if (p) {
+          existing.product = p;
+        }
+      }
       return this.startRescrapeForCompletedImport(existing, normalized);
-    }
-
-    const cachedId = await this.redis.getCachedProductId(normalized);
-    if (cachedId && existing?.status !== ImportStatus.FAILED) {
-      this.logger.log(
-        `[import] step=cache_hit productId=${cachedId} url=${previewUrl(normalized)}`,
-      );
-      const product = await this.productsService.findById(cachedId);
-      return {
-        status: 'completed' as const,
-        product: this.productsService.toResponse(product),
-      };
     }
 
     if (
@@ -303,29 +297,98 @@ export class ProductImportService {
       importRow.status = ImportStatus.QUEUED;
       importRow.errorMessage = null;
     }
-    importRow = await this.imports.save(importRow);
 
-    this.logger.log(
-      `[import] step=queued importId=${importRow.id} source=${source} url=${previewUrl(normalized)}`,
-    );
+    try {
+      importRow = await this.imports.save(importRow);
+    } catch (e) {
+      if (this.isPostgresUniqueViolation(e)) {
+        this.logger.warn(
+          `[import] step=duplicate_source_url_race url=${previewUrl(normalized)}`,
+        );
+        await this.redis.releaseScrapeLock(normalized);
+        const winner = await this.imports.findOne({
+          where: { sourceUrl: normalized },
+          relations: ['product'],
+        });
+        if (!winner) {
+          throw new ServiceUnavailableException(
+            'Import conflict; please retry.',
+          );
+        }
+        if (
+          winner.status === ImportStatus.QUEUED ||
+          winner.status === ImportStatus.PROCESSING
+        ) {
+          await this.ensureScrapeJobInRedis(
+            winner.id,
+            normalized,
+            winner.status,
+          );
+          const fresh = await this.imports.findOne({
+            where: { id: winner.id },
+          });
+          const phase = importPhaseFromStatus(
+            fresh?.status ?? winner.status,
+          )!;
+          return {
+            status: 'processing' as const,
+            importId: winner.id,
+            ...pendingImportHints(phase),
+          };
+        }
+        if (winner.status === ImportStatus.COMPLETED) {
+          if (!winner.product) {
+            const p = await this.productsService.findBySourceUrl(normalized);
+            if (p) {
+              winner.product = p;
+            }
+          }
+          return this.startRescrapeForCompletedImport(winner, normalized);
+        }
+        if (winner.status === ImportStatus.FAILED) {
+          return this.importByUrl(rawUrl);
+        }
+        throw new ServiceUnavailableException(
+          'Import conflict; please retry.',
+        );
+      }
+      await this.redis.releaseScrapeLock(normalized);
+      throw e;
+    }
 
-    const bullJob = await this.scrapeQueue.add(
-      'run',
-      { importId: importRow.id },
-      {
-        jobId: importRow.id,
-        ...SCRAPE_JOB_OPTS,
-      },
-    );
-    this.logger.log(
-      `[import] step=bull_enqueued importId=${importRow.id} bullJobId=${String(bullJob.id)} queue=${QUEUE_SCRAPE_PRODUCT} — worker should log worker=picked_job when Redis delivers the job`,
-    );
+    try {
+      this.logger.log(
+        `[import] step=queued importId=${importRow.id} source=${source} url=${previewUrl(normalized)}`,
+      );
 
-    return {
-      status: 'queued' as const,
-      importId: importRow.id,
-      ...pendingImportHints('queued', 'newJob'),
-    };
+      const bullJob = await this.scrapeQueue.add(
+        'run',
+        { importId: importRow.id },
+        {
+          jobId: importRow.id,
+          ...SCRAPE_JOB_OPTS,
+        },
+      );
+      this.logger.log(
+        `[import] step=bull_enqueued importId=${importRow.id} bullJobId=${String(bullJob.id)} queue=${QUEUE_SCRAPE_PRODUCT} — worker should log worker=picked_job when Redis delivers the job`,
+      );
+
+      return {
+        status: 'queued' as const,
+        importId: importRow.id,
+        ...pendingImportHints('queued', 'newJob'),
+      };
+    } catch (e) {
+      await this.redis.releaseScrapeLock(normalized);
+      throw e;
+    }
+  }
+
+  private isPostgresUniqueViolation(err: unknown): boolean {
+    return (
+      err instanceof QueryFailedError &&
+      (err.driverError as { code?: string } | undefined)?.code === '23505'
+    );
   }
 
   /** Same JSON shape as `GET /products/import/:importId` (also used for Socket.IO `import.updated`). */
