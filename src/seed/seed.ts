@@ -20,7 +20,7 @@ async function main() {
     type: 'postgres',
     url,
     entities: [User, Product, ImportedProduct],
-    synchronize: process.env.NODE_ENV !== 'production',
+    synchronize: (process.env.NODE_ENV ?? '') === 'development',
   });
   await ds.initialize();
   const users = ds.getRepository(User);

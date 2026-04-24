@@ -47,14 +47,28 @@ import { HealthController } from './health.controller';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres' as const,
-        url:
-          config.get<string>('DATABASE_URL') ||
-          'postgres://postgres:postgres@127.0.0.1:5432/unified_commerce',
-        autoLoadEntities: true,
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
-      }),
+      useFactory: (config: ConfigService) => {
+        const syncOverride = config
+          .get<string>('DATABASE_SYNCHRONIZE')
+          ?.trim()
+          .toLowerCase();
+        let synchronize = false;
+        if (syncOverride === 'true') {
+          synchronize = true;
+        } else if (syncOverride === 'false') {
+          synchronize = false;
+        } else {
+          synchronize = config.get<string>('NODE_ENV') === 'development';
+        }
+        return {
+          type: 'postgres' as const,
+          url:
+            config.get<string>('DATABASE_URL') ||
+            'postgres://postgres:postgres@127.0.0.1:5432/unified_commerce',
+          autoLoadEntities: true,
+          synchronize,
+        };
+      },
     }),
     RedisModule,
     NotificationsModule,

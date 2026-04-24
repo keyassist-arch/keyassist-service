@@ -15,9 +15,10 @@ enum NodeEnv {
 }
 
 class EnvironmentVariables {
+  /** `development` | `production` | `test`. Unset = not development (TypeORM synchronize off). */
   @IsEnum(NodeEnv)
   @IsOptional()
-  NODE_ENV: NodeEnv = NodeEnv.Development;
+  NODE_ENV?: NodeEnv;
 
   @Transform(({ value }) =>
     value === undefined || value === '' ? 3000 : Number(value),
@@ -30,6 +31,14 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   DATABASE_URL?: string;
+
+  /**
+   * Overrides TypeORM `synchronize`: `true` = on, `false` = off. If unset, synchronize runs only
+   * when `NODE_ENV` is exactly `development` (never on production/staging/test).
+   */
+  @IsString()
+  @IsOptional()
+  DATABASE_SYNCHRONIZE?: string;
 
   @IsString()
   JWT_ACCESS_SECRET: string;
