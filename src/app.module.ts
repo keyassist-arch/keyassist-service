@@ -21,6 +21,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentModule } from './payment/payment.module';
 import { AdminModule } from './admin/admin.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { TotpModule } from './totp/totp.module';
 import { ApiRootController } from './api-root.controller';
 import { HealthController } from './health.controller';
 
@@ -30,6 +31,7 @@ import { HealthController } from './health.controller';
       isGlobal: true,
       validate: validateEnv,
     }),
+    TotpModule,
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60000, limit: 120 }],
     }),

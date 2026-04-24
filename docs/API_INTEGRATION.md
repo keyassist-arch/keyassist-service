@@ -14,7 +14,7 @@ This document describes how a web or mobile client should talk to the **unified-
 - **OpenAPI JSON:** `{API_BASE}/docs-json` or `{API_BASE}/api-docs-json`
 - **Discovery:** `GET {API_BASE}/api` — JSON with the URLs above (REST routes are **not** prefixed with `/api`; only this discovery endpoint uses `/api`)
 
-Use **Authorize** in Swagger UI and paste a JWT **access** token from `POST /auth/login`, `POST /auth/verify-email`, or `POST /auth/refresh`. Protected routes are marked with a lock icon.
+Use **Authorize** in Swagger UI and paste a JWT **access** token from `POST /auth/login` (or `POST /auth/login/2fa` when 2FA is enabled), `POST /auth/verify-email`, or `POST /auth/refresh`. Protected routes are marked with a lock icon.
 
 ---
 
@@ -44,7 +44,74 @@ Returned with the access token on **successful login**, **`POST /auth/verify-ema
 }
 ```
 
-When **`localCart`** was sent on **login** or **verify-email** and was non-empty, the response may also include **`cart`** (same shape as **`GET /cart`**).
+When **`localCart`** was sent on **login** or **verify-email** and was non-empty, the response may also include **`cart`** (same shape as **`GET /cart`**)—but **only when the login response includes access and refresh tokens**. If the user has [two-factor authentication](#two-factor-authentication-totp) enabled, the first password step does not return tokens; send **`localCart`** again on **`POST /auth/login/2fa`** after a successful TOTP.
+
+### Two-factor authentication (TOTP)
+
+Users can turn **authenticator-app 2FA** on or off from **[User profile → Two-factor (TOTP) settings](#user-profile)**. When 2FA is **enabled**, **`POST /auth/login`** (after a correct password) returns a **pre-auth** payload instead of JWTs. Complete sign-in with **`POST /auth/login/2fa`**.
+
+**1) Password (unchanged request)**
+
+`POST /auth/login` with `email`, `password`, optional `localCart`.
+
+**2a) 2FA not enabled — same as before**
+
+```json
+{
+  "accessToken": "eyJhbG...",
+  "refreshToken": "eyJhbG...",
+  "expiresIn": "15m"
+}
+```
+
+Optional **`cart`** if `localCart` was non-empty.
+
+**2b) 2FA enabled — second step required**
+
+```json
+{
+  "requiresTwoFactor": true,
+  "errorCode": "TWO_FACTOR_REQUIRED",
+  "preAuthToken": "eyJhbG...",
+  "expiresIn": "5m"
+}
+```
+
+- **`preAuthToken`** — short-lived JWT (TTL from **`JWT_2FA_PREAUTH_EXPIRES`**, default **`5m`**; signed with **`JWT_2FA_PREAUTH_SECRET`** if set, else **`JWT_ACCESS_SECRET`**). The client does **not** use this as `Authorization: Bearer` on normal API routes. It is only for the next call.
+- Show a **TOTP / authenticator app** field; then call **`POST /auth/login/2fa`**.
+
+**3) TOTP step**
+
+`POST /auth/login/2fa` (no `Authorization` header; rate-limited, e.g. 10 requests per minute per IP)
+
+```json
+{
+  "preAuthToken": "<from previous response>",
+  "code": "123456",
+  "localCart": [
+    { "productId": "550e8400-e29b-41d4-a716-446655440000", "quantity": 1 }
+  ]
+}
+```
+
+- **`code`** — 6–8 digits from the app (no spaces, or spaces stripped server-side).
+- **`localCart`** — optional; same rules as login (max **100** lines). If you need guest cart merge, send it here (not on the password-only response, which has no session yet).
+
+**Success:** same token shape as normal login: **`accessToken`**, **`refreshToken`**, **`expiresIn`**, and optional **`cart`**.
+
+**Errors:** `401` — wrong or expired TOTP, or bad **`preAuthToken`**. `400` — invalid or expired pre-auth session (re-run **`POST /auth/login`**).
+
+**Enabling 2FA in the app (logged-in user)**
+
+1. `POST /me/2fa/setup` — returns **`qrCodeDataUrl`**, **`otpauthUrl`**, **`secret`** (manual entry), **`issuer`**. A pending setup is stored until you confirm or cancel.
+2. User scans the QR in Google Authenticator (or similar), then `POST /me/2fa/enable` with `{ "code": "123456" }`.
+3. `GET /me` then includes **`twoFactor.enabled: true`**.
+
+**Disabling 2FA:** `POST /me/2fa/disable` with `{ "password": "...", "code": "..." }` (current password + current TOTP). **All refresh tokens** for that user are cleared; other devices must sign in again.
+
+**Cancel a pending setup (not yet enabled):** `POST /me/2fa/setup/cancel`
+
+**Status only:** `GET /me/2fa` — `{ "enabled": false, "setupPending": true }` (or both booleans as applicable). Same flags appear in **`GET /me`** as **`twoFactor: { enabled, setupPending }`**.
 
 ### Refresh flow
 
@@ -114,12 +181,13 @@ Use `role` to show/hide admin UI; the API still enforces roles server-side.
 | Area | Auth |
 |------|------|
 | `GET /health` | None |
-| `POST /auth/register`, `POST /auth/login`, `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password` | None |
+| `POST /auth/register`, `POST /auth/login`, `POST /auth/login/2fa`, `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password` | None |
 | `POST /products/import`, `GET /products/import/:importId` | None (import is rate-limited) |
 | Socket.IO `/realtime` | None for **`import.subscribe`** / **`import.updated`**; optional Bearer JWT in `auth.token` for **`order.updated`** |
 | `GET /products` | None — recent products (`?limit=`, capped) |
 | `GET /products/:idOrSlug` | None — **`idOrSlug`** is the product **UUID** or the readable **`slug`** from list/detail JSON |
 | `GET /me`, `PATCH /me` | Bearer access token |
+| `GET /me/2fa`, `POST /me/2fa/*` (setup, enable, setup/cancel, disable) | Bearer access token |
 | `GET /cart`, cart mutations | Bearer |
 | `POST /orders`, `GET /orders`, `GET /orders/:id` | Bearer |
 | `GET /payments/methods` | None (recommended before checkout) |
@@ -300,7 +368,7 @@ If **`verificationEmailSent`** is **`false`**, **`message`** is shorter (no “W
 
 ### 5. Profile flag — `GET /me`
 
-After login or verify-email, **`GET /me`** includes **`emailVerified`** (`boolean`) so settings UIs can show verification state without guessing from errors.
+After login or verify-email, **`GET /me`** includes **`emailVerified`** (`boolean`) so settings UIs can show verification state without guessing from errors. It also includes **`twoFactor: { enabled, setupPending }`** for security / 2FA settings screens (see **[User profile](#user-profile)**).
 
 ---
 
@@ -403,9 +471,11 @@ if (res.status === 403) {
 }
 ```
 
-`localCart` is optional. When present and non-empty, the response includes **`cart`** alongside **`accessToken`**, **`refreshToken`**, and **`expiresIn`**.
+`localCart` is optional. When present and non-empty, the response includes **`cart`** alongside **`accessToken`**, **`refreshToken`**, and **`expiresIn`** — **unless** the account has **2FA** enabled. In that case the first step returns **`requiresTwoFactor`**, **`preAuthToken`**, etc. (no tokens). Send **`localCart`** on **`POST /auth/login/2fa`** to merge the guest cart after the TOTP step. See **[Two-factor authentication (TOTP)](#two-factor-authentication-totp)**.
 
 **Unverified email:** valid password but email not confirmed → **`403`** with **`code`: `"EMAIL_NOT_VERIFIED"`** (see **[Email verification (frontend integration)](#email-verification-frontend-integration)** — §4).
+
+**Two-step login (2FA):** if the response has **`requiresTwoFactor: true`**, do not store partial tokens. Show an authenticator code field and call **`POST /auth/login/2fa`** with **`preAuthToken`** and **`code`**. See the **Two-factor authentication (TOTP)** subsection under [Authentication (JWT)](#authentication-jwt).
 
 ### Verify email
 
@@ -470,7 +540,24 @@ Routes are mounted at the **root** (not under `/users`).
 
 `GET /me` — Bearer required.
 
-Typical JSON includes **`emailVerified`** (`boolean`) so the UI can show verification state without inferring it from errors.
+Typical JSON includes:
+
+- **`emailVerified`** (`boolean`) — so the UI can show verification state without inferring it from errors.
+- **`twoFactor`** — `{ "enabled": <boolean>, "setupPending": <boolean> }`. Use this on a **Settings / Security** screen: show “2FA on”, “Complete setup” (if `setupPending` and not `enabled`), or prompts to enable.
+
+### Two-factor (TOTP) — settings
+
+Authenticator-app 2FA is optional. Full login flow is documented under **[Two-factor authentication (TOTP)](#two-factor-authentication-totp)** in the Authentication section.
+
+| Action | Request |
+|--------|---------|
+| Status only | `GET /me/2fa` — `{ "enabled", "setupPending" }` |
+| Start setup (QR + secret) | `POST /me/2fa/setup` — returns **`qrCodeDataUrl`**, **`otpauthUrl`**, **`secret`**, **`issuer`**. Replaces any previous pending setup. |
+| Complete setup (turn 2FA on) | `POST /me/2fa/enable` — `{ "code": "123456" }` (code from the app after scanning) |
+| Cancel pending setup | `POST /me/2fa/setup/cancel` — clears enrollment if the user did not finish |
+| Turn 2FA off | `POST /me/2fa/disable` — `{ "password": "...", "code": "..." }` (password + current TOTP). **All refresh sessions are revoked**; user must sign in again on this device. |
+
+All of the above require **Bearer** (user must be logged in), except 2FA is configured **before** it affects login: enable flows run while authenticated; login then requires TOTP for future sessions.
 
 ### Update profile
 
@@ -736,6 +823,18 @@ Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set
 
 `GET /orders`
 
+**Optional filter:** `GET /orders?status=PENDING` — returns only orders in that state (e.g. all **unpaid** orders). `status` must be a full enum value: `PENDING`, `PAID`, `PROCESSING`, `ORDERED_FROM_SUPPLIER`, `SHIPPED`, `DELIVERED`, `CANCELLED`. Invalid values return **400**.
+
+### Pending payment (single order for the “stuck” checkout UX)
+
+`GET /orders/pending-payment`
+
+**Bearer required.** Returns the user’s **most recent** `PENDING` order in the same shape as **`GET /orders/:id`**, or **`{ "order": null }`** if there is none.
+
+Use this to drive a **global or cart banner** after payment fails (cart is already empty but money was never taken). Example: on app or cart load, if `order` is non-null, show **“You have an unpaid order — pay now”** and navigate to your payment step with `order.id` (or link to an order page that reads `checkout.nextStep`).
+
+This avoids scanning **`GET /orders`** on the client, though filtering with **`?status=PENDING`** is still available if you need the full list.
+
 ### Get one order
 
 `GET /orders/:id`
@@ -744,12 +843,42 @@ Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set
 
 - `status` — `PENDING` | `PAID` | `PROCESSING` | `ORDERED_FROM_SUPPLIER` | `SHIPPED` | `DELIVERED` | `CANCELLED`
 - `subtotal`, `serviceCharge`, `discount`, `fees`, `total`, `currency` — server-computed checkout totals (same pricing rules as cart)
+- `checkout` — **machine-readable next action** (on every order response):
+  - `canInitializePayment` — `true` when `status === "PENDING"` (user may call **`POST /payments/initialize`**)
+  - `nextStep` — `initialize_payment` when unpaid, or `none` when not awaiting payment. Use to show a **Pay / Complete checkout** CTA and route to a payment page that uses **`id`**.
 - `items[]` — snapshots: `title`, `price`, `currency`, `quantity`, `images`, `variant`, etc.
-- `payment` — after payment:
-  - `provider` — `paystack` | `stripe`
-  - `methodDetails` — e.g. brand, last4, channel, `label`
+- `payment` — tracks the selected provider and checkout/session ids (even while the order is still `PENDING` and after **`POST /payments/initialize`**):
+  - `provider` — `paystack` | `stripe` | `paypal` | `myaza` (when set)
+  - `methodDetails` — provider-specific snapshot; always look for:
+    - **`checkoutId`** — unified id for the active payment attempt (Paystack reference, Stripe Checkout session id, PayPal order id, or Myaza session/payment id). Use this to correlate UI, support, and webhooks with **`order.id`**.
+    - **`checkoutProvider`** — same as `provider` when checkout metadata was stored
   - `paystackReference`, `stripeCheckoutSessionId`, `stripePaymentIntentId` as applicable
+  - After **payment completes**, `methodDetails` may also include card/last4/PayPal/crypto fields depending on provider (see Swagger / server types).
 - `tracking[]` — shipment events when present
+
+**Retrying payment (no extra endpoint):** The same **`GET /orders/:id`** response is enough to **display** the order and to **call `POST /payments/initialize` again** while the order is unpaid.
+
+| Need | Source on `GET /orders/:id` |
+|------|-----------------------------|
+| `orderId` for `POST /payments/initialize` | **`id`** |
+| Show “Pay now” CTA? | **`checkout.canInitializePayment`** or **`checkout.nextStep === "initialize_payment"`** (same as `status === "PENDING"`) |
+| Is payment allowed? | **`status === "PENDING"`** — otherwise do not call `initialize` (show a read-only or appropriate state) |
+| Line items, amounts, address for the checkout UI | **`items[]`**, **`total`**, **`subtotal`**, **`fees`**, **`currency`**, **`shippingAddress`** |
+| Which providers the server will accept right now | **`GET /payments/methods`** — only show `available: true` |
+| Pre-select last chosen provider (optional) | **`payment.provider`** if set (see below) |
+| Correlation / deep links after a *successful* `initialize` | **`payment.methodDetails.checkoutId`**, `paystackReference`, `stripeCheckoutSessionId`, etc. |
+
+**If `POST /payments/initialize` failed** (HTTP 4xx, network, etc.): the order row may not have been updated yet, so **`payment.provider` can still be `null`**. The user should pick a provider again from **`GET /payments/methods`**, then call **`initialize`** with the same body shape as a first attempt (`orderId: <order.id>`, `provider`, plus optional return URLs for Stripe/PayPal/Myaza). You may call **`initialize` multiple times** for the same pending order; the latest successful response updates **`payment`**.
+
+**Cart vs order:** `POST /orders` **deletes all cart line items** when the order is created. The cart will look **empty** even though checkout is not finished. After order creation, treat checkout as **order-based**: use the **`POST /orders` response** or **`GET /orders/:id`**, not **`GET /cart`**, for step 2 (payment) UI.
+
+**Suggested client behavior when the user is “stuck” after a failed `initialize`:**
+
+1. **Persist `orderId`** when `POST /orders` succeeds (React state + **`sessionStorage`**, e.g. `pendingCheckoutOrderId`) until **`GET /orders/:id`** returns **`status: "PAID"`** (then clear it).
+2. **Payment step UI** should load **`GET /orders/:id`** (or use the in-memory create response) for line items and totals—**not** the cart.
+3. **On `initialize` error**, show the message and a primary action: **“Retry payment”** (same `orderId` + provider) and/or **“View order”** (navigate to a route that loads **`GET /orders/:id`**).
+4. **Empty cart or home:** on load, call **`GET /orders/pending-payment`**. If **`order` is not null** (or if **`order.checkout.nextStep === "initialize_payment"`** on any screen), show a prominent **“Complete payment”** that routes to a payment or order page for **`order.id`**. To list all unpaid orders, use **`GET /orders?status=PENDING`**. Optionally combine with **`sessionStorage`** for the last in-progress `orderId` after refresh.
+5. **Do not** send users who failed payment back to a cart-only step without explaining that the cart was already converted; link them to **orders** or in-app “complete payment” instead.
 
 ---
 
@@ -828,6 +957,8 @@ or
 
 **`provider` values:** `paystack` | `stripe` | `paypal` | `myaza` (lowercase strings).
 
+**Order record after `initialize`:** On success, the API updates the **order** row with the chosen provider, the provider-specific reference (e.g. Paystack reference, Stripe session id), and **`payment.methodDetails.checkoutId`** + **`checkoutProvider`** so the full cart checkout is always traceable to one payment id before the user finishes paying. Refetch **`GET /orders/:id`** if you need the latest ids for UI state or deep links.
+
 **Paystack optional:** `paystackChannels` — e.g. `["card","bank","ussd","qr","mobile_money","bank_transfer","eft"]`. Omit to use Paystack account defaults.
 
 **Stripe optional:** `stripePaymentMethodTypes` — e.g. `card`, `link`, `us_bank_account`, `ideal`, `sepa_debit`, `klarna`, `afterpay_clearpay`, `affirm`. Omit for **dynamic** Checkout methods.  
@@ -883,6 +1014,8 @@ Redirect to `approvalUrl`. After buyer approval, call:
 
 On success the API captures PayPal payment and marks order status as `PAID`.
 
+**Server env (PayPal):** the backend first calls PayPal’s **`/v1/oauth2/token`**. A **401** there means the Client ID / secret pair is wrong, or the **mode** does not match: use **`PAYPAL_MODE=sandbox`** (or omit) with **Sandbox** app credentials, or **`PAYPAL_MODE=live`** (also **`production`** / **`prod`**) with **Live** app credentials. Set **`PAYPAL_SECRET_KEY`** or **`PAYPAL_CLIENT_SECRET`** (same value PayPal shows as the secret). Sandbox and live keys are not interchangeable.
+
 **Myaza initialize response:**
 
 ```json
@@ -900,6 +1033,8 @@ On success the API captures PayPal payment and marks order status as `PAID`.
   "expiresAt": "2026-04-15T12:45:00.000Z"
 }
 ```
+
+**Server env (unified-commerce → Myaza):** `MYAZA_API_KEY` is always the credential. By default the backend sends it as **`X-API-Key`**. If your Myaza instance returns **401** and a message like **“No auth token”**, set **`MYAZA_AUTH_MODE=bearer`** so the same value is sent as `Authorization: Bearer` + the API key. That is separate from the JSON body field `token` (e.g. USDC), which comes from **`MYAZA_TOKEN`**.
 
 Render `depositAddress` / `qrCode` for wallet transfer UX (and optionally open `checkoutUrl` if present). Myaza should call `POST /payments/webhooks/myaza` after on-chain confirmation (e.g. `status: "delivered"`); then order status becomes `PAID`. Frontend should poll `GET /orders/:id` while waiting.
 
@@ -1006,7 +1141,7 @@ Invalid or expired JWT does **not** disconnect the socket; you still get import 
 
 ## Error handling
 
-- **`401 Unauthorized`** — missing/invalid/expired access token. Try refresh once, then login.
+- **`401 Unauthorized`** — missing/invalid/expired access token (try refresh once, then login), or **wrong TOTP** / bad **`preAuthToken`** on **`POST /auth/login/2fa`**.
 - **`403 Forbidden`** — authenticated but not allowed (e.g. non-admin hitting admin routes), **or** login blocked until email verification (**`code`: `"EMAIL_NOT_VERIFIED"`** in the JSON body — see **Authentication → Login when email is not verified**).
 - **`400 Bad Request`** — validation or business rule (e.g. empty cart, insufficient stock, wrong order state for payment).
 - **`404 Not Found`** — resource missing or not owned by the user (orders are scoped by user).
@@ -1027,8 +1162,8 @@ Nest validation errors often look like:
 ## Suggested frontend flows
 
 1. **Browse / import:** `POST /products/import` → open Socket.IO **`import.subscribe`** with `importId` and apply **`import.updated`** when `status === "COMPLETED"` (use **`product`** from the event—no wait for a poll). Optionally keep polling `GET /products/import/:id` as a fallback. After a **re-import**, the next **`import.updated`** with **`COMPLETED`** again carries the refreshed **`product`**.
-2. **Checkout:** `POST /cart/items` … → render cart totals from API (`subtotal`, `serviceCharge`, `discount`, `fees`, `total`) → `POST /orders` → render checkout totals from order response using the same fields (no frontend recalculation) → `POST /payments/initialize` → redirect to Paystack / Stripe / PayPal approval URL → on return, for PayPal call `POST /payments/paypal/capture`, then poll `GET /orders/:id`.
-3. **Account:** register → verify email (`POST /auth/verify-email` or link from inbox) → login; handle login **`403`** + **`EMAIL_NOT_VERIFIED`** with resend. `GET /me` / `PATCH /me`; keep cart and orders behind auth.
+2. **Checkout:** `POST /cart/items` … → render cart totals from API (`subtotal`, `serviceCharge`, `discount`, `fees`, `total`) → **`POST /orders`** (this **clears the cart** and returns the order; save **`order.id`**) → from this point, **do not** rely on `GET /cart` for payment UI; use the order or **`GET /orders/:id`** for line items and totals → `GET /payments/methods` (only show `available` providers) → **`POST /payments/initialize`** (body uses **`orderId: <order.id>`** from the step above) → refetch **`GET /orders/:id`** if you need **`payment.methodDetails.checkoutId`** for your UI → redirect to Paystack / Stripe / PayPal approval URL (or show Myaza QR) → on return, for PayPal call `POST /payments/paypal/capture`, then poll `GET /orders/:id` until **`PAID`**. If **`initialize` fails**, keep the user on an **order-based** screen, offer **retry** (same `orderId`), and show a path to **pending orders**; see **Get one order → Retrying payment** and **Cart vs order** above.
+3. **Account:** register → verify email (`POST /auth/verify-email` or link from inbox) → login. If login returns **`requiresTwoFactor`**, show TOTP step and **`POST /auth/login/2fa`** (send **`localCart`** here if you need guest cart merge). Handle login **`403`** + **`EMAIL_NOT_VERIFIED`** with resend. **`GET /me` / `PATCH /me`**; optional **`GET/POST /me/2fa/*`** for Settings → 2FA. Keep cart and orders behind auth.
 4. **Admin:** gate routes on `role`; use `/admin/*` (e.g. **`GET /admin/products`** for the full catalog). Storefront home can use public **`GET /products?limit=…`** for recent items.
 
 ---
@@ -1048,11 +1183,17 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | POST | `/auth/verify-email` | — |
 | POST | `/auth/resend-verification` | — |
 | POST | `/auth/login` | — |
+| POST | `/auth/login/2fa` | — |
 | POST | `/auth/refresh` | — |
 | POST | `/auth/forgot-password` | — |
 | POST | `/auth/reset-password` | — |
 | GET | `/me` | Bearer |
 | PATCH | `/me` | Bearer |
+| GET | `/me/2fa` | Bearer |
+| POST | `/me/2fa/setup` | Bearer |
+| POST | `/me/2fa/enable` | Bearer |
+| POST | `/me/2fa/setup/cancel` | Bearer |
+| POST | `/me/2fa/disable` | Bearer |
 | POST | `/products/import` | — |
 | GET | `/products/import/:importId` | — |
 | GET | `/products` | — |
@@ -1063,7 +1204,8 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | PATCH | `/cart/items/:itemId` | Bearer |
 | DELETE | `/cart/items/:itemId` | Bearer |
 | POST | `/orders` | Bearer |
-| GET | `/orders` | Bearer |
+| GET | `/orders` | Bearer — optional `?status=PENDING` (etc.) |
+| GET | `/orders/pending-payment` | Bearer — most recent unpaid order for banners |
 | GET | `/orders/:id` | Bearer |
 | GET | `/payments/methods` | — |
 | POST | `/payments/initialize` | Bearer |

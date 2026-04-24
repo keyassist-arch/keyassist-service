@@ -58,6 +58,17 @@ export class User {
   @Column({ name: 'email_verified_at', type: 'timestamptz', nullable: true })
   emailVerifiedAt: Date | null;
 
+  @Column({ name: 'totp_enabled', type: 'boolean', default: false })
+  totpEnabled: boolean;
+
+  /** Set when 2FA is active (authenticator secret, base32). */
+  @Column({ name: 'totp_secret', type: 'varchar', length: 64, nullable: true })
+  totpSecret: string | null;
+
+  /** Pending secret during setup; cleared after enable or cancel. */
+  @Column({ name: 'totp_setup_secret', type: 'varchar', length: 64, nullable: true })
+  totpSetupSecret: string | null;
+
   @OneToOne(() => Cart, (c) => c.user)
   cart: Cart | null;
 

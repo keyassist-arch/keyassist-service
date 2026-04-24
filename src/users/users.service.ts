@@ -1,19 +1,23 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User, ShippingAddress } from './entities/user.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { TotpService } from '../totp/totp.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    private readonly totp: TotpService,
   ) {}
 
   async create(
@@ -103,8 +107,116 @@ export class UsersService {
       emailVerified: !!user.emailVerifiedAt,
       phone: user.phone,
       defaultShippingAddress: user.defaultShippingAddress,
+      twoFactor: {
+        enabled: user.totpEnabled,
+        setupPending: Boolean(
+          !user.totpEnabled && user.totpSetupSecret,
+        ),
+      },
       role: user.role,
       createdAt: user.createdAt,
     };
+  }
+
+  async setTotpSetupSecret(
+    userId: string,
+    secret: string | null,
+  ): Promise<void> {
+    await this.users.update(userId, { totpSetupSecret: secret });
+  }
+
+  async enableTotpFromPendingSetup(userId: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user.totpSetupSecret) {
+      throw new BadRequestException('No 2FA setup in progress');
+    }
+    await this.users.update(userId, {
+      totpSecret: user.totpSetupSecret,
+      totpSetupSecret: null,
+      totpEnabled: true,
+    });
+  }
+
+  async clearTotpSetup(userId: string): Promise<void> {
+    await this.users.update(userId, { totpSetupSecret: null });
+  }
+
+  async disableTotpAndSecrets(userId: string): Promise<void> {
+    await this.users.update(userId, {
+      totpEnabled: false,
+      totpSecret: null,
+      totpSetupSecret: null,
+    });
+  }
+
+  async beginTotpSetup(userId: string) {
+    const user = await this.findById(userId);
+    if (user.totpEnabled) {
+      throw new BadRequestException(
+        'Two-factor authentication is already enabled. Disable it before enrolling a new device.',
+      );
+    }
+    const secret = this.totp.generateSecret();
+    await this.setTotpSetupSecret(userId, secret);
+    const otpauthUrl = this.totp.keyUri(user.email, secret);
+    const qrCodeDataUrl = await this.totp.toQrDataUrl(otpauthUrl);
+    return {
+      issuer: this.totp.issuerName(),
+      otpauthUrl,
+      qrCodeDataUrl,
+      /** For manual entry in an authenticator app */
+      secret,
+    };
+  }
+
+  async confirmTotpSetup(userId: string, code: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user.totpSetupSecret) {
+      throw new BadRequestException('No 2FA setup in progress. Start setup first.');
+    }
+    if (!this.totp.verifyCode(code, user.totpSetupSecret)) {
+      throw new BadRequestException('Invalid authenticator code');
+    }
+    await this.enableTotpFromPendingSetup(userId);
+  }
+
+  async cancelTotpSetup(userId: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user.totpSetupSecret) {
+      throw new BadRequestException('No 2FA setup in progress');
+    }
+    if (user.totpEnabled) {
+      throw new BadRequestException('Use "disable" to turn off 2FA');
+    }
+    await this.clearTotpSetup(userId);
+  }
+
+  /**
+   * Disables 2FA after password (and TOTP) verification; revokes refresh tokens.
+   */
+  twoFactorSummary(user: User) {
+    return {
+      enabled: user.totpEnabled,
+      setupPending: Boolean(!user.totpEnabled && user.totpSetupSecret),
+    };
+  }
+
+  async disableTotp(
+    userId: string,
+    password: string,
+    authenticatorCode: string,
+  ): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user.totpEnabled || !user.totpSecret) {
+      throw new BadRequestException('Two-factor authentication is not enabled');
+    }
+    if (!(await bcrypt.compare(password, user.passwordHash))) {
+      throw new UnauthorizedException('Invalid password');
+    }
+    if (!this.totp.verifyCode(authenticatorCode, user.totpSecret)) {
+      throw new BadRequestException('Invalid authenticator code');
+    }
+    await this.disableTotpAndSecrets(userId);
+    await this.setRefreshTokenHash(userId, null);
   }
 }

@@ -15,6 +15,7 @@ import { UserRole } from '../common/enums/role.enum';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { authEmailTemplates } from './auth-email-templates';
+import { TotpService } from '../totp/totp.service';
 
 /** Claim set on password-reset JWTs (verified with `JWT_PASSWORD_RESET_SECRET`). */
 const PASSWORD_RESET_CLAIM = 'pwd_reset' as const;
@@ -32,8 +33,18 @@ type EmailVerifyJwtPayload = {
   purpose: typeof EMAIL_VERIFY_CLAIM;
 };
 
+const TWO_FACTOR_PREAUTH_CLAIM = '2fa_preauth' as const;
+
+type TwoFactorPreauthJwtPayload = {
+  sub: string;
+  email: string;
+  role: UserRole;
+  purpose: typeof TWO_FACTOR_PREAUTH_CLAIM;
+};
+
 export const AUTH_ERROR_CODES = {
   EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',
+  TWO_FACTOR_REQUIRED: 'TWO_FACTOR_REQUIRED',
 } as const;
 
 @Injectable()
@@ -46,6 +57,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly totp: TotpService,
   ) {}
 
   async register(
@@ -105,6 +117,68 @@ export class AuthService {
       });
     }
     this.logger.log(`[auth] step=login_ok userId=${user.id}`);
+    if (user.totpEnabled && user.totpSecret) {
+      const preAuthToken = await this.issueTwoFactorPreauthToken(
+        user.id,
+        user.email,
+        user.role,
+      );
+      const twoFactorTtl = this.config.get<string>(
+        'JWT_2FA_PREAUTH_EXPIRES',
+        '5m',
+      );
+      this.logger.log(
+        `[auth] step=login_requires_2fa userId=${user.id}`,
+      );
+      return {
+        requiresTwoFactor: true,
+        errorCode: AUTH_ERROR_CODES.TWO_FACTOR_REQUIRED,
+        preAuthToken,
+        expiresIn: twoFactorTtl,
+      };
+    }
+    const tokens = await this.issueTokens(user.id, user.email, user.role);
+    if (localCart?.length) {
+      const cart = await this.cartService.mergeLocalCart(user.id, localCart);
+      return { ...tokens, cart };
+    }
+    return tokens;
+  }
+
+  async completeLoginWithTwoFactor(
+    preAuthToken: string,
+    code: string,
+    localCart?: LocalCartItemDto[],
+  ) {
+    let payload: TwoFactorPreauthJwtPayload;
+    try {
+      payload = await this.jwt.verifyAsync(preAuthToken, {
+        secret: this.twoFactorPreauthSecret(),
+      });
+    } catch {
+      throw new BadRequestException(
+        'Invalid or expired login session. Sign in again with your email and password.',
+      );
+    }
+    if (
+      !payload?.sub ||
+      payload.purpose !== TWO_FACTOR_PREAUTH_CLAIM ||
+      typeof payload.email !== 'string'
+    ) {
+      throw new BadRequestException(
+        'Invalid or expired login session. Sign in again with your email and password.',
+      );
+    }
+    const user = await this.usersService.findById(payload.sub);
+    if (!user.totpEnabled || !user.totpSecret) {
+      throw new BadRequestException(
+        'Two-factor authentication is not active for this account. Sign in normally.',
+      );
+    }
+    if (!this.totp.verifyCode(code, user.totpSecret)) {
+      throw new UnauthorizedException('Invalid authenticator code');
+    }
+    this.logger.log(`[auth] step=login_2fa_ok userId=${user.id}`);
     const tokens = await this.issueTokens(user.id, user.email, user.role);
     if (localCart?.length) {
       const cart = await this.cartService.mergeLocalCart(user.id, localCart);
@@ -301,6 +375,34 @@ export class AuthService {
       return dedicated.trim();
     }
     return this.config.getOrThrow<string>('JWT_REFRESH_SECRET');
+  }
+
+  private twoFactorPreauthSecret(): string {
+    const dedicated = this.config.get<string>('JWT_2FA_PREAUTH_SECRET');
+    if (dedicated?.trim()) {
+      return dedicated.trim();
+    }
+    return this.config.getOrThrow<string>('JWT_ACCESS_SECRET');
+  }
+
+  private async issueTwoFactorPreauthToken(
+    userId: string,
+    email: string,
+    role: UserRole,
+  ): Promise<string> {
+    const ttl = this.config.get<string>('JWT_2FA_PREAUTH_EXPIRES', '5m');
+    return this.jwt.signAsync(
+      {
+        sub: userId,
+        email,
+        role,
+        purpose: TWO_FACTOR_PREAUTH_CLAIM,
+      } as TwoFactorPreauthJwtPayload,
+      {
+        secret: this.twoFactorPreauthSecret(),
+        expiresIn: ttl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+      },
+    );
   }
 
   private emailVerificationSecret(): string {

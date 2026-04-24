@@ -37,10 +37,7 @@ export class PaymentService {
     const paystackConfigured = Boolean(
       this.config.get<string>('PAYSTACK_SECRET_KEY')?.trim(),
     );
-    const paypalConfigured = Boolean(
-      this.config.get<string>('PAYPAL_CLIENT_ID')?.trim() &&
-        this.config.get<string>('PAYPAL_SECRET_KEY')?.trim(),
-    );
+    const paypalConfigured = this.resolvePaypalClientCredentials() != null;
     const myazaConfigured = Boolean(
       this.config.get<string>('MYAZA_API_KEY')?.trim(),
     );
@@ -120,44 +117,82 @@ export class PaymentService {
     return key;
   }
 
+  private isPaypalLiveMode(): boolean {
+    const m = this.config.get<string>('PAYPAL_MODE')?.trim().toLowerCase();
+    return m === 'live' || m === 'production' || m === 'prod';
+  }
+
   private paypalBaseUrl(): string {
-    const mode = this.config.get<string>('PAYPAL_MODE')?.trim().toLowerCase();
-    return mode === 'live'
+    return this.isPaypalLiveMode()
       ? 'https://api-m.paypal.com'
       : 'https://api-m.sandbox.paypal.com';
   }
 
-  private paypalCredentials(): { clientId: string; secret: string } {
+  /**
+   * Secret: `PAYPAL_SECRET_KEY` or PayPal’s usual `PAYPAL_CLIENT_SECRET` if the former is unset.
+   */
+  private resolvePaypalClientCredentials():
+    | { clientId: string; secret: string }
+    | null {
     const clientId = this.config.get<string>('PAYPAL_CLIENT_ID')?.trim();
-    const secret = this.config.get<string>('PAYPAL_SECRET_KEY')?.trim();
+    const secret =
+      this.config.get<string>('PAYPAL_SECRET_KEY')?.trim() ||
+      this.config.get<string>('PAYPAL_CLIENT_SECRET')?.trim();
     if (!clientId || !secret) {
-      throw new BadRequestException('PayPal is not configured');
+      return null;
     }
     return { clientId, secret };
+  }
+
+  private paypalCredentials(): { clientId: string; secret: string } {
+    const c = this.resolvePaypalClientCredentials();
+    if (!c) {
+      throw new BadRequestException('PayPal is not configured');
+    }
+    return c;
   }
 
   private async paypalAccessToken(): Promise<string> {
     const { clientId, secret } = this.paypalCredentials();
     const basic = Buffer.from(`${clientId}:${secret}`).toString('base64');
-    const { data } = await axios.post<{ access_token?: string }>(
-      `${this.paypalBaseUrl()}/v1/oauth2/token`,
-      'grant_type=client_credentials',
-      {
-        headers: {
-          Authorization: `Basic ${basic}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
+    const base = this.paypalBaseUrl();
+    const host = this.isPaypalLiveMode() ? 'api-m.paypal.com' : 'api-m.sandbox.paypal.com';
+    try {
+      const { data } = await axios.post<{ access_token?: string }>(
+        `${base}/v1/oauth2/token`,
+        'grant_type=client_credentials',
+        {
+          headers: {
+            Authorization: `Basic ${basic}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
         },
-      },
-    );
-    const token = data?.access_token;
-    if (!token) {
-      throw new BadRequestException('Could not authenticate with PayPal');
+      );
+      const token = data?.access_token;
+      if (!token) {
+        throw new BadRequestException('Could not authenticate with PayPal');
+      }
+      return token;
+    } catch (e) {
+      if (axios.isAxiosError(e) && e.response?.status === 401) {
+        this.logger.warn(
+          `[payment] paypal oauth 401 base=${base} — invalid client/secret or wrong environment`,
+        );
+        throw new BadRequestException(
+          'PayPal OAuth failed (401). Use the Client ID and Secret from the same ' +
+            'PayPal developer app; sandbox keys only work with sandbox (PAYPAL_MODE empty or ' +
+            `not live); this call uses host ${host}. ` +
+            'Set PAYPAL_SECRET_KEY or PAYPAL_CLIENT_SECRET (no quotes or trailing spaces). ' +
+            'If you use Live credentials, set PAYPAL_MODE=live (or production).',
+        );
+      }
+      throw e;
     }
-    return token;
   }
 
   private myazaConfig(): {
     baseUrl: string;
+    sessionsPath: string;
     apiKey: string;
     chain: string;
     token: string;
@@ -167,6 +202,12 @@ export class PaymentService {
     const baseUrl =
       this.config.get<string>('MYAZA_BASE_URL')?.trim() ||
       'https://api.myaza.io';
+    const sessionsRaw =
+      this.config.get<string>('MYAZA_SESSIONS_PATH')?.trim() ||
+      '/api/v1/pos/sessions';
+    const sessionsPath = sessionsRaw.startsWith('/')
+      ? sessionsRaw
+      : `/${sessionsRaw}`;
     const apiKey = this.config.get<string>('MYAZA_API_KEY')?.trim();
     const chain = this.config.get<string>('MYAZA_CHAIN')?.trim() || 'polygon';
     const token = this.config.get<string>('MYAZA_TOKEN')?.trim() || 'USDC';
@@ -180,12 +221,46 @@ export class PaymentService {
     }
     return {
       baseUrl: baseUrl.replace(/\/+$/, ''),
+      sessionsPath,
       apiKey,
       chain,
       token,
       expiresInMinutes,
       webhookUrl: webhookUrl || undefined,
     };
+  }
+
+  /**
+   * When MYAZA_BASE_URL already ends with `/api/v1`, the default sessions path
+   * `/api/v1/pos/sessions` would duplicate the prefix — normalize to `/pos/sessions`.
+   */
+  private myazaSessionUrl(baseUrl: string, sessionsPath: string): string {
+    const b = baseUrl.replace(/\/+$/, '');
+    let p = sessionsPath.startsWith('/') ? sessionsPath : `/${sessionsPath}`;
+    if (b.endsWith('/api/v1') && p.startsWith('/api/v1/')) {
+      p = p.slice('/api/v1'.length);
+      if (!p.startsWith('/')) {
+        p = `/${p}`;
+      }
+    }
+    return `${b}${p}`;
+  }
+
+  /**
+   * Myaza deployments differ: some expect `X-API-Key`, others `Authorization: Bearer` (JWT-style
+   * "auth token"). `MYAZA_AUTH_MODE` selects which header receives `MYAZA_API_KEY`.
+   */
+  private buildMyazaRequestHeaders(apiKey: string): Record<string, string> {
+    const mode =
+      this.config.get<string>('MYAZA_AUTH_MODE')?.trim().toLowerCase() ||
+      'x-api-key';
+    const h: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (mode === 'bearer' || mode === 'authorization' || mode === 'jwt') {
+      h.Authorization = `Bearer ${apiKey}`;
+    } else {
+      h['X-API-Key'] = apiKey;
+    }
+    return h;
   }
 
   async initializePayment(
@@ -225,8 +300,16 @@ export class PaymentService {
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not payable in current state');
     }
-    const { baseUrl, apiKey, chain, token, expiresInMinutes, webhookUrl } =
-      this.myazaConfig();
+    const {
+      baseUrl,
+      sessionsPath,
+      apiKey,
+      chain,
+      token,
+      expiresInMinutes,
+      webhookUrl,
+    } = this.myazaConfig();
+    const sessionUrl = this.myazaSessionUrl(baseUrl, sessionsPath);
     const returnUrl =
       dto.myazaReturnUrl ?? this.config.get<string>('MYAZA_RETURN_URL');
     const cancelUrl =
@@ -247,11 +330,8 @@ export class PaymentService {
       cancelUrl,
       ...(webhookUrl ? { webhookUrl } : {}),
     };
-    const headers: Record<string, string> = {
-      'X-API-Key': apiKey,
-      'Content-Type': 'application/json',
-    };
-    const { data } = await axios.post<{
+    const headers = this.buildMyazaRequestHeaders(apiKey);
+    let data: {
       id?: string;
       sessionId?: string;
       address?: string;
@@ -272,7 +352,37 @@ export class PaymentService {
       reference?: string;
       txId?: string;
       txHash?: string;
-    }>(`${baseUrl}/api/v1/pos/sessions`, body, { headers });
+    };
+    try {
+      ({ data } = await axios.post(sessionUrl, body, { headers }));
+    } catch (e) {
+      if (axios.isAxiosError(e)) {
+        const status = e.response?.status;
+        const detail = e.response?.data;
+        this.logger.warn(
+          `[payment] myaza init axios status=${status} url=${sessionUrl} ` +
+            `response=${typeof detail === 'string' ? detail : JSON.stringify(detail)}`,
+        );
+        if (status === 404) {
+          throw new BadRequestException(
+            'Myaza returned 404 for the session URL. ' +
+              'Set MYAZA_BASE_URL to the API host only (e.g. https://api.myaza.io) and, ' +
+              'if Myaza changed their API, set MYAZA_SESSIONS_PATH to the path they document for creating sessions.',
+          );
+        }
+        if (status === 401) {
+          throw new BadRequestException(
+            'Myaza rejected the API key (401). Value is sent from MYAZA_API_KEY. ' +
+              'If the server expects a Bearer token, set MYAZA_AUTH_MODE=bearer. ' +
+              'If it expects X-API-Key, use MYAZA_AUTH_MODE=x-api-key (default).',
+          );
+        }
+        throw new BadRequestException(
+          `Myaza API request failed${status != null ? ` (${status})` : ''}: ${e.message}`,
+        );
+      }
+      throw e;
+    }
     const checkoutUrl = data?.paymentUrl || data?.checkoutUrl || data?.hostedUrl;
     const paymentId = data?.sessionId || data?.id || data?.reference;
     const depositAddress = data?.depositAddress || data?.address;

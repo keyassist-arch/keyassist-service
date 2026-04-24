@@ -77,6 +77,24 @@ export class PlaywrightService implements OnModuleDestroy {
 
   constructor(private readonly config: ConfigService) {}
 
+  /**
+   * TLS to the origin through many residential/datacenter proxies is effectively MITM; Chromium
+   * often does not trust that chain (ERR_CERT_AUTHORITY_INVALID). Default: ignore when
+   * `SCRAPE_PROXY` is set, unless explicitly disabled with `SCRAPE_IGNORE_HTTPS_ERRORS=false`.
+   */
+  private resolveIgnoreHttpSErrors(overrides: BrowserContextOptions): boolean {
+    if (overrides.ignoreHTTPSErrors != null) {
+      return overrides.ignoreHTTPSErrors;
+    }
+    const raw = this.config.get<string>('SCRAPE_IGNORE_HTTPS_ERRORS')?.trim();
+    if (raw) {
+      const lo = raw.toLowerCase();
+      if (lo === 'true' || lo === '1' || lo === 'yes') return true;
+      if (lo === 'false' || lo === '0' || lo === 'no') return false;
+    }
+    return Boolean(this.config.get<string>('SCRAPE_PROXY')?.trim());
+  }
+
   async getBrowser(): Promise<Browser> {
     if (this.browser) {
       return this.browser;
@@ -154,11 +172,13 @@ export class PlaywrightService implements OnModuleDestroy {
     const locale = overrides.locale ?? profile.locale;
     const timezoneId = overrides.timezoneId ?? profile.timezoneId;
     const acceptLang = profile.acceptLanguage;
+    const ignoreHTTPSErrors = this.resolveIgnoreHttpSErrors(overrides);
     return browser.newContext({
       ...overrides,
       locale,
       timezoneId,
       userAgent,
+      ignoreHTTPSErrors,
       ...(proxy ? { proxy } : {}),
       extraHTTPHeaders: {
         'Accept-Language': acceptLang,

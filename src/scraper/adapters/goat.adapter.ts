@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ProductSource } from '../../common/enums/product-source.enum';
 import { GenericAdapter } from './generic.adapter';
 import { PlaywrightService } from '../playwright.service';
@@ -339,6 +340,7 @@ export class GoatAdapter implements ScraperAdapter {
   private readonly logger = new Logger(GoatAdapter.name);
 
   constructor(
+    private readonly config: ConfigService,
     private readonly playwright: PlaywrightService,
     private readonly generic: GenericAdapter,
   ) {}
@@ -351,9 +353,12 @@ export class GoatAdapter implements ScraperAdapter {
       locale: 'en-US',
     }, url);
     const page = await context.newPage();
+    const navTimeout = this.config.get<string>('SCRAPE_PROXY')?.trim()
+      ? 90_000
+      : 45_000;
 
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeout });
 
       await page
         .waitForSelector('script#__NEXT_DATA__', { timeout: 15_000 })

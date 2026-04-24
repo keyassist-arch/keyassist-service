@@ -1,5 +1,5 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
@@ -11,6 +11,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { Login2faDto } from './dto/login-2fa.dto';
 import { Request } from 'express';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 
@@ -48,6 +49,20 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password, dto.localCart);
+  }
+
+  @Public()
+  @ApiOperation({
+    summary: 'Complete login with TOTP (after password step returns requiresTwoFactor)',
+  })
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('login/2fa')
+  loginWithTwoFactor(@Body() dto: Login2faDto) {
+    return this.authService.completeLoginWithTwoFactor(
+      dto.preAuthToken,
+      dto.code,
+      dto.localCart,
+    );
   }
 
   @Public()

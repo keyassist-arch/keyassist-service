@@ -195,13 +195,44 @@ export class OrdersService {
     return this.toResponse(order);
   }
 
-  async listForUser(userId: string) {
+  async listForUser(
+    userId: string,
+    query?: { status?: string },
+  ) {
+    const status = query?.status?.trim();
+    if (status) {
+      const values = new Set<string>(Object.values(OrderStatus) as string[]);
+      if (!values.has(status)) {
+        throw new BadRequestException(
+          `Invalid status. Use one of: ${[...values].join(', ')}`,
+        );
+      }
+    }
     const list = await this.orders.find({
-      where: { userId },
+      where: {
+        userId,
+        ...(status ? { status: status as OrderStatus } : {}),
+      },
       order: { createdAt: 'DESC' },
       relations: ['items'],
     });
     return list.map((o) => this.toResponse(o));
+  }
+
+  /**
+   * Most recent unpaid order, for a global “Complete payment” banner / deep link
+   * when the cart is already empty.
+   */
+  async getMostRecentPayableOrder(userId: string) {
+    const o = await this.orders.findOne({
+      where: { userId, status: OrderStatus.PENDING },
+      order: { createdAt: 'DESC' },
+      relations: ['items', 'trackingEvents'],
+    });
+    if (!o) {
+      return { order: null };
+    }
+    return { order: this.toResponse(o) };
   }
 
   async findForUser(userId: string, orderId: string) {
@@ -360,6 +391,7 @@ export class OrdersService {
   toResponse(o: Order, admin = false) {
     const subtotal = parseFloat(o.subtotal);
     const pricing = computePricing(Number.isFinite(subtotal) ? subtotal : 0);
+    const pending = o.status === OrderStatus.PENDING;
     return {
       id: o.id,
       userId: o.userId,
@@ -401,6 +433,13 @@ export class OrdersService {
       })),
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,
+      checkout: {
+        canInitializePayment: pending,
+        /** `initialize_payment` when unpaid — use `id` on `POST /payments/initialize` (cart is often already empty). */
+        nextStep: pending
+          ? ('initialize_payment' as const)
+          : ('none' as const),
+      },
     };
   }
 }

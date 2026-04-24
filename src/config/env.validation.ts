@@ -37,6 +37,21 @@ class EnvironmentVariables {
   @IsString()
   JWT_REFRESH_SECRET: string;
 
+  /** Optional; signed short-lived token after password OK when 2FA is enabled (defaults to JWT_ACCESS_SECRET). */
+  @IsString()
+  @IsOptional()
+  JWT_2FA_PREAUTH_SECRET?: string;
+
+  /** Short-lived pre-2FA session token TTL (default 5m). */
+  @IsString()
+  @IsOptional()
+  JWT_2FA_PREAUTH_EXPIRES?: string;
+
+  /** Display name in authenticator apps (e.g. Google Authenticator). */
+  @IsString()
+  @IsOptional()
+  TOTP_ISSUER_NAME?: string;
+
   @IsString()
   @IsOptional()
   REDIS_URL?: string;
@@ -77,7 +92,12 @@ class EnvironmentVariables {
   @IsOptional()
   PAYPAL_SECRET_KEY?: string;
 
-  /** `sandbox` (default) or `live` */
+  /** PayPal’s usual name; used if `PAYPAL_SECRET_KEY` is empty */
+  @IsString()
+  @IsOptional()
+  PAYPAL_CLIENT_SECRET?: string;
+
+  /** `sandbox` (default) | `live` | `production` / `prod` (same as live) */
   @IsString()
   @IsOptional()
   PAYPAL_MODE?: string;
@@ -94,9 +114,21 @@ class EnvironmentVariables {
   @IsOptional()
   MYAZA_API_KEY?: string;
 
+  /**
+   * How to send MYAZA_API_KEY: `x-api-key` (default header X-API-Key) or `bearer` (Authorization: Bearer).
+   */
+  @IsString()
+  @IsOptional()
+  MYAZA_AUTH_MODE?: string;
+
   @IsString()
   @IsOptional()
   MYAZA_BASE_URL?: string;
+
+  /** Path for POST that creates a checkout session, e.g. /api/v1/pos/sessions */
+  @IsString()
+  @IsOptional()
+  MYAZA_SESSIONS_PATH?: string;
 
   @IsString()
   @IsOptional()
@@ -221,6 +253,15 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   SCRAPE_TIMEZONE_ID?: string;
+
+  /**
+   * `true` / `1` / `false` / `0` — Playwright `ignoreHTTPSErrors`. When `SCRAPE_PROXY` is set,
+   * the default is to ignore (many proxies present an untrusted MITM cert). Set `false` to
+   * opt out. When no proxy, default is off unless you set this to `true` (e.g. local SSL inspection).
+   */
+  @IsString()
+  @IsOptional()
+  SCRAPE_IGNORE_HTTPS_ERRORS?: string;
 
   /** `true` / `1` — after adapter scrape, normalize pricing/variants via OpenRouter (requires OPEN_ROUTER_ENABLED + key) */
   @IsString()
