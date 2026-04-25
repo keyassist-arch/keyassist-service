@@ -254,13 +254,13 @@ export class AppleAdapter implements ScraperAdapter {
   async scrape(url: string): Promise<ScrapedProduct> {
     const context = await this.playwright.newScrapeContext({
       userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
       locale: 'en-US',
       timezoneId: 'America/Los_Angeles',
     }, url);
-    const page = await context.newPage();
 
     try {
+      const page = await context.newPage();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await page
         .waitForSelector(

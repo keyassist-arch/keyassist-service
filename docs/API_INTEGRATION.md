@@ -77,7 +77,7 @@ Optional **`cart`** if `localCart` was non-empty.
 }
 ```
 
-- **`preAuthToken`** — short-lived JWT (TTL from **`JWT_2FA_PREAUTH_EXPIRES`**, default **`5m`**; signed with **`JWT_2FA_PREAUTH_SECRET`** if set, else **`JWT_ACCESS_SECRET`**). The client does **not** use this as `Authorization: Bearer` on normal API routes. It is only for the next call.
+- **`preAuthToken`** — short-lived JWT (TTL from **`JWT_2FA_PREAUTH_EXPIRES`**, default **`5m`**; signed with **`JWT_2FA_PREAUTH_SECRET`** if set, else **`JWT_REFRESH_SECRET`**). The client does **not** use this as `Authorization: Bearer` on normal API routes — the server rejects any token carrying a `purpose` claim on protected endpoints. It is only for the next call.
 - Show a **TOTP / authenticator app** field; then call **`POST /auth/login/2fa`**.
 
 **3) TOTP step**
@@ -193,6 +193,7 @@ Use `role` to show/hide admin UI; the API still enforces roles server-side.
 | `GET /payments/methods` | None (recommended before checkout) |
 | `POST /payments/initialize`, `POST /payments/paypal/capture` | Bearer |
 | `GET /admin/*`, `PATCH /admin/*`, `POST /admin/scrape-preview` | Bearer + `ADMIN_SUPER` or `ADMIN_STAFF` |
+| `POST /admin/reconciliation/*`, `GET /admin/reconciliation/*`, `PATCH /admin/reconciliation/*` | Bearer + `ADMIN_SUPER` or `ADMIN_STAFF` |
 
 Webhook routes (`POST /payments/webhooks/*`) are server-to-server — not called from the browser.
 
@@ -259,7 +260,9 @@ There are **no** `accessToken` / `refreshToken` in this response.
 
 **Client UX:** Navigate to a “Check your email” screen; optionally show the masked **`email`**. Do not store JWTs from register.
 
-**Errors:** `400` validation; `409` if email already registered.
+**Email normalization:** the server lowercases and trims the email before storing it. `User@Example.com` and `user@example.com` are treated as the same account. Send any case; the stored value will be lowercase.
+
+**Errors:** `400` validation; `409` if email already registered (including case variants of the same address).
 
 ---
 
@@ -549,15 +552,17 @@ Typical JSON includes:
 
 Authenticator-app 2FA is optional. Full login flow is documented under **[Two-factor authentication (TOTP)](#two-factor-authentication-totp)** in the Authentication section.
 
-| Action | Request |
-|--------|---------|
-| Status only | `GET /me/2fa` — `{ "enabled", "setupPending" }` |
-| Start setup (QR + secret) | `POST /me/2fa/setup` — returns **`qrCodeDataUrl`**, **`otpauthUrl`**, **`secret`**, **`issuer`**. Replaces any previous pending setup. |
-| Complete setup (turn 2FA on) | `POST /me/2fa/enable` — `{ "code": "123456" }` (code from the app after scanning) |
-| Cancel pending setup | `POST /me/2fa/setup/cancel` — clears enrollment if the user did not finish |
-| Turn 2FA off | `POST /me/2fa/disable` — `{ "password": "...", "code": "..." }` (password + current TOTP). **All refresh sessions are revoked**; user must sign in again on this device. |
+| Action | Request | Rate limit |
+|--------|---------|------------|
+| Status only | `GET /me/2fa` — `{ "enabled", "setupPending" }` | — |
+| Start setup (QR + secret) | `POST /me/2fa/setup` — returns **`qrCodeDataUrl`**, **`otpauthUrl`**, **`secret`**, **`issuer`**. Replaces any previous pending setup. | 5 / min |
+| Complete setup (turn 2FA on) | `POST /me/2fa/enable` — `{ "code": "123456" }` (code from the app after scanning) | 5 / min |
+| Cancel pending setup | `POST /me/2fa/setup/cancel` — clears enrollment if the user did not finish | — |
+| Turn 2FA off | `POST /me/2fa/disable` — `{ "password": "...", "code": "..." }` (password + current TOTP). **All refresh sessions are revoked**; user must sign in again on this device. | 5 / min |
 
 All of the above require **Bearer** (user must be logged in), except 2FA is configured **before** it affects login: enable flows run while authenticated; login then requires TOTP for future sessions.
+
+**`otpauthUrl` label format:** the URI uses `issuer:email` as the label (e.g. `otpauth://totp/My%20Store:user@example.com?...`). This is the format required by Google Authenticator and most authenticator apps to display the service name alongside the account. No client-side parsing is needed — just render the `qrCodeDataUrl` as an `<img>` and offer `otpauthUrl` as a deep link for apps that support it.
 
 ### Update profile
 
@@ -823,7 +828,7 @@ Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set
 
 `GET /orders`
 
-**Optional filter:** `GET /orders?status=PENDING` — returns only orders in that state (e.g. all **unpaid** orders). `status` must be a full enum value: `PENDING`, `PAID`, `PROCESSING`, `ORDERED_FROM_SUPPLIER`, `SHIPPED`, `DELIVERED`, `CANCELLED`. Invalid values return **400**.
+**Optional filter:** `GET /orders?status=PENDING` — returns only orders in that state (e.g. all **unpaid** orders). `status` must be a full enum value: `PENDING`, `PAID`, `PROCESSING`, `ORDERED_FROM_SUPPLIER`, `SHIPPED`, `DELIVERED`, `CANCELLED`, `REFUNDED`, `DISPUTED`. Invalid values return **400**.
 
 ### Pending payment (single order for the “stuck” checkout UX)
 
@@ -841,7 +846,7 @@ This avoids scanning **`GET /orders`** on the client, though filtering with **`?
 
 **Order response highlights:**
 
-- `status` — `PENDING` | `PAID` | `PROCESSING` | `ORDERED_FROM_SUPPLIER` | `SHIPPED` | `DELIVERED` | `CANCELLED`
+- `status` — `PENDING` | `PAID` | `PROCESSING` | `ORDERED_FROM_SUPPLIER` | `SHIPPED` | `DELIVERED` | `CANCELLED` | `REFUNDED` | `DISPUTED`
 - `subtotal`, `serviceCharge`, `discount`, `fees`, `total`, `currency` — server-computed checkout totals (same pricing rules as cart)
 - `checkout` — **machine-readable next action** (on every order response):
   - `canInitializePayment` — `true` when `status === "PENDING"` (user may call **`POST /payments/initialize`**)
@@ -854,7 +859,13 @@ This avoids scanning **`GET /orders`** on the client, though filtering with **`?
     - **`checkoutProvider`** — same as `provider` when checkout metadata was stored
   - `paystackReference`, `stripeCheckoutSessionId`, `stripePaymentIntentId` as applicable
   - After **payment completes**, `methodDetails` may also include card/last4/PayPal/crypto fields depending on provider (see Swagger / server types).
-- `tracking[]` — shipment events when present
+- `tracking[]` — append-only shipment event log. Each entry:
+  - `id` — UUID
+  - `carrier` — string or `null` (nullable; a status-only update need not change the carrier)
+  - `trackingNumber` — string or `null` (nullable for same reason)
+  - `status` — lifecycle label string: `UPDATED` | `IN_TRANSIT` | `OUT_FOR_DELIVERY` | `DELIVERED` | `EXCEPTION` (custom values possible)
+  - `message` — optional human-readable note for the customer (e.g. `"Arrived at local hub"`) or `null`
+  - `createdAt` — ISO timestamp of when this event was recorded (the column was historically called `updatedAt` in older API versions — use `createdAt`)
 
 **Retrying payment (no extra endpoint):** The same **`GET /orders/:id`** response is enough to **display** the order and to **call `POST /payments/initialize` again** while the order is unpaid.
 
@@ -1062,11 +1073,12 @@ Same order shape as user list, plus `userEmail` on each order when returned thro
   "supplierOrderId": "PO-123",
   "trackingNumber": "1Z999...",
   "carrier": "DHL",
-  "trackingStatus": "IN_TRANSIT"
+  "trackingStatus": "IN_TRANSIT",
+  "trackingMessage": "Arrived at local hub"
 }
 ```
 
-All fields optional. When `carrier` and `trackingNumber` are both sent, a tracking row is appended and a notification may be sent.
+All fields optional. When `carrier` and `trackingNumber` are both sent **and at least one differs from the previous value**, a tracking event row is appended and an email + real-time notification may be sent. `trackingMessage` (max 512 chars) is the human-readable note shown to the customer on that event; omit it for a silent status change.
 
 ### List products (admin)
 
@@ -1081,6 +1093,116 @@ All fields optional. When `carrier` and `trackingNumber` are both sent, a tracki
 ```
 
 Runs **Playwright in the HTTP request** (no import row, no queue). Returns `{ url, detectedSource, scraped }` in **`ScrapedProduct`** shape. **Throttled** (e.g. 5/min). **Does not update the catalog:** there is no `products` row write. Use **`POST /products/import`** (queued worker) so results are saved and **`GET /products/:idOrSlug`** reflects adapter changes after you deploy new scraper code. See **`docs/SCRAPER_ARCHITECTURE.md`** for the scrape stack overview.
+
+---
+
+## Reconciliation (admin only)
+
+Bearer + role `ADMIN_STAFF` or `ADMIN_SUPER`. All routes are under `/admin/reconciliation`.
+
+Reconciliation covers **refunds** (triggering provider refund APIs) and **customer issues** (support tickets). Both are append-only audit trails — nothing is deleted.
+
+### Refunds
+
+#### Create refund — `POST /admin/reconciliation/refunds`
+
+```json
+{
+  "orderId": "uuid",
+  "amount": "49.99",
+  "reason": "Customer received wrong item",
+  "internalNote": "Verified via CS ticket #123",
+  "initiatedBy": "admin-user-uuid"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `orderId` | Yes | UUID of the order to refund |
+| `amount` | Yes | Decimal string (e.g. `"49.99"`) — must not exceed order total |
+| `reason` | No | Customer-visible reason (max 512 chars) |
+| `internalNote` | No | Staff-only note (max 1024 chars) |
+| `initiatedBy` | No | Admin user UUID for audit trail |
+
+**Response:** the created refund object. `status` starts as `PENDING`, transitions to `PROCESSING` → `SUCCEEDED` or `FAILED` as the provider responds. `MANUAL_REQUIRED` means the payment provider (e.g. crypto/Myaza) has no refund API — handle manually.
+
+**Refund status values:** `PENDING` | `PROCESSING` | `SUCCEEDED` | `FAILED` | `MANUAL_REQUIRED`
+
+When a full refund succeeds the order `status` is automatically updated to `REFUNDED`.
+
+#### List refunds — `GET /admin/reconciliation/refunds`
+
+Returns all refund records newest-first. Optional query: `?orderId=<uuid>` to filter by order.
+
+#### Get refund — `GET /admin/reconciliation/refunds/:id`
+
+---
+
+### Customer issues
+
+#### Create issue — `POST /admin/reconciliation/issues`
+
+```json
+{
+  "userId": "uuid",
+  "orderId": "uuid",
+  "type": "REFUND_REQUEST",
+  "priority": "HIGH",
+  "subject": "Item not received after 3 weeks",
+  "description": "Customer reports DHL tracking shows delivered but parcel never arrived.",
+  "internalNote": "Opened by CS agent Jane",
+  "assignedTo": "admin-user-uuid"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `userId` | Yes | UUID of the affected customer |
+| `orderId` | No | Linked order UUID (nullable — some issues are account-level) |
+| `type` | No | `PAYMENT_DISPUTE` \| `REFUND_REQUEST` \| `ITEM_NOT_RECEIVED` \| `WRONG_ITEM` \| `DAMAGED_ITEM` \| `BILLING_ERROR` \| `OTHER` (default `OTHER`) |
+| `priority` | No | `LOW` \| `MEDIUM` \| `HIGH` \| `CRITICAL` (default `MEDIUM`) |
+| `subject` | Yes | Short title (max 256 chars) |
+| `description` | Yes | Full description |
+| `internalNote` | No | Staff-only note |
+| `assignedTo` | No | Admin user UUID |
+
+**Issue status values:** `OPEN` | `IN_PROGRESS` | `AWAITING_CUSTOMER` | `RESOLVED` | `CLOSED`
+
+#### List issues — `GET /admin/reconciliation/issues`
+
+Optional query params: `?status=OPEN`, `?userId=<uuid>`, `?orderId=<uuid>`, `?type=REFUND_REQUEST`, `?priority=HIGH`.
+
+#### Get issue — `GET /admin/reconciliation/issues/:id`
+
+#### Update issue — `PATCH /admin/reconciliation/issues/:id`
+
+```json
+{
+  "status": "IN_PROGRESS",
+  "priority": "CRITICAL",
+  "assignedTo": "admin-uuid",
+  "resolutionNote": "Replacement shipped, tracking DHL 1Z999...",
+  "internalNote": "Updated after call with customer"
+}
+```
+
+All fields optional.
+
+#### Resolve with refund — `POST /admin/reconciliation/issues/:id/resolve-with-refund`
+
+Convenience endpoint that creates a refund **and** closes the issue in one call.
+
+```json
+{
+  "amount": "49.99",
+  "reason": "Refund issued for item not received",
+  "internalNote": "Auto-closed via resolve-with-refund",
+  "resolutionNote": "We have issued a full refund. Please allow 3–5 business days.",
+  "initiatedBy": "admin-uuid"
+}
+```
+
+**Response:** `{ "issue": { ... }, "refund": { ... } }` — both the updated issue (status `RESOLVED`) and the newly created refund object.
 
 ---
 
@@ -1164,7 +1286,8 @@ Nest validation errors often look like:
 1. **Browse / import:** `POST /products/import` → open Socket.IO **`import.subscribe`** with `importId` and apply **`import.updated`** when `status === "COMPLETED"` (use **`product`** from the event—no wait for a poll). Optionally keep polling `GET /products/import/:id` as a fallback. After a **re-import**, the next **`import.updated`** with **`COMPLETED`** again carries the refreshed **`product`**.
 2. **Checkout:** `POST /cart/items` … → render cart totals from API (`subtotal`, `serviceCharge`, `discount`, `fees`, `total`) → **`POST /orders`** (this **clears the cart** and returns the order; save **`order.id`**) → from this point, **do not** rely on `GET /cart` for payment UI; use the order or **`GET /orders/:id`** for line items and totals → `GET /payments/methods` (only show `available` providers) → **`POST /payments/initialize`** (body uses **`orderId: <order.id>`** from the step above) → refetch **`GET /orders/:id`** if you need **`payment.methodDetails.checkoutId`** for your UI → redirect to Paystack / Stripe / PayPal approval URL (or show Myaza QR) → on return, for PayPal call `POST /payments/paypal/capture`, then poll `GET /orders/:id` until **`PAID`**. If **`initialize` fails**, keep the user on an **order-based** screen, offer **retry** (same `orderId`), and show a path to **pending orders**; see **Get one order → Retrying payment** and **Cart vs order** above.
 3. **Account:** register → verify email (`POST /auth/verify-email` or link from inbox) → login. If login returns **`requiresTwoFactor`**, show TOTP step and **`POST /auth/login/2fa`** (send **`localCart`** here if you need guest cart merge). Handle login **`403`** + **`EMAIL_NOT_VERIFIED`** with resend. **`GET /me` / `PATCH /me`**; optional **`GET/POST /me/2fa/*`** for Settings → 2FA. Keep cart and orders behind auth.
-4. **Admin:** gate routes on `role`; use `/admin/*` (e.g. **`GET /admin/products`** for the full catalog). Storefront home can use public **`GET /products?limit=…`** for recent items.
+4. **Admin:** gate routes on `role`; use `/admin/*` (e.g. **`GET /admin/products`** for the full catalog). Storefront home can use public **`GET /products?limit=…`** for recent items. For refund and support ticket workflows, use **`/admin/reconciliation/*`** (see [Reconciliation](#reconciliation-admin-only)).
+5. **Order status display:** handle `REFUNDED` and `DISPUTED` in your status badge/copy alongside the existing values. `REFUNDED` is set automatically by the reconciliation service when a full provider refund succeeds; `DISPUTED` is set manually by admin when a chargeback or payment dispute is opened.
 
 ---
 
@@ -1215,4 +1338,12 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | PATCH | `/admin/orders/:id` | Bearer admin |
 | GET | `/admin/products` | Bearer admin |
 | POST | `/admin/scrape-preview` | Bearer admin |
+| POST | `/admin/reconciliation/refunds` | Bearer admin |
+| GET | `/admin/reconciliation/refunds` | Bearer admin |
+| GET | `/admin/reconciliation/refunds/:id` | Bearer admin |
+| POST | `/admin/reconciliation/issues` | Bearer admin |
+| GET | `/admin/reconciliation/issues` | Bearer admin |
+| GET | `/admin/reconciliation/issues/:id` | Bearer admin |
+| PATCH | `/admin/reconciliation/issues/:id` | Bearer admin |
+| POST | `/admin/reconciliation/issues/:id/resolve-with-refund` | Bearer admin |
 | Socket.IO | `/realtime` | — for import events; optional JWT for `order.updated` |

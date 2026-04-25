@@ -1,16 +1,21 @@
 import { ProductSource } from '../../common/enums/product-source.enum';
 
 export function detectProductSource(url: string): ProductSource {
-  const u = url.toLowerCase();
-  if (u.includes('jumia.')) return ProductSource.JUMIA;
-  if (u.includes('amazon.') || u.includes('amzn.')) return ProductSource.AMAZON;
-  if (u.includes('nike.')) return ProductSource.NIKE;
-  if (u.includes('apple.')) return ProductSource.APPLE;
-  if (u.includes('shein.')) return ProductSource.SHEIN;
-  if (u.includes('goat.com')) return ProductSource.GOAT;
-  if (u.includes('stockx.com')) return ProductSource.STOCKX;
-  if (u.includes('ebay.')) return ProductSource.EBAY;
-  if (u.includes('zara.com')) return ProductSource.ZARA;
-  if (u.includes('converse.com')) return ProductSource.CONVERSE;
+  let h: string;
+  try {
+    h = new URL(url).hostname.toLowerCase();
+  } catch {
+    h = url.toLowerCase();
+  }
+  if (h.includes('jumia.')) return ProductSource.JUMIA;
+  if (h.includes('amazon.') || h.includes('amzn.')) return ProductSource.AMAZON;
+  if (h.includes('nike.')) return ProductSource.NIKE;
+  if (h.includes('apple.')) return ProductSource.APPLE;
+  if (h.includes('shein.')) return ProductSource.SHEIN;
+  if (h.includes('goat.com')) return ProductSource.GOAT;
+  if (h.includes('stockx.com')) return ProductSource.STOCKX;
+  if (h.includes('ebay.')) return ProductSource.EBAY;
+  if (h.includes('zara.com')) return ProductSource.ZARA;
+  if (h.includes('converse.com')) return ProductSource.CONVERSE;
   return ProductSource.GENERIC;
 }

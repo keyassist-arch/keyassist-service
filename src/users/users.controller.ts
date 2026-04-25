@@ -7,6 +7,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -47,12 +48,14 @@ export class UsersController {
 
   @Post('me/2fa/setup')
   @ApiOperation({ summary: 'Start TOTP setup (scan QR, then call enable)' })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async beginTwoFactor(@CurrentUser() user: JwtPayload) {
     return this.usersService.beginTotpSetup(user.sub);
   }
 
   @Post('me/2fa/enable')
   @ApiOperation({ summary: 'Enable 2FA after scanning QR / entering secret' })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async enableTwoFactor(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ConfirmTotpDto,
@@ -70,6 +73,7 @@ export class UsersController {
 
   @Post('me/2fa/disable')
   @ApiOperation({ summary: 'Turn off 2FA (password + app code; signs out other sessions)' })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async disableTwoFactor(
     @CurrentUser() user: JwtPayload,
     @Body() dto: DisableTotpDto,

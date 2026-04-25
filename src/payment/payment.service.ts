@@ -661,7 +661,10 @@ export class PaymentService {
       .createHmac('sha512', secret)
       .update(rawBody)
       .digest('hex');
-    return hash === signature;
+    // Length check before timingSafeEqual (required: both buffers same size).
+    // Lengths differ only when the incoming value isn't a valid SHA-512 hex — safe to short-circuit.
+    if (hash.length !== signature.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
   }
 
   verifyMyazaSignature(rawBody: Buffer, signature: string | undefined) {
@@ -673,7 +676,8 @@ export class PaymentService {
       .createHmac('sha256', secret)
       .update(rawBody)
       .digest('hex');
-    return hash === signature;
+    if (hash.length !== signature.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
   }
 
   parseStripeWebhookEvent(
@@ -793,6 +797,8 @@ export class PaymentService {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
+          // Idempotency key — prevents a duplicate capture if the client retries after a timeout.
+          'PayPal-Request-Id': `capture-${orderId}`,
         },
       },
     );

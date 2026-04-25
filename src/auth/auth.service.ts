@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -48,8 +49,17 @@ export const AUTH_ERROR_CODES = {
 } as const;
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
+  /**
+   * Pre-hashed sentinel used in `login` so bcrypt always runs, even when the
+   * email is not found — prevents timing-based user enumeration.
+   */
+  private sentinelHash!: string;
+
+  async onModuleInit() {
+    this.sentinelHash = await bcrypt.hash('__sentinel__', 10);
+  }
 
   constructor(
     private readonly usersService: UsersService,
@@ -92,8 +102,14 @@ export class AuthService {
   }
 
   async login(email: string, password: string, localCart?: LocalCartItemDto[]) {
-    const user = await this.usersService.findByEmail(email);
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    const user = await this.usersService.findByEmailInsensitive(email);
+    // Always run bcrypt regardless of whether the user exists — prevents
+    // timing-based email enumeration (comparing against sentinel takes the
+    // same wall-time as a real hash comparison).
+    const isValidPassword = await bcrypt
+      .compare(password, user?.passwordHash ?? this.sentinelHash)
+      .catch(() => false);
+    if (!user || !isValidPassword) {
       throw new UnauthorizedException('Invalid credentials');
     }
     if (!user.emailVerifiedAt) {
@@ -382,7 +398,10 @@ export class AuthService {
     if (dedicated?.trim()) {
       return dedicated.trim();
     }
-    return this.config.getOrThrow<string>('JWT_ACCESS_SECRET');
+    // Fall back to the refresh secret (not the access secret) so that a
+    // pre-auth token is never accepted as a Bearer API token — even on
+    // deployments that haven't set JWT_2FA_PREAUTH_SECRET.
+    return this.config.getOrThrow<string>('JWT_REFRESH_SECRET');
   }
 
   private async issueTwoFactorPreauthToken(
@@ -431,14 +450,16 @@ export class AuthService {
     const payload: JwtPayload = { sub: userId, email, role };
     const accessTtl = this.config.get<string>('JWT_ACCESS_EXPIRES', '15m');
     const refreshTtl = this.config.get<string>('JWT_REFRESH_EXPIRES', '7d');
-    const accessToken = await this.jwt.signAsync(payload, {
-      secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-      expiresIn: accessTtl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
-    });
-    const refreshToken = await this.jwt.signAsync(payload, {
-      secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-      expiresIn: refreshTtl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
-    });
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwt.signAsync(payload, {
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+        expiresIn: accessTtl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+      }),
+      this.jwt.signAsync(payload, {
+        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+        expiresIn: refreshTtl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+      }),
+    ]);
     const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
     await this.usersService.setRefreshTokenHash(userId, refreshTokenHash);
     return { accessToken, refreshToken, expiresIn: accessTtl };

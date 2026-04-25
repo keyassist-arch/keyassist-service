@@ -1,4 +1,4 @@
-import { IsInt, IsObject, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsInt, IsObject, IsOptional, IsUUID, Max, Min } from 'class-validator';
 
 /** One line from a guest / localStorage cart — same shape as `POST /cart/items`. */
 export class LocalCartItemDto {
@@ -7,6 +7,7 @@ export class LocalCartItemDto {
 
   @IsInt()
   @Min(1)
+  @Max(100)
   quantity: number;
 
   @IsOptional()

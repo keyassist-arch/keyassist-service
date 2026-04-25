@@ -10,6 +10,9 @@ export const OPENROUTER_DEFAULT_MODEL = 'stepfun/step-3.5-flash:free';
 const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant for a unified commerce platform. Be concise, accurate, and grounded in the data provided.';
 
+/** ms before an OpenRouter request is aborted (free-tier models can queue for a long time). */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 /**
  * Single LLM entrypoint: **OpenRouter only** (Stepfun flash by default).
  * Set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY.
@@ -20,6 +23,8 @@ export class LlmGatewayService implements OnModuleInit {
   private readonly systemPrompt: string;
   private readonly enabled: boolean;
   private readonly model: string;
+  private readonly defaultTemperature: number;
+  private readonly defaultMaxTokens: number;
   private readonly client: OpenAI | null;
 
   constructor(private readonly config: ConfigService) {
@@ -39,9 +44,23 @@ export class LlmGatewayService implements OnModuleInit {
       this.config.get<string>('OPENROUTER_MODEL')?.trim() ||
       OPENROUTER_DEFAULT_MODEL;
 
+    const rawTemp = this.config.get<string>('LLM_TEMPERATURE')?.trim();
+    this.defaultTemperature =
+      rawTemp && Number.isFinite(Number(rawTemp)) ? Number(rawTemp) : 0.1;
+
+    const rawTokens = this.config.get<string>('LLM_MAX_TOKENS')?.trim();
+    this.defaultMaxTokens =
+      rawTokens && Number.isFinite(Number(rawTokens)) ? Number(rawTokens) : 4096;
+
     const referer =
       this.config.get<string>('OPENROUTER_HTTP_REFERER')?.trim() ||
       'http://localhost';
+
+    const timeoutRaw = this.config.get<string>('LLM_TIMEOUT_MS')?.trim();
+    const timeout =
+      timeoutRaw && Number.isFinite(Number(timeoutRaw))
+        ? Number(timeoutRaw)
+        : DEFAULT_TIMEOUT_MS;
 
     this.client =
       this.enabled && apiKey
@@ -52,7 +71,11 @@ export class LlmGatewayService implements OnModuleInit {
               'HTTP-Referer': referer,
               'X-Title': 'unified-commerce',
             },
-            maxRetries: 1,
+            // Let the application layer own retry logic — SDK retries on 400/422
+            // are useless (same deterministic error) and interfere with the manual
+            // json-mode fallback below.
+            maxRetries: 0,
+            timeout,
           })
         : null;
   }
@@ -67,8 +90,15 @@ export class LlmGatewayService implements OnModuleInit {
   }
 
   /**
-   * Chat completion. Use `jsonMode: true` for JSON-only responses; on 400 from the model,
-   * retries once without `response_format`.
+   * Chat completion.
+   *
+   * Options:
+   * - `model` — override the configured default model for this call
+   * - `systemPrompt` — override the default system prompt
+   * - `jsonMode` — request a JSON-only response; falls back to plain text if
+   *   the model rejects `response_format` (400/422) and logs a warning
+   * - `temperature` — override the default (env: LLM_TEMPERATURE, default 0.1)
+   * - `maxTokens` — override the default (env: LLM_MAX_TOKENS, default 4096)
    */
   async generate(
     prompt: string,
@@ -76,6 +106,8 @@ export class LlmGatewayService implements OnModuleInit {
       model?: string;
       systemPrompt?: string;
       jsonMode?: boolean;
+      temperature?: number;
+      maxTokens?: number;
     },
   ): Promise<string> {
     if (!this.client) {
@@ -86,24 +118,45 @@ export class LlmGatewayService implements OnModuleInit {
 
     const model = options?.model ?? this.model;
     const system = options?.systemPrompt ?? this.systemPrompt;
+    const temperature = options?.temperature ?? this.defaultTemperature;
+    const max_tokens = options?.maxTokens ?? this.defaultMaxTokens;
+
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: system },
       { role: 'user', content: prompt },
     ];
 
-    const run = async (jsonMode: boolean) => {
-      const res = await this.client!.chat.completions.create({
-        model,
-        messages,
-        temperature: 0.1,
-        max_tokens: 4096,
-        ...(jsonMode
-          ? { response_format: { type: 'json_object' as const } }
-          : {}),
-      });
+    const run = async (jsonMode: boolean): Promise<string> => {
+      let res: OpenAI.Chat.ChatCompletion;
+      try {
+        res = await this.client!.chat.completions.create({
+          model,
+          messages,
+          temperature,
+          max_tokens,
+          ...(jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
+        });
+      } catch (e) {
+        this.logger.error(
+          `[llm] step=api_error model=${model} jsonMode=${jsonMode}: ${e instanceof Error ? e.message : String(e)}`,
+          e instanceof Error ? e.stack : undefined,
+        );
+        throw e;
+      }
+
+      // Log token usage on every completion for cost visibility.
+      if (res.usage) {
+        this.logger.log(
+          `[llm] step=completion model=${model} ` +
+            `prompt_tokens=${res.usage.prompt_tokens} ` +
+            `completion_tokens=${res.usage.completion_tokens} ` +
+            `total_tokens=${res.usage.total_tokens}`,
+        );
+      }
+
       const content = res.choices?.[0]?.message?.content?.trim();
       if (content == null || content === '') {
-        throw new Error('OpenRouter returned empty content.');
+        throw new Error(`OpenRouter returned empty content (model=${model}).`);
       }
       return content;
     };
@@ -112,12 +165,14 @@ export class LlmGatewayService implements OnModuleInit {
       try {
         return await run(true);
       } catch (e) {
-        const retry =
-          e instanceof APIError &&
-          (e.status === 400 || e.status === 422);
-        if (retry) {
+        // Some OpenRouter models don't support response_format — fall back to plain
+        // text and let the caller parse. Warn so this is visible in logs.
+        const fallback =
+          e instanceof APIError && (e.status === 400 || e.status === 422);
+        if (fallback) {
           this.logger.warn(
-            '[llm] json_object rejected by model; retrying without response_format',
+            `[llm] json_object rejected by model=${model} (${e.status}); ` +
+              'retrying without response_format — result may not be valid JSON',
           );
           return run(false);
         }
@@ -131,7 +186,11 @@ export class LlmGatewayService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (this.client) {
       this.logger.log(
-        `OpenRouter enabled (model: ${this.model}).`,
+        `[llm] OpenRouter enabled — model=${this.model} temperature=${this.defaultTemperature} maxTokens=${this.defaultMaxTokens}`,
+      );
+    } else {
+      this.logger.log(
+        '[llm] OpenRouter disabled — set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY to enable LLM features',
       );
     }
   }

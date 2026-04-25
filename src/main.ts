@@ -9,27 +9,27 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
 
-app.enableCors({
-  origin: true, // TEMP: allow all for debugging
-  credentials: true,
-});
+// app.enableCors({
+//   origin: true, // TEMP: allow all for debugging
+//   credentials: true,
+// });
 
   // Enable CORS with explicit configuration
-  // app.enableCors({
-  //   origin: [
-  //     'https://unified-commerce-frontend-production.up.railway.app',
-  //     'http://localhost:3000',
-  //     'http://localhost:3001',
-  //     'http://127.0.0.1:3000',
-  //     'http://127.0.0.1:3001',
-  //   ],
-  //   credentials: true,
-  //   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-  //   allowedHeaders: 'Origin,X-Requested-With,Content-Type,Accept,Authorization',
-  //   exposedHeaders: 'Content-Length,X-Total-Count',
-  //   preflightContinue: false,
-  //   optionsSuccessStatus: 200,
-  // });
+  app.enableCors({
+    origin: [
+      'https://unified-commerce-frontend-production.up.railway.app',
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001',
+    ],
+    credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Origin,X-Requested-With,Content-Type,Accept,Authorization',
+    exposedHeaders: 'Content-Length,X-Total-Count',
+    preflightContinue: false,
+    optionsSuccessStatus: 200,
+  });
 
   setupSwagger(app);
   app.useGlobalPipes(

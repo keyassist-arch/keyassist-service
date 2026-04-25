@@ -99,20 +99,38 @@ export class ProductsService {
   }
 
   /**
-   * Unique slug for URLs (`/products/{slug}`). Re-resolves on title change; excludes `productId` from collision checks on update.
+   * Unique slug for URLs (`/products/{slug}`). Excludes `productId` from collision checks on update.
+   *
+   * Uses a single bulk query to fetch all clashing slugs, then picks the first
+   * available suffix in memory — avoids N sequential DB round-trips.
    */
   async allocateUniqueSlug(title: string, productId?: string): Promise<string> {
     const base = slugifyTitle(title);
-    let candidate = base;
-    let n = 2;
-    for (;;) {
-      const clash = await this.products.findOne({ where: { slug: candidate } });
-      if (!clash || clash.id === productId) {
-        return candidate;
-      }
-      candidate = `${base}-${n}`;
-      n += 1;
+
+    const qb = this.products
+      .createQueryBuilder('p')
+      .select('p.slug', 'slug')
+      .where('p.slug = :base OR p.slug LIKE :pattern', {
+        base,
+        pattern: `${base}-%`,
+      });
+    if (productId) {
+      qb.andWhere('p.id != :productId', { productId });
     }
+
+    const rows = await qb.getRawMany<{ slug: string }>();
+    const taken = new Set(rows.map((r) => r.slug));
+
+    if (!taken.has(base)) return base;
+
+    // Find the first available numeric suffix.
+    for (let n = 2; n <= taken.size + 2; n++) {
+      const candidate = `${base}-${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+
+    // Fallback — practically unreachable.
+    return `${base}-${Date.now()}`;
   }
 
   async upsertProductForImport(
@@ -231,7 +249,12 @@ export class ProductsService {
       scraped,
       product.markupPercent,
     );
-    patch.slug = await this.allocateUniqueSlug(scraped.title, product.id);
+    // Only reallocate the slug when the title has actually changed — saves a DB query on every rescrape.
+    const titleChanged =
+      scraped.title.trim().toLowerCase() !== product.title.trim().toLowerCase();
+    patch.slug = titleChanged
+      ? await this.allocateUniqueSlug(scraped.title, product.id)
+      : product.slug;
     Object.assign(product, patch);
     this.applyScrapedJsonColumns(product, patch);
     const saved = await this.products.save(product);
@@ -252,7 +275,11 @@ export class ProductsService {
       scraped,
       product.markupPercent,
     );
-    patch.slug = await this.allocateUniqueSlug(scraped.title, product.id);
+    const titleChanged =
+      scraped.title.trim().toLowerCase() !== product.title.trim().toLowerCase();
+    patch.slug = titleChanged
+      ? await this.allocateUniqueSlug(scraped.title, product.id)
+      : product.slug;
     Object.assign(product, patch);
     this.applyScrapedJsonColumns(product, patch);
     return this.products.save(product);

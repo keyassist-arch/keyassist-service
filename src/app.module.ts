@@ -21,6 +21,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentModule } from './payment/payment.module';
 import { AdminModule } from './admin/admin.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { TotpModule } from './totp/totp.module';
 import { ApiRootController } from './api-root.controller';
 import { HealthController } from './health.controller';
@@ -41,6 +42,18 @@ import { HealthController } from './health.controller';
       useFactory: (config: ConfigService) => ({
         connection: {
           url: config.get<string>('REDIS_URL') || 'redis://127.0.0.1:6379',
+          /**
+           * Both flags are required by BullMQ:
+           *  - maxRetriesPerRequest: null  — blocking commands must not be
+           *    abandoned after N retries; BullMQ manages its own retry logic.
+           *  - enableReadyCheck: false     — skip the INFO ping so the client
+           *    connects without waiting for Redis to report "ready", which
+           *    prevents startup failures on slow or sentinel-managed instances.
+           */
+          maxRetriesPerRequest: null,
+          enableReadyCheck: false,
+          connectTimeout: 10_000,
+          retryStrategy: (times: number) => Math.min(times * 200, 5_000),
         },
       }),
     }),
@@ -91,6 +104,7 @@ import { HealthController } from './health.controller';
     PaymentModule,
     AdminModule,
     RealtimeModule,
+    ReconciliationModule,
   ],
   controllers: [HealthController, ApiRootController],
   providers: [

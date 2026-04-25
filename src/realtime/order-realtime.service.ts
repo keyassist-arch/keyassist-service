@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
 
 @Injectable()
 export class OrderRealtimeService {
+  private readonly logger = new Logger(OrderRealtimeService.name);
   private server: Server | null = null;
 
   attach(server: Server): void {
@@ -13,6 +14,12 @@ export class OrderRealtimeService {
     userId: string,
     payload: { orderId: string; status: string },
   ): void {
-    this.server?.to(`user:${userId}`).emit('order.updated', payload);
+    if (!this.server) {
+      this.logger.warn(
+        `[realtime] emitOrderUpdate called before gateway init — orderId=${payload.orderId} userId=${userId}`,
+      );
+      return;
+    }
+    this.server.to(`user:${userId}`).emit('order.updated', payload);
   }
 }

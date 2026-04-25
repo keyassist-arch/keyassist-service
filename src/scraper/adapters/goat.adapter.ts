@@ -349,15 +349,15 @@ export class GoatAdapter implements ScraperAdapter {
     const context = await this.playwright.newScrapeContext({
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
       locale: 'en-US',
     }, url);
-    const page = await context.newPage();
     const navTimeout = this.config.get<string>('SCRAPE_PROXY')?.trim()
       ? 90_000
       : 45_000;
 
     try {
+      const page = await context.newPage();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeout });
 
       await page
@@ -407,6 +407,7 @@ export class GoatAdapter implements ScraperAdapter {
       }
 
       const pricedSizes = merged.filter((m) => m.cents != null && m.cents > 0);
+      const resolved = resolveGoatDisplayPrice(product);
 
       let priceStr: string | null = null;
       let currency = 'USD';
@@ -417,12 +418,9 @@ export class GoatAdapter implements ScraperAdapter {
         );
         priceStr = centsToDecimal(minRow.cents!);
         currency = minRow.currency;
-      } else {
-        const resolved = resolveGoatDisplayPrice(product);
-        if (resolved) {
-          priceStr = centsToDecimal(resolved.cents);
-          currency = resolved.currency;
-        }
+      } else if (resolved) {
+        priceStr = centsToDecimal(resolved.cents);
+        currency = resolved.currency;
       }
 
       if (!product.name || !priceStr) {
@@ -493,7 +491,7 @@ export class GoatAdapter implements ScraperAdapter {
         !hasSizes ||
         availableMerged.length > 0 ||
         pricedSizes.length > 0 ||
-        resolveGoatDisplayPrice(product) != null
+        resolved != null
           ? 'in_stock'
           : 'out_of_stock';
 

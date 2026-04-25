@@ -37,8 +37,9 @@ export class AdminService {
     return rows.map((o) => this.ordersService.toResponse(o, true));
   }
 
-  listProducts() {
-    return this.productsService.findAllForAdmin();
+  async listProducts() {
+    const products = await this.productsService.findAllForAdmin();
+    return products.map((p) => this.productsService.toResponse(p));
   }
 
   async patchOrder(orderId: string, dto: AdminPatchOrderDto) {
@@ -46,63 +47,85 @@ export class AdminService {
       `[admin] step=patch_order_begin orderId=${orderId} fields=${Object.keys(dto).join(',')}`,
     );
     const order = await this.ordersService.findById(orderId);
-    if (dto.status !== undefined) {
-      order.status = dto.status;
-    }
-    if (dto.supplierOrderId !== undefined) {
-      order.supplierOrderId = dto.supplierOrderId;
-    }
-    if (dto.trackingNumber !== undefined) {
-      order.trackingNumber = dto.trackingNumber;
-    }
-    if (dto.carrier !== undefined) {
-      order.carrier = dto.carrier;
-    }
+    const previousStatus = order.status;
+    // Snapshot before mutation so we can detect what actually changed.
+    const previousCarrier = order.carrier;
+    const previousTrackingNumber = order.trackingNumber;
+
+    if (dto.status !== undefined) order.status = dto.status;
+    if (dto.supplierOrderId !== undefined) order.supplierOrderId = dto.supplierOrderId;
+    if (dto.trackingNumber !== undefined) order.trackingNumber = dto.trackingNumber;
+    if (dto.carrier !== undefined) order.carrier = dto.carrier;
+
     await this.orders.save(order);
     this.logger.log(
       `[admin] step=patch_order_saved orderId=${orderId} status=${order.status}`,
     );
 
-    if (dto.carrier && dto.trackingNumber) {
+    // Only write a new tracking row when carrier + trackingNumber are supplied
+    // AND at least one of them actually changed — prevents duplicate rows on
+    // repeated patches with the same values.
+    const trackingChanged =
+      dto.carrier !== undefined &&
+      dto.trackingNumber !== undefined &&
+      (dto.carrier !== previousCarrier || dto.trackingNumber !== previousTrackingNumber);
+
+    if (dto.carrier && dto.trackingNumber && trackingChanged) {
       const row = this.tracking.create({
         orderId: order.id,
         carrier: dto.carrier,
         trackingNumber: dto.trackingNumber,
         status: dto.trackingStatus ?? 'UPDATED',
+        message: dto.trackingMessage ?? null,
       });
       await this.tracking.save(row);
+      // Push into the already-loaded relation to avoid a second DB round-trip
+      // for the response.
+      order.trackingEvents = [...(order.trackingEvents ?? []), row];
       this.logger.log(
         `[admin] step=tracking_row_added orderId=${orderId} carrier=${dto.carrier}`,
       );
     }
 
+    // Notify the customer when user-visible fields changed.
+    const statusChanged = dto.status !== undefined && dto.status !== previousStatus;
+    const trackingUpdated = dto.trackingNumber !== undefined;
     const userEmail = order.user?.email;
-    if (
-      userEmail &&
-      (dto.status !== undefined || dto.trackingNumber !== undefined)
-    ) {
-      await this.notifyQueue.add('shipment', {
-        type: 'shipment_update',
-        toEmail: userEmail,
-        subject: `Order ${order.id} update`,
-        text:
-          `Your order status is now ${order.status}.` +
-          (dto.trackingNumber
-            ? ` Tracking: ${dto.carrier ?? ''} ${dto.trackingNumber}`
-            : ''),
-      });
-      this.logger.log(`[admin] step=shipment_notify_queued orderId=${orderId}`);
+    if (userEmail && (statusChanged || trackingUpdated)) {
+      const lines: string[] = [];
+      if (statusChanged) lines.push(`Your order status is now: ${order.status}.`);
+      if (trackingUpdated && dto.trackingNumber) {
+        lines.push(`Tracking: ${dto.carrier ?? ''} ${dto.trackingNumber}`.trim());
+      }
+      // Fire-and-forget — notification failure must not roll back the patch.
+      this.notifyQueue
+        .add('shipment', {
+          type: 'shipment_update',
+          toEmail: userEmail,
+          subject: `Order ${order.id} update`,
+          text: lines.join(' '),
+        })
+        .then(() =>
+          this.logger.log(`[admin] step=shipment_notify_queued orderId=${orderId}`),
+        )
+        .catch((err: unknown) =>
+          this.logger.error(
+            `[admin] step=shipment_notify_failed orderId=${orderId}`,
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
     }
 
-    this.orderRealtime.emitOrderUpdate(order.userId, {
-      orderId: order.id,
-      status: order.status,
-    });
+    // Emit realtime only when the customer-facing state actually changed.
+    if (statusChanged || trackingUpdated) {
+      this.orderRealtime.emitOrderUpdate(order.userId, {
+        orderId: order.id,
+        status: order.status,
+      });
+    }
 
-    const full = await this.orders.findOne({
-      where: { id: order.id },
-      relations: ['items', 'trackingEvents', 'user'],
-    });
-    return this.ordersService.toResponse(full ?? order, true);
+    // `order` already has items, user, and trackingEvents loaded (from findById
+    // + the in-memory push above) — no second DB query needed.
+    return this.ordersService.toResponse(order, true);
   }
 }

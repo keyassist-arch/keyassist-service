@@ -45,68 +45,60 @@ export class OrdersService {
     private readonly orderRealtime: OrderRealtimeService,
   ) {}
 
-  private async resolveShipping(
-    userId: string,
-    dto?: CreateOrderDto,
-  ): Promise<ShippingAddress> {
-    if (dto?.shippingAddress) {
-      return dto.shippingAddress as ShippingAddress;
-    }
-    const user = await this.usersService.findById(userId);
-    if (!user.defaultShippingAddress) {
-      throw new BadRequestException(
-        'Provide shippingAddress or set default on your profile',
-      );
-    }
-    return user.defaultShippingAddress;
-  }
-
   async createFromCart(userId: string, dto: CreateOrderDto) {
-    const cart = await this.cartService.assertCartHasItems(userId);
+    // Fetch cart and user in parallel — user is needed for both shipping fallback
+    // and the confirmation email, so we only load it once.
+    const [cart, user] = await Promise.all([
+      this.cartService.assertCartHasItems(userId),
+      this.usersService.findById(userId),
+    ]);
     this.logger.log(
       `[order] step=start_create userId=${userId} lineCount=${cart.items.length}`,
     );
-    const shipping = await this.resolveShipping(userId, dto);
 
-    const lines: {
-      productId: string;
-      title: string;
-      price: string;
-      currency: string;
-      qty: number;
-      images: string[];
-      variant: Record<string, string> | null;
-    }[] = [];
+    const shipping: ShippingAddress = dto.shippingAddress
+      ? (dto.shippingAddress as ShippingAddress)
+      : user.defaultShippingAddress
+        ? user.defaultShippingAddress
+        : (() => {
+            throw new BadRequestException(
+              'Provide shippingAddress or set default on your profile',
+            );
+          })();
 
-    let currency = 'USD';
-    let subtotal = 0;
+    // Scrape all cart items in parallel — each scrape is 5-30 s, sequential adds up fast.
+    const lines = await Promise.all(
+      cart.items.map(async (line) => {
+        const product = await this.productsService.findById(line.productId);
+        this.logger.log(
+          `[order] step=price_refresh productId=${line.productId} qty=${line.quantity}`,
+        );
+        const scraped = await this.scraper.scrape(
+          product.sourceUrl,
+          product.source,
+        );
+        const refreshed = await this.productsService.refreshPriceFromScrape(
+          product,
+          scraped,
+        );
+        return {
+          productId: refreshed.id,
+          title: refreshed.title,
+          price: refreshed.salePrice,
+          currency: refreshed.currency,
+          qty: line.quantity,
+          images: refreshed.images,
+          variant: line.variantSelection,
+        };
+      }),
+    );
 
-    for (const line of cart.items) {
-      const product = await this.productsService.findById(line.productId);
-      this.logger.log(
-        `[order] step=price_refresh productId=${line.productId} qty=${line.quantity}`,
-      );
-      currency = product.currency;
-      const scraped = await this.scraper.scrape(
-        product.sourceUrl,
-        product.source,
-      );
-      const refreshed = await this.productsService.refreshPriceFromScrape(
-        product,
-        scraped,
-      );
-      const unit = parseFloat(refreshed.salePrice);
-      subtotal += unit * line.quantity;
-      lines.push({
-        productId: refreshed.id,
-        title: refreshed.title,
-        price: refreshed.salePrice,
-        currency: refreshed.currency,
-        qty: line.quantity,
-        images: refreshed.images,
-        variant: line.variantSelection,
-      });
-    }
+    // Last item's currency wins — all items in a cart are assumed to share a currency.
+    const currency = lines[lines.length - 1]?.currency ?? 'USD';
+    const subtotal = lines.reduce(
+      (acc, l) => acc + parseFloat(l.price) * l.qty,
+      0,
+    );
 
     const pricing = computePricing(subtotal);
     const fees = pricing.fees;
@@ -144,25 +136,27 @@ export class OrdersService {
         shippingAddress: shipping,
       });
       await em.save(o);
+      const savedItems: OrderItem[] = [];
       for (const l of lines) {
-        await em.save(
-          em.create(OrderItem, {
-            orderId: o.id,
-            productId: l.productId,
-            titleSnapshot: l.title,
-            priceSnapshot: l.price,
-            currencySnapshot: l.currency,
-            quantity: l.qty,
-            imagesSnapshot: l.images,
-            variantSnapshot: l.variant,
-          }),
+        savedItems.push(
+          await em.save(
+            em.create(OrderItem, {
+              orderId: o.id,
+              productId: l.productId,
+              titleSnapshot: l.title,
+              priceSnapshot: l.price,
+              currencySnapshot: l.currency,
+              quantity: l.qty,
+              imagesSnapshot: l.images,
+              variantSnapshot: l.variant,
+            }),
+          ),
         );
       }
       await em.delete(CartItem, { cartId: cart.id });
-      return em.findOne(Order, {
-        where: { id: o.id },
-        relations: ['items'],
-      });
+      // Attach items in-memory — avoids a second DB round-trip inside the transaction.
+      o.items = savedItems;
+      return o;
     });
 
     if (!order) {
@@ -173,7 +167,6 @@ export class OrdersService {
       `[order] step=created orderId=${order.id} userId=${userId} total=${order.total} ${order.currency}`,
     );
 
-    const user = await this.usersService.findById(userId);
     await this.notifyQueue.add('order_confirmation', {
       type: 'order_confirmation',
       toEmail: user.email,
@@ -371,7 +364,7 @@ export class OrdersService {
 
       return em.findOne(Order, {
         where: { id: o.id },
-        relations: ['items'],
+        relations: ['items', 'user'],
       });
     });
 
@@ -384,6 +377,24 @@ export class OrdersService {
         status: updated.status,
       });
       this.logger.log(`[order] step=paid_realtime_emitted orderId=${orderId}`);
+
+      if (updated.user?.email) {
+        this.notifyQueue
+          .add('payment_confirmed', {
+            type: 'payment_confirmed',
+            toEmail: updated.user.email,
+            subject: `Payment confirmed — order ${updated.id}`,
+            text:
+              `Your payment of ${updated.currency} ${updated.total} has been confirmed. ` +
+              `We are now processing your order ${updated.id}.`,
+          })
+          .catch((err: unknown) =>
+            this.logger.error(
+              `[order] step=paid_notify_failed orderId=${orderId}`,
+              err instanceof Error ? err.stack : String(err),
+            ),
+          );
+      }
     }
     return updated;
   }
@@ -429,7 +440,8 @@ export class OrdersService {
         carrier: t.carrier,
         trackingNumber: t.trackingNumber,
         status: t.status,
-        updatedAt: t.updatedAt,
+        message: t.message ?? null,
+        createdAt: t.createdAt,
       })),
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,

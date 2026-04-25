@@ -12,6 +12,9 @@ import { User, ShippingAddress } from './entities/user.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { TotpService } from '../totp/totp.service';
 
+/** PostgreSQL unique-constraint violation code. */
+const PG_UNIQUE_VIOLATION = '23505';
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -27,7 +30,12 @@ export class UsersService {
     password: string,
     phone?: string,
   ): Promise<User> {
-    const existing = await this.users.findOne({ where: { email } });
+    // Normalize email to lowercase so the DB unique index and
+    // findByEmailInsensitive always agree — prevents case-variant duplicates.
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await this.users.findOne({
+      where: { email: normalizedEmail },
+    });
     if (existing) {
       throw new ConflictException('Email already registered');
     }
@@ -35,11 +43,24 @@ export class UsersService {
     const user = this.users.create({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
-      email,
+      email: normalizedEmail,
       passwordHash,
       phone: phone ?? null,
     });
-    return this.users.save(user);
+    try {
+      return await this.users.save(user);
+    } catch (err: unknown) {
+      // Race condition: two concurrent requests both passed the findOne check.
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: string }).code === PG_UNIQUE_VIOLATION
+      ) {
+        throw new ConflictException('Email already registered');
+      }
+      throw err;
+    }
   }
 
   async findByEmail(email: string): Promise<User | null> {

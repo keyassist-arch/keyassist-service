@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -14,7 +14,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     });
   }
 
-  validate(payload: JwtPayload): JwtPayload {
+  validate(payload: JwtPayload & { purpose?: string }): JwtPayload {
+    // Pre-auth, password-reset, and email-verification tokens are all signed
+    // with purpose-specific secrets, but if JWT_2FA_PREAUTH_SECRET falls back
+    // to JWT_ACCESS_SECRET, a pre-auth token would pass signature verification
+    // here. Rejecting any token that carries a `purpose` claim ensures those
+    // tokens cannot be used as API access credentials.
+    if (payload.purpose) {
+      throw new UnauthorizedException('Token is not an access token');
+    }
     return {
       sub: payload.sub,
       email: payload.email,

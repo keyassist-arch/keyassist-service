@@ -17,7 +17,6 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/role.enum';
 import { AdminService } from './admin.service';
 import { AdminPatchOrderDto } from './dto/admin-patch-order.dto';
-import { ProductsService } from '../products/products.service';
 import { ScraperService } from '../scraper/scraper.service';
 import { AdminScrapePreviewDto } from './dto/admin-scrape-preview.dto';
 
@@ -29,7 +28,6 @@ import { AdminScrapePreviewDto } from './dto/admin-scrape-preview.dto';
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly productsService: ProductsService,
     private readonly scraperService: ScraperService,
   ) {}
 
@@ -47,9 +45,8 @@ export class AdminController {
   }
 
   @Get('products')
-  async products() {
-    const list = await this.productsService.findAllForAdmin();
-    return list.map((p) => this.productsService.toResponse(p));
+  products() {
+    return this.adminService.listProducts();
   }
 
   /**

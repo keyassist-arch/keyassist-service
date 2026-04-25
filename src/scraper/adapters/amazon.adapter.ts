@@ -60,13 +60,12 @@ export class AmazonAdapter implements ScraperAdapter {
     const context = await this.playwright.newScrapeContext({
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
       locale: 'en-US',
     }, url);
 
-    const page = await context.newPage();
-
     try {
+      const page = await context.newPage();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
 
       await page
@@ -212,20 +211,6 @@ export class AmazonAdapter implements ScraperAdapter {
             ?.getAttribute('content') ?? '';
 
         let imageDataJson = '';
-        const scripts = document.querySelectorAll('script:not([src])');
-        for (const s of scripts) {
-          const txt = s.textContent ?? '';
-          if (txt.includes("'colorImages'") || txt.includes('"colorImages"')) {
-            const m2 = txt.match(
-              /'colorImages'\s*:\s*(\{[\s\S]{0,8000}?\})\s*[,}]/,
-            );
-            if (m2) {
-              imageDataJson = m2[1];
-              break;
-            }
-          }
-        }
-
         const seen = new Set<string>();
         const fallbackImages: string[] = [];
 
@@ -275,15 +260,23 @@ export class AmazonAdapter implements ScraperAdapter {
           '';
 
         let twisterJson = '';
+        let twisterFinal = false;
+        const scripts = document.querySelectorAll('script:not([src])');
         for (const s of scripts) {
           const txt = s.textContent ?? '';
-          if (txt.includes('twister-js-init-dpx-data')) {
-            twisterJson = txt;
-            break;
+          if (!imageDataJson && (txt.includes("'colorImages'") || txt.includes('"colorImages"'))) {
+            const m2 = txt.match(/'colorImages'\s*:\s*(\{[\s\S]{0,8000}?\})\s*[,}]/);
+            if (m2) imageDataJson = m2[1];
           }
-          if (txt.includes('"variationValues"') && !twisterJson) {
-            twisterJson = txt;
+          if (!twisterFinal) {
+            if (txt.includes('twister-js-init-dpx-data')) {
+              twisterJson = txt;
+              twisterFinal = true;
+            } else if (txt.includes('"variationValues"') && !twisterJson) {
+              twisterJson = txt;
+            }
           }
+          if (imageDataJson && twisterFinal) break;
         }
 
         const hasAddToCart = !!document.querySelector('#add-to-cart-button');

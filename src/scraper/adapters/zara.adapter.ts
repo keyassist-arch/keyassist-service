@@ -545,15 +545,15 @@ export class ZaraAdapter implements ScraperAdapter {
     const context = await this.playwright.newScrapeContext({
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
       locale: 'en-US',
       extraHTTPHeaders: {
         Accept:
           'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     }, url);
-    const page = await context.newPage();
 
+    let page: Page | undefined;
     let lastResult: ScrapedProduct | undefined;
     let lastNote = '';
     const done = (r: ScrapedProduct, note: string): ScrapedProduct => {
@@ -563,8 +563,9 @@ export class ZaraAdapter implements ScraperAdapter {
     };
 
     try {
+      page = await context.newPage();
       await page.goto(url, { waitUntil: 'load', timeout: 60_000 }).catch(() =>
-        page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
+        page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
       );
 
       await page
@@ -793,12 +794,14 @@ export class ZaraAdapter implements ScraperAdapter {
       lastNote = `catch:${(err as Error).message} -> generic`;
       return g;
     } finally {
-      await writeZaraHtmlDebugFile({
-        url,
-        page,
-        scraped: lastResult,
-        note: lastNote || 'no-result',
-      }).catch(() => undefined);
+      if (process.env.ZARA_DEBUG === '1' && page) {
+        await writeZaraHtmlDebugFile({
+          url,
+          page,
+          scraped: lastResult,
+          note: lastNote || 'no-result',
+        }).catch(() => undefined);
+      }
       await context.close();
     }
   }

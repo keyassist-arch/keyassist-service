@@ -30,11 +30,19 @@ export class TotpService {
     }
   }
 
-  /** otpauth:// URI for authenticator apps */
+  /**
+   * otpauth:// URI for authenticator apps.
+   *
+   * Label format is `issuer:email` per the Google Authenticator Key URI spec
+   * (https://github.com/google/google-authenticator/wiki/Key-Uri-Format).
+   * Including the issuer prefix in the label ensures the entry is grouped and
+   * named correctly in apps like Google Authenticator, Authy, and 1Password.
+   */
   keyUri(email: string, secret: string): string {
+    const issuer = this.issuerName();
     return generateURI({
-      issuer: this.issuerName(),
-      label: email,
+      issuer,
+      label: `${issuer}:${email}`,
       secret,
     });
   }

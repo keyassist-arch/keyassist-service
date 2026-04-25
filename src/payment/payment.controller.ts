@@ -121,7 +121,8 @@ export class PaymentController {
     const ok = this.paymentService.verifyPaystackSignature(raw, signature);
     if (!ok) {
       this.logger.warn('[payment] step=webhook_paystack reason=bad_signature');
-      return { received: false };
+      // Return non-200 so Paystack knows delivery failed and will retry the webhook.
+      throw new UnauthorizedException('Invalid webhook signature');
     }
     const body = req.body as {
       event?: string;
@@ -198,7 +199,8 @@ export class PaymentController {
       Boolean(process.env.MYAZA_WEBHOOK_SECRET) && Boolean(signature);
     if (shouldVerify && !this.paymentService.verifyMyazaSignature(raw, signature)) {
       this.logger.warn('[payment] step=webhook_myaza reason=bad_signature');
-      return { received: false };
+      // Return non-200 so Myaza knows delivery failed and will retry the webhook.
+      throw new UnauthorizedException('Invalid webhook signature');
     }
     const body = req.body as {
       event?: string;

@@ -9,6 +9,8 @@ import { ImportedProduct } from '../products/entities/imported-product.entity';
 import { Product } from '../products/entities/product.entity';
 import { OrderTracking } from '../tracking/entities/order-tracking.entity';
 import { User } from '../users/entities/user.entity';
+import { Refund } from '../reconciliation/entities/refund.entity';
+import { CustomerIssue } from '../reconciliation/entities/customer-issue.entity';
 import { AddProductRescrapeEnabled1743130800000 } from './migrations/1743130800000-AddProductRescrapeEnabled';
 import { ClearProductFkOnFailedImports1743200000000 } from './migrations/1743200000000-ClearProductFkOnFailedImports';
 import { AddProductSourceShein1743280000000 } from './migrations/1743280000000-AddProductSourceShein';
@@ -16,6 +18,9 @@ import { AddProductConfigurationPrices1743320000000 } from './migrations/1743320
 import { AddProductSlug1743340000000 } from './migrations/1743340000000-AddProductSlug';
 import { AddUserEmailVerifiedAt1743400000000 } from './migrations/1743400000000-AddUserEmailVerifiedAt';
 import { AddProductSourceGoatZaraConverse1743410000000 } from './migrations/1743410000000-AddProductSourceGoatZaraConverse';
+import { AddUserTotp1743600000000 } from './migrations/1743600000000-AddUserTotp';
+import { PatchOrderTracking1743700000000 } from './migrations/1743700000000-PatchOrderTracking';
+import { AddReconciliationTables1743800000000 } from './migrations/1743800000000-AddReconciliationTables';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -33,6 +38,8 @@ export default new DataSource({
     Order,
     OrderItem,
     OrderTracking,
+    Refund,
+    CustomerIssue,
   ],
   migrations: [
     AddProductRescrapeEnabled1743130800000,
@@ -42,6 +49,9 @@ export default new DataSource({
     AddProductSlug1743340000000,
     AddUserEmailVerifiedAt1743400000000,
     AddProductSourceGoatZaraConverse1743410000000,
+    AddUserTotp1743600000000,
+    PatchOrderTracking1743700000000,
+    AddReconciliationTables1743800000000,
   ],
   synchronize: false,
 });

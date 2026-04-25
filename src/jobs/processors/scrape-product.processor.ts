@@ -65,8 +65,13 @@ export class ScrapeProductProcessor extends WorkerHost {
     err: Error,
     prev: string,
   ): void {
+    const attemptsLeft =
+      job != null
+        ? (job.opts.attempts ?? 1) - (job.attemptsMade ?? 0)
+        : undefined;
     this.logger.error(
-      `[job:scrape] worker=job_failed jobId=${job ? String(job.id) : 'n/a'} importId=${job?.data?.importId} prevState=${prev}: ${err.message}`,
+      `[job:scrape] worker=job_failed jobId=${job ? String(job.id) : 'n/a'} ` +
+        `importId=${job?.data?.importId} prevState=${prev} attemptsLeft=${attemptsLeft ?? 'n/a'}: ${err.message}`,
       err.stack,
     );
   }
@@ -107,10 +112,11 @@ export class ScrapeProductProcessor extends WorkerHost {
       this.logger.log(
         `[job:scrape] step=enqueue_verify_price productId=${status.product.id} delayMs=60000`,
       );
+      // attempts/backoff/removeOnComplete/removeOnFail come from QueuesModule defaultJobOptions.
       await this.verifyPriceQueue.add(
         'verify',
         { productId: status.product.id },
-        { delay: 60_000, removeOnComplete: true },
+        { delay: 60_000 },
       );
     } else {
       this.logger.log(

@@ -29,8 +29,12 @@ export class JwtRefreshStrategy extends PassportStrategy(
 
   async validate(
     req: Request,
-    payload: JwtPayload,
+    payload: JwtPayload & { purpose?: string },
   ): Promise<JwtPayload & { refreshToken: string }> {
+    // Reject pre-auth / purpose-scoped tokens that share the refresh secret.
+    if (payload.purpose) {
+      throw new UnauthorizedException();
+    }
     const refreshToken = (req.body as { refreshToken?: string })?.refreshToken;
     if (!refreshToken) {
       throw new UnauthorizedException();

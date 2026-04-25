@@ -102,7 +102,17 @@ export class PlaywrightService implements OnModuleDestroy {
     if (!this.launchPromise) {
       this.launchPromise = chromium.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--no-zygote',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-extensions',
+          '--disable-sync',
+          '--no-first-run',
+        ],
       });
       if (this.config.get<string>('SCRAPE_PROXY')?.trim()) {
         this.logger.log(

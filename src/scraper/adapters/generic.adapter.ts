@@ -13,8 +13,8 @@ export class GenericAdapter implements ScraperAdapter {
 
   async scrape(url: string): Promise<ScrapedProduct> {
     const context = await this.playwright.newScrapeContext({}, url);
-    const page = await context.newPage();
     try {
+      const page = await context.newPage();
       await page.goto(url, { waitUntil: 'load', timeout: 60_000 }).catch(() =>
         page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
       );
