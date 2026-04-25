@@ -196,6 +196,10 @@ export class ProductsService {
     return this.products.findOne({ where: { sourceUrl: url } });
   }
 
+  async disableRescrape(id: string): Promise<void> {
+    await this.products.update({ id }, { rescrapeEnabled: false });
+  }
+
   async findAllForAdmin(): Promise<Product[]> {
     return this.products.find({
       order: { createdAt: 'DESC' },

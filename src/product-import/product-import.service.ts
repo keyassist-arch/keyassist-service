@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -24,6 +25,7 @@ import {
   pendingImportHints,
 } from './import-client-hints';
 import { ImportRealtimeService } from '../realtime/import-realtime.service';
+import { ManualProductImportDto } from './dto/manual-product-import.dto';
 
 const SCRAPE_JOB_OPTS = {
   removeOnComplete: true,
@@ -241,6 +243,15 @@ export class ProductImportService {
           existing.product = p;
         }
       }
+      // Manual (GENERIC) products are not re-scraped; return the existing product directly.
+      if (existing.source === ProductSource.GENERIC) {
+        return existing.product
+          ? {
+              status: 'completed' as const,
+              product: this.productsService.toResponse(existing.product),
+            }
+          : { requiresManualEntry: true as const, sourceUrl: normalized };
+      }
       return this.startRescrapeForCompletedImport(existing, normalized);
     }
 
@@ -285,6 +296,18 @@ export class ProductImportService {
     }
 
     const source = this.scraper.detectSource(normalized);
+
+    if (source === ProductSource.GENERIC) {
+      await this.redis.releaseScrapeLock(normalized);
+      this.logger.log(
+        `[import] step=manual_entry_required url=${previewUrl(normalized)}`,
+      );
+      return {
+        requiresManualEntry: true as const,
+        sourceUrl: normalized,
+      };
+    }
+
     let importRow =
       existing && existing.status === ImportStatus.FAILED
         ? existing
@@ -452,6 +475,89 @@ export class ProductImportService {
         })) ?? row;
     }
     return this.buildImportStatusPayload(row);
+  }
+
+  async createManualProduct(dto: ManualProductImportDto) {
+    let normalized: string;
+    try {
+      normalized = normalizeProductUrl(dto.sourceUrl);
+    } catch {
+      throw new BadRequestException('Invalid sourceUrl');
+    }
+
+    const existing = await this.imports.findOne({
+      where: { sourceUrl: normalized },
+      relations: ['product'],
+    });
+
+    if (existing?.status === ImportStatus.COMPLETED && existing.product) {
+      return {
+        status: 'completed' as const,
+        product: this.productsService.toResponse(existing.product),
+      };
+    }
+
+    if (
+      existing &&
+      (existing.status === ImportStatus.QUEUED ||
+        existing.status === ImportStatus.PROCESSING)
+    ) {
+      throw new ConflictException(
+        'An automated import is already in progress for this URL. Please wait for it to finish.',
+      );
+    }
+
+    const scraped = {
+      title: dto.title,
+      price: dto.price,
+      currency: dto.currency,
+      images: dto.imageUrls ?? [],
+      description: dto.description,
+      brand: dto.brand,
+      variants: [],
+    };
+
+    let importRow: ImportedProduct;
+    if (existing && existing.status === ImportStatus.FAILED) {
+      existing.errorMessage = null;
+      importRow = existing;
+    } else {
+      importRow = this.imports.create({
+        sourceUrl: normalized,
+        source: ProductSource.GENERIC,
+        status: ImportStatus.QUEUED,
+      });
+    }
+
+    try {
+      importRow = await this.imports.save(importRow);
+    } catch (e) {
+      if (this.isPostgresUniqueViolation(e)) {
+        throw new ConflictException(
+          'A product with this URL already exists or an import is in progress.',
+        );
+      }
+      throw e;
+    }
+
+    const product = await this.productsService.upsertProductForImport(
+      importRow,
+      scraped,
+    );
+
+    // Manual products should not be periodically re-scraped.
+    await this.productsService.disableRescrape(product.id);
+
+    this.logger.log(
+      `[import] step=manual_create_done productId=${product.id} url=${previewUrl(normalized)}`,
+    );
+
+    return {
+      status: 'completed' as const,
+      product: this.productsService.toResponse(
+        await this.productsService.findById(product.id),
+      ),
+    };
   }
 
   /** Called from Bull processor */

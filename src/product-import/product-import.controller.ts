@@ -11,6 +11,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { ProductImportService } from './product-import.service';
 import { ImportProductDto } from './dto/import-product.dto';
+import { ManualProductImportDto } from './dto/manual-product-import.dto';
 
 @ApiTags('Products')
 @Controller('products')
@@ -27,6 +28,18 @@ export class ProductImportController {
   })
   async import(@Body() dto: ImportProductDto) {
     return this.productImportService.importByUrl(dto.url);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('manual')
+  @ApiOperation({
+    summary: 'Create product from manually entered details',
+    description:
+      'Used when the product URL is from an unsupported retailer. Creates the product synchronously and returns it immediately with status `completed`.',
+  })
+  async createManual(@Body() dto: ManualProductImportDto) {
+    return this.productImportService.createManualProduct(dto);
   }
 
   @Public()
