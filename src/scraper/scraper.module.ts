@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { LlmModule } from '../llm/llm.module';
 import { PlaywrightService } from './playwright.service';
 import { GenericAdapter } from './adapters/generic.adapter';
 import { JumiaAdapter } from './adapters/jumia.adapter';
@@ -16,6 +17,7 @@ import { OpenRouterScrapeRefinementService } from './services/openrouter-scrape-
 
 @Global()
 @Module({
+  imports: [LlmModule],
   providers: [
     PlaywrightService,
     GenericAdapter,

@@ -14,7 +14,8 @@ export type ProductVariant = { name: string; options: string[] };
 
 /**
  * Per-option supplier prices (Apple SKUs, GOAT per-size asks, Zara color rows, etc.).
- * Use `variantAxis` + `optionValue` to build selectors like the retailer PDP; `displayLabel` is optional shop copy.
+ * Use `variantSelections` (multi-axis) or `variantAxis`+`optionValue` (single-axis legacy) to build
+ * selectors like the retailer PDP; `displayLabel` is optional shop copy.
  */
 export type ProductConfigurationPrice = {
   label: string;
@@ -25,6 +26,12 @@ export type ProductConfigurationPrice = {
   variantAxis?: string;
   /** Stable value for that axis — matches an entry in `Product.variants[].options` when both are set. */
   optionValue?: string;
+  /**
+   * Multi-axis variant key for this price row, e.g. `{ Storage: "256 GB", Color: "Black Titanium" }`.
+   * Keys match entries in `variantOptions`; use this to look up the active price when the customer
+   * has selected values on multiple axes (storage × color, etc.).
+   */
+  variantSelections?: Record<string, string>;
   /** Per-row currency when it differs from product `currency` (usually omitted). */
   currency?: string;
   /** `false` = show disabled / OOS in UI. */

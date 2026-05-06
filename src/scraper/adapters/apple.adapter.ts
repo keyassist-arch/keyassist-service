@@ -38,6 +38,29 @@ interface ApplePagePayload {
   currentPath: string;
 }
 
+/** Words that appear in Apple product names but are NOT color tokens. */
+const APPLE_PRODUCT_NOUNS = new Set([
+  'iphone', 'ipad', 'mac', 'macbook', 'pro', 'max', 'plus', 'air', 'mini',
+  'apple', 'watch', 'ultra', 'titanium-finish', 'aluminum', 'stainless', 'steel',
+]);
+
+/** Extract { Storage, Color } from an Apple SKU name like "iPhone 17 256GB Black Titanium". */
+function parseSkuVariants(name: string): Record<string, string> {
+  const storageM = name.match(/\b(\d+)\s*(GB|TB)\b/i);
+  const selections: Record<string, string> = {};
+  if (storageM) {
+    selections['Storage'] = `${storageM[1]} ${storageM[2].toUpperCase()}`;
+    const afterStorage = name
+      .slice(name.indexOf(storageM[0]) + storageM[0].length)
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (afterStorage && !APPLE_PRODUCT_NOUNS.has(afterStorage.toLowerCase())) {
+      selections['Color'] = afterStorage;
+    }
+  }
+  return selections;
+}
+
 function storageTierKey(s: string): number {
   const m = s.match(/^(\d+)\s*(GB|TB)$/i);
   if (!m) return 0;
@@ -132,40 +155,10 @@ function buildVariantsFromSkus(
   if (!skus.length) return [];
   const storages = new Set<string>();
   const colors = new Set<string>();
-  const productNouns = new Set([
-    'iphone',
-    'ipad',
-    'mac',
-    'macbook',
-    'pro',
-    'max',
-    'plus',
-    'air',
-    'mini',
-    'apple',
-    'watch',
-    'ultra',
-    'titanium-finish',
-    'aluminum',
-    'stainless',
-    'steel',
-  ]);
   for (const sku of skus) {
-    const storageM = sku.name.match(/\b(\d+)\s*(GB|TB)\b/i);
-    if (storageM) {
-      storages.add(`${storageM[1]} ${storageM[2].toUpperCase()}`);
-    }
-    const afterStorage = storageM
-      ? sku.name
-          .slice(sku.name.indexOf(storageM[0]) + storageM[0].length)
-          .trim()
-      : '';
-    if (afterStorage) {
-      const color = afterStorage.replace(/\s+/g, ' ').trim();
-      if (color && !productNouns.has(color.toLowerCase())) {
-        colors.add(color);
-      }
-    }
+    const sel = parseSkuVariants(sku.name);
+    if (sel['Storage']) storages.add(sel['Storage']);
+    if (sel['Color']) colors.add(sel['Color']);
   }
   const out: { name: string; options: string[] }[] = [];
   if (storages.size > 1 || (storages.size === 1 && colors.size === 0)) {
@@ -187,12 +180,16 @@ function buildConfigurationPricesFromSkus(
   skus: MetricsSku[],
 ): ProductConfigurationPrice[] {
   return skus
-    .map((s) => ({
-      label: s.name,
-      originalPrice: s.fullPrice.toFixed(2),
-      partNumber: s.partNumber,
-      sku: s.sku,
-    }))
+    .map((s) => {
+      const variantSelections = parseSkuVariants(s.name);
+      return {
+        label: s.name,
+        originalPrice: s.fullPrice.toFixed(2),
+        partNumber: s.partNumber,
+        sku: s.sku,
+        ...(Object.keys(variantSelections).length ? { variantSelections } : {}),
+      };
+    })
     .sort((a, b) => parseFloat(a.originalPrice) - parseFloat(b.originalPrice));
 }
 
@@ -208,7 +205,15 @@ function buildConfigurationPricesFromRows(
     const label = [r.storage, r.color, r.carrier].filter(Boolean).join(' · ');
     if (!label || seen.has(label)) continue;
     seen.add(label);
-    out.push({ label, originalPrice: p });
+    const variantSelections: Record<string, string> = {};
+    if (r.storage) variantSelections['Storage'] = r.storage;
+    if (r.color) variantSelections['Color'] = r.color;
+    if (r.carrier) variantSelections['Carrier'] = r.carrier;
+    out.push({
+      label,
+      originalPrice: p,
+      ...(Object.keys(variantSelections).length ? { variantSelections } : {}),
+    });
   }
   return out.sort(
     (a, b) => parseFloat(a.originalPrice) - parseFloat(b.originalPrice),

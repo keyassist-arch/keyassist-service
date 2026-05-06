@@ -294,6 +294,39 @@ class EnvironmentVariables {
   @IsOptional()
   SCRAPE_REFINE_MODEL?: string;
 
+  /**
+   * LLM provider: `openrouter` (default) or `gemini`.
+   * Switch to `gemini` to call Google AI Studio directly without going through OpenRouter.
+   */
+  @IsString()
+  @IsOptional()
+  LLM_PROVIDER?: string;
+
+  /** Google AI Studio API key — required when LLM_PROVIDER=gemini. Get one at https://aistudio.google.com/app/apikey */
+  @IsString()
+  @IsOptional()
+  GEMINI_API_KEY?: string;
+
+  /** Gemini model to use (default: gemini-2.0-flash). Examples: gemini-1.5-pro, gemini-2.5-pro-preview-03-25 */
+  @IsString()
+  @IsOptional()
+  GEMINI_MODEL?: string;
+
+  /** Default inference temperature for all LLM calls (default: 0.1). */
+  @IsString()
+  @IsOptional()
+  LLM_TEMPERATURE?: string;
+
+  /** Max tokens per LLM completion (default: 4096). */
+  @IsString()
+  @IsOptional()
+  LLM_MAX_TOKENS?: string;
+
+  /** Request timeout in ms for LLM calls (default: 30000). */
+  @IsString()
+  @IsOptional()
+  LLM_TIMEOUT_MS?: string;
+
   /** Must be `true` to enable the OpenRouter LLM gateway (Stepfun flash by default). */
   @IsString()
   @IsOptional()

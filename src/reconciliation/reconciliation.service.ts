@@ -7,6 +7,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import axios from 'axios';
 import Stripe from 'stripe';
 import { Order } from '../orders/entities/order.entity';
@@ -23,6 +25,10 @@ import { CreateRefundDto } from './dto/create-refund.dto';
 import { CreateIssueDto } from './dto/create-issue.dto';
 import { PatchIssueDto } from './dto/patch-issue.dto';
 import { ListIssuesDto } from './dto/list-issues.dto';
+import { CreatePriceDisputeDto } from './dto/create-price-dispute.dto';
+import { ListMyIssuesDto } from './dto/list-my-issues.dto';
+import { IssuePriority, IssueType } from './enums/issue-status.enum';
+import { QUEUE_VERIFY_PRICE } from '../jobs/queue.constants';
 
 @Injectable()
 export class ReconciliationService {
@@ -36,6 +42,8 @@ export class ReconciliationService {
     private readonly issues: Repository<CustomerIssue>,
     @InjectRepository(Order)
     private readonly orders: Repository<Order>,
+    @InjectQueue(QUEUE_VERIFY_PRICE)
+    private readonly verifyPriceQueue: Queue<{ productId: string }>,
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
@@ -391,6 +399,92 @@ export class ReconciliationService {
     const issue = await this.issues.findOne({
       where: { id: issueId },
       relations: ['order', 'user'],
+    });
+    if (!issue) throw new NotFoundException('Issue not found');
+    return issue;
+  }
+
+  async requestPriceVerification(
+    userId: string,
+    dto: CreatePriceDisputeDto,
+  ): Promise<{ issue: CustomerIssue; queuedVerificationJobs: number }> {
+    const order = await this.orders.findOne({
+      where: { id: dto.orderId, userId },
+      relations: ['items'],
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const subject = `Price verification request for order ${order.id}`;
+    const expectedTotalBlock =
+      dto.expectedTotal != null ? `\nExpected total: ${dto.expectedTotal.toFixed(2)}` : '';
+    const reasonBlock = dto.reason?.trim() ? `\nCustomer reason: ${dto.reason.trim()}` : '';
+    const description =
+      `Requested verification for charged total ${order.currency} ${order.total}.` +
+      expectedTotalBlock +
+      reasonBlock;
+
+    const issue = this.issues.create({
+      orderId: order.id,
+      userId,
+      type: IssueType.BILLING_ERROR,
+      priority: IssuePriority.HIGH,
+      subject,
+      description,
+      internalNote: 'Auto-created via buyer price verification endpoint.',
+      assignedTo: null,
+    });
+    await this.issues.save(issue);
+
+    const uniqueProductIds = [
+      ...new Set(
+        (order.items ?? [])
+          .map((item) => item.productId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
+      ),
+    ];
+    for (const productId of uniqueProductIds) {
+      await this.verifyPriceQueue.add(
+        'verify',
+        { productId },
+        {
+          jobId: `price_dispute:${issue.id}:${productId}`,
+          removeOnComplete: true,
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 5000 },
+        },
+      );
+    }
+
+    this.logger.log(
+      `[reconciliation] price_verification_requested issueId=${issue.id} orderId=${order.id} userId=${userId} queuedJobs=${uniqueProductIds.length}`,
+    );
+    return { issue, queuedVerificationJobs: uniqueProductIds.length };
+  }
+
+  async listMyIssues(
+    userId: string,
+    filters: ListMyIssuesDto,
+  ): Promise<{ total: number; items: CustomerIssue[] }> {
+    const where: FindOptionsWhere<CustomerIssue> = { userId };
+    if (filters.status) where.status = filters.status;
+    if (filters.orderId) where.orderId = filters.orderId;
+
+    const [items, total] = await this.issues.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      take: filters.limit ?? 20,
+      skip: filters.offset ?? 0,
+    });
+
+    return { total, items };
+  }
+
+  async getMyIssue(userId: string, issueId: string): Promise<CustomerIssue> {
+    const issue = await this.issues.findOne({
+      where: { id: issueId, userId },
+      relations: ['order'],
     });
     if (!issue) throw new NotFoundException('Issue not found');
     return issue;

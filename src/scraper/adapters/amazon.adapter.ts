@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ProductSource } from '../../common/enums/product-source.enum';
+import type { ProductConfigurationPrice } from '../../products/entities/product.entity';
 import { GenericAdapter } from './generic.adapter';
 import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
@@ -31,6 +32,16 @@ interface AmazonRawData {
   twisterJson: string;
   hasAddToCart: boolean;
   unavailableText: string;
+  /** Hidden input `#ASIN` — reliable page-level ASIN. */
+  asin: string;
+  /** `#acrPopover` title attribute, e.g. "4.4 out of 5 stars". */
+  rating: string;
+  /** `#acrCustomerReviewText` aria-label, e.g. "946 Reviews". */
+  reviewCount: string;
+  /** JSON-stringified `[key, value][]` pairs from the product overview spec table. */
+  productSpecsJson: string;
+  /** Seller/ship-from name from the buybox merchant block. */
+  sellerName: string;
 }
 
 interface ParsedPrice {
@@ -40,11 +51,6 @@ interface ParsedPrice {
   currency: string;
 }
 
-interface AmazonVariant {
-  label: string;
-  asin?: string;
-  available?: boolean;
-}
 
 @Injectable()
 export class AmazonAdapter implements ScraperAdapter {
@@ -286,6 +292,53 @@ export class AmazonAdapter implements ScraperAdapter {
             ?.textContent?.trim()
             ?.toLowerCase() ?? '';
 
+        // ASIN from hidden input (reliable across page layouts).
+        const asin =
+          (
+            document.querySelector('input#ASIN') as HTMLInputElement | null
+          )?.value?.trim() ?? '';
+
+        // Rating and review count.
+        const rating =
+          document
+            .querySelector('#acrPopover')
+            ?.getAttribute('title')
+            ?.trim() ?? '';
+        const reviewCount =
+          document
+            .querySelector('#acrCustomerReviewText')
+            ?.getAttribute('aria-label')
+            ?.trim() ||
+          document
+            .querySelector('#acrCustomerReviewText')
+            ?.textContent?.replace(/[()]/g, '')
+            .trim() ||
+          '';
+
+        // Product overview spec table → [[key, value], ...]
+        const specsEntries: [string, string][] = [];
+        const overviewDiv = document.querySelector('#productOverview_feature_div');
+        if (overviewDiv) {
+          for (const row of overviewDiv.querySelectorAll('tr')) {
+            const key =
+              row.querySelector('span.a-text-bold')?.textContent?.trim() ?? '';
+            const val =
+              row.querySelector('span.po-break-word')?.textContent?.trim() ?? '';
+            if (key && val) specsEntries.push([key, val]);
+          }
+        }
+        const productSpecsJson = JSON.stringify(specsEntries);
+
+        // Seller name from the buybox merchant block.
+        const sellerName =
+          document
+            .querySelector('#merchant-info a span')
+            ?.textContent?.trim() ||
+          document
+            .querySelector('.offer-display-feature-text-message')
+            ?.textContent?.trim() ||
+          '';
+
         return {
           title,
           payPrice,
@@ -304,6 +357,11 @@ export class AmazonAdapter implements ScraperAdapter {
           twisterJson,
           hasAddToCart,
           unavailableText,
+          asin,
+          rating,
+          reviewCount,
+          productSpecsJson,
+          sellerName,
         };
       });
 
@@ -316,26 +374,42 @@ export class AmazonAdapter implements ScraperAdapter {
         return this.generic.scrape(url);
       }
 
+      // Parse spec table: [[key, value], ...]
+      let productSpecs: [string, string][] = [];
+      try {
+        productSpecs = JSON.parse(raw.productSpecsJson) as [string, string][];
+      } catch { /* ignore */ }
+
+      // Brand: prefer spec table (clean name like "LG") over bylineInfo ("Visit the LG Store").
+      const specBrand = productSpecs.find(
+        ([k]) => k.toLowerCase() === 'brand',
+      )?.[1];
+      const brand =
+        specBrand ||
+        this.cleanBrand(raw.brand) ||
+        undefined;
+
       const images = this.resolveImages(raw);
-      const variantRows = this.resolveAmazonVariants(raw);
-      const variants = this.toProductVariants(variantRows);
-
+      const { variants, configurationPrices, currentAsin } = this.parseTwisterData(
+        raw.twisterJson,
+        price.current,
+      );
+      const asin = currentAsin || raw.asin || undefined;
       const availability = this.resolveAvailability(raw);
+      const description = this.buildDescription(raw, productSpecs);
 
-      const out: ScrapedProduct = {
+      return {
         title: raw.title,
         price: price.current,
         currency: price.currency,
         images,
-        description: raw.description || undefined,
-        brand: raw.brand || undefined,
+        description: description || undefined,
+        brand,
+        asin,
         variants,
+        ...(configurationPrices.length ? { configurationPrices } : {}),
         availability,
       };
-      if (price.isOnSale && price.list) {
-        out.compareAtPrice = price.list;
-      }
-      return out;
     } catch (err) {
       this.logger.error(
         `AmazonAdapter: scrape failed for ${url} — ${(err as Error).message}`,
@@ -414,91 +488,148 @@ export class AmazonAdapter implements ScraperAdapter {
     return [...new Set(raw.fallbackImages)].slice(0, 20);
   }
 
-  private resolveAmazonVariants(raw: AmazonRawData): AmazonVariant[] {
-    if (!raw.twisterJson) {
-      return [];
+  /**
+   * Parse Amazon's twister script to extract variants (with display labels), per-ASIN
+   * configurationPrices, and the current page ASIN.
+   *
+   * Targets the inline `P.register('twister-js-init-dpx-data', ...)` block.
+   * Falls back to a plain `variationValues` scan when the richer data is absent.
+   */
+  private parseTwisterData(
+    twisterJson: string,
+    currentPrice: string,
+  ): {
+    variants: { name: string; options: string[] }[];
+    configurationPrices: ProductConfigurationPrice[];
+    currentAsin: string;
+  } {
+    if (!twisterJson) {
+      return { variants: [], configurationPrices: [], currentAsin: '' };
     }
 
-    try {
-      const dpxMatch = raw.twisterJson.match(
-        /id="twister-js-init-dpx-data"[^>]*>(\{[\s\S]+?\})<\/script>/,
-      );
-      if (dpxMatch) {
-        const dpx = JSON.parse(dpxMatch[1]) as {
-          dimensionValues?: Record<
-            string,
-            | Array<{ value: string; asin?: string; is_available?: boolean }>
-            | string[]
-          >;
-        };
-        const variants: AmazonVariant[] = [];
-        for (const [dim, values] of Object.entries(dpx.dimensionValues ?? {})) {
-          if (!Array.isArray(values)) {
-            continue;
-          }
-          for (const v of values) {
-            if (typeof v === 'string') {
-              variants.push({ label: `${dim}: ${v}` });
-            } else if (v && typeof v === 'object' && 'value' in v) {
-              variants.push({
-                label: `${dim}: ${v.value}`,
-                asin: v.asin,
-                available: v.is_available,
-              });
-            }
-          }
-        }
-        if (variants.length) {
-          return variants;
+    // --- individual field extraction via targeted regex ---
+
+    let variationValues: Record<string, string[]> = {};
+    const varMatch = twisterJson.match(
+      /"variationValues"\s*:\s*(\{[\s\S]+?\})\s*[,}]/,
+    );
+    if (varMatch) {
+      try { variationValues = JSON.parse(varMatch[1]) as Record<string, string[]>; } catch { /* */ }
+    }
+
+    let displayLabels: Record<string, string> = {};
+    const labelMatch = twisterJson.match(/"variationDisplayLabels"\s*:\s*(\{[^}]+\})/);
+    if (labelMatch) {
+      try { displayLabels = JSON.parse(labelMatch[1]) as Record<string, string>; } catch { /* */ }
+    }
+
+    // `dimensions` preserves the declared order of dimension keys.
+    let dimensions: string[] = Object.keys(variationValues);
+    const dimArrMatch = twisterJson.match(/"dimensions"\s*:\s*(\[[^\]]+\])/);
+    if (dimArrMatch) {
+      try {
+        const parsed = JSON.parse(dimArrMatch[1]) as string[];
+        if (parsed.length) dimensions = parsed;
+      } catch { /* */ }
+    }
+
+    let dimToAsin: Record<string, string> = {};
+    const dimAsinMatch = twisterJson.match(/"dimensionToAsinMap"\s*:\s*(\{[^}]+\})/);
+    if (dimAsinMatch) {
+      try { dimToAsin = JSON.parse(dimAsinMatch[1]) as Record<string, string>; } catch { /* */ }
+    }
+
+    let currentAsin = '';
+    const curAsinMatch = twisterJson.match(/"currentAsin"\s*:\s*"([^"]+)"/);
+    if (curAsinMatch) currentAsin = curAsinMatch[1];
+
+    // --- build variants with human-readable display labels ---
+    const variants: { name: string; options: string[] }[] = dimensions
+      .filter((key) => (variationValues[key] ?? []).length > 0)
+      .map((key) => ({
+        name: displayLabels[key] || this.humaniseDimKey(key),
+        options: variationValues[key],
+      }));
+
+    // --- build configurationPrices from the dimension→ASIN map ---
+    const configurationPrices: ProductConfigurationPrice[] = [];
+    for (const [dimKey, asin] of Object.entries(dimToAsin)) {
+      const indices = dimKey.split('_').map(Number);
+      const variantSelections: Record<string, string> = {};
+      const labelParts: string[] = [];
+
+      for (let i = 0; i < dimensions.length; i++) {
+        const dim = dimensions[i];
+        const displayName = displayLabels[dim] || this.humaniseDimKey(dim);
+        const val = variationValues[dim]?.[indices[i]];
+        if (val != null) {
+          variantSelections[displayName] = val;
+          labelParts.push(val);
         }
       }
 
-      const varMatch = raw.twisterJson.match(
-        /"variationValues"\s*:\s*(\{[\s\S]+?\})\s*[,}]/,
-      );
-      if (varMatch) {
-        const variationValues = JSON.parse(varMatch[1]) as Record<
-          string,
-          string[]
-        >;
-        return Object.entries(variationValues).flatMap(([dim, values]) =>
-          values.map((v) => ({ label: `${dim}: ${v}` })),
-        );
-      }
-    } catch (err) {
-      this.logger.debug(
-        `AmazonAdapter: variant parse failed — ${(err as Error).message}`,
-      );
+      const label = labelParts.join(' · ');
+      if (!label) continue;
+
+      const isCurrentVariant = asin === currentAsin;
+      configurationPrices.push({
+        label,
+        // Use the scraped price for the current variant; mark others as needing
+        // a live price fetch (Amazon doesn't embed per-variant prices in the HTML).
+        originalPrice: currentPrice || '0.00',
+        sku: asin,
+        ...(Object.keys(variantSelections).length ? { variantSelections } : {}),
+        available: true,
+        metadata: {
+          asin,
+          source: 'amazon-twister',
+          ...(isCurrentVariant ? {} : { priceNeedsLookup: true }),
+        },
+      });
     }
 
-    return [];
+    return { variants, configurationPrices, currentAsin };
   }
 
-  /** Map flat `dim: value` labels to `{ name, options[] }` for cart / API */
-  private toProductVariants(rows: AmazonVariant[]): {
-    name: string;
-    options: string[];
-  }[] {
-    const byDim = new Map<string, Set<string>>();
-    for (const r of rows) {
-      const sep = r.label.indexOf(': ');
-      if (sep === -1) {
-        continue;
-      }
-      const dim = r.label.slice(0, sep).trim();
-      const val = r.label.slice(sep + 2).trim();
-      if (!dim || !val) {
-        continue;
-      }
-      if (!byDim.has(dim)) {
-        byDim.set(dim, new Set());
-      }
-      byDim.get(dim)!.add(val);
+  /** `size_name` → `Size`, `style_name` → `Style`, etc. */
+  private humaniseDimKey(key: string): string {
+    return key.replace(/_name$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  /** Strip Amazon store-link noise from bylineInfo ("Visit the LG Store" → "LG"). */
+  private cleanBrand(raw: string): string {
+    return raw
+      .replace(/^Visit the\s+/i, '')
+      .replace(/\s+Store$/i, '')
+      .replace(/^Brand:\s*/i, '')
+      .trim();
+  }
+
+  /** Assemble a structured description from feature bullets, spec table, and rating. */
+  private buildDescription(
+    raw: AmazonRawData,
+    specs: [string, string][],
+  ): string {
+    const parts: string[] = [];
+
+    if (raw.description) {
+      const clean = raw.description.replace(/\s{2,}/g, ' ').trim();
+      if (clean) parts.push(clean);
     }
-    return [...byDim.entries()].map(([name, opts]) => ({
-      name,
-      options: [...opts],
-    }));
+
+    if (specs.length) {
+      const lines = specs.map(([k, v]) => `• ${k}: ${v}`).join('\n');
+      parts.push(`Specifications:\n${lines}`);
+    }
+
+    const ratingParts: string[] = [];
+    if (raw.rating) ratingParts.push(raw.rating);
+    if (raw.reviewCount) ratingParts.push(raw.reviewCount);
+    if (ratingParts.length) parts.push(`Rating: ${ratingParts.join(' · ')}`);
+
+    if (raw.sellerName) parts.push(`Sold by: ${raw.sellerName}`);
+
+    return parts.join('\n\n');
   }
 
   private resolveAvailability(raw: AmazonRawData): string | undefined {

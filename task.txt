@@ -1,0 +1,3 @@
+discount calculations at checkout
+price correction
+shipping fee calculations

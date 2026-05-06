@@ -15,6 +15,35 @@ import { amountToMinorUnits } from './utils/amount-minor-units.util';
 import { paystackChargeToMethodDetails } from './utils/paystack-payment-method.util';
 import { stripePaymentMethodToDetails } from './utils/stripe-payment-method.util';
 
+type MyazaSessionPayload = {
+  id?: string;
+  sessionId?: string;
+  address?: string;
+  depositAddress?: string;
+  qrCode?: string;
+  qrCodeDataUrl?: string;
+  qrCodeUrl?: string;
+  amount?: string;
+  amountExpected?: string;
+  symbol?: string;
+  token?: string;
+  chain?: string;
+  status?: string;
+  expiresAt?: string;
+  createdAt?: string;
+  checkoutUrl?: string;
+  hostedUrl?: string;
+  paymentUrl?: string;
+  reference?: string;
+  txId?: string;
+  txHash?: string;
+};
+
+type MyazaSessionResponse = MyazaSessionPayload & {
+  statusCode?: number;
+  data?: MyazaSessionPayload;
+};
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -209,7 +238,7 @@ export class PaymentService {
       ? sessionsRaw
       : `/${sessionsRaw}`;
     const apiKey = this.config.get<string>('MYAZA_API_KEY')?.trim();
-    const chain = this.config.get<string>('MYAZA_CHAIN')?.trim() || 'polygon';
+    const chain = this.config.get<string>('MYAZA_CHAIN')?.trim() || 'solana';
     const token = this.config.get<string>('MYAZA_TOKEN')?.trim() || 'USDC';
     const expiresRaw = this.config.get<string>('MYAZA_EXPIRES_MINUTES')?.trim();
     const expiresInMinutes = Number.isFinite(Number(expiresRaw))
@@ -263,6 +292,31 @@ export class PaymentService {
     return h;
   }
 
+  private safeJson(input: unknown): string {
+    try {
+      return JSON.stringify(input);
+    } catch {
+      return '[unserializable]';
+    }
+  }
+
+  private sanitizeMyazaPayload(input: unknown): unknown {
+    if (!input || typeof input !== 'object') return input;
+    const clone = JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+    const data = (clone.data ?? clone) as Record<string, unknown>;
+    if (typeof data.qrCode === 'string') {
+      data.qrCode = '[redacted:data-url]';
+    }
+    if (typeof data.qrCodeDataUrl === 'string') {
+      data.qrCodeDataUrl = '[redacted:data-url]';
+    }
+    if (typeof data.qrCodeUrl === 'string' && data.qrCodeUrl.length > 300) {
+      data.qrCodeUrl = `${data.qrCodeUrl.slice(0, 300)}...[truncated]`;
+    }
+    clone.data = data;
+    return clone;
+  }
+
   async initializePayment(
     dto: InitializePaymentDto,
     userId: string,
@@ -293,6 +347,7 @@ export class PaymentService {
     email: string,
     dto: InitializePaymentDto,
   ) {
+    void email;
     const order = await this.ordersService.findById(orderId);
     if (order.userId !== userId) {
       throw new BadRequestException('Order not found');
@@ -306,55 +361,34 @@ export class PaymentService {
       apiKey,
       chain,
       token,
-      expiresInMinutes,
       webhookUrl,
     } = this.myazaConfig();
     const sessionUrl = this.myazaSessionUrl(baseUrl, sessionsPath);
-    const returnUrl =
-      dto.myazaReturnUrl ?? this.config.get<string>('MYAZA_RETURN_URL');
-    const cancelUrl =
-      dto.myazaCancelUrl ?? this.config.get<string>('MYAZA_CANCEL_URL');
-    if (!returnUrl || !cancelUrl) {
-      throw new BadRequestException(
-        'Set MYAZA_RETURN_URL and MYAZA_CANCEL_URL (or pass myazaReturnUrl / myazaCancelUrl)',
-      );
-    }
+    void dto;
+    const currency = (order.currency || '').trim().toUpperCase();
+    const tokenUpper = token.trim().toUpperCase();
     const body: Record<string, unknown> = {
-      amount: order.total,
-      currency: order.currency,
+      // Myaza POS sessions use amount in this deployment.
+      localAmount: order.total,
       chain,
       token,
-      expiresInMinutes,
-      metadata: { orderId: order.id, userId },
-      returnUrl,
-      cancelUrl,
       ...(webhookUrl ? { webhookUrl } : {}),
     };
     const headers = this.buildMyazaRequestHeaders(apiKey);
-    let data: {
-      id?: string;
-      sessionId?: string;
-      address?: string;
-      depositAddress?: string;
-      qrCode?: string;
-      qrCodeDataUrl?: string;
-      qrCodeUrl?: string;
-      amount?: string;
-      symbol?: string;
-      token?: string;
-      chain?: string;
-      status?: string;
-      expiresAt?: string;
-      createdAt?: string;
-      checkoutUrl?: string;
-      hostedUrl?: string;
-      paymentUrl?: string;
-      reference?: string;
-      txId?: string;
-      txHash?: string;
-    };
+    const usingBearerAuth = typeof headers.Authorization === 'string';
+    this.logger.log(
+      `[payment] step=myaza_init_request orderId=${order.id} userId=${userId} ` +
+        `url=${sessionUrl} authMode=${usingBearerAuth ? 'bearer' : 'x-api-key'} ` +
+        `pricingMode=amount orderCurrency=${currency || 'n/a'} token=${tokenUpper} ` +
+        `body=${this.safeJson(body)}`,
+    );
+    let data: MyazaSessionResponse;
     try {
       ({ data } = await axios.post(sessionUrl, body, { headers }));
+      this.logger.log(
+        `[payment] step=myaza_init_response orderId=${order.id} ` +
+          `response=${this.safeJson(this.sanitizeMyazaPayload(data))}`,
+      );
     } catch (e) {
       if (axios.isAxiosError(e)) {
         const status = e.response?.status;
@@ -383,10 +417,24 @@ export class PaymentService {
       }
       throw e;
     }
-    const checkoutUrl = data?.paymentUrl || data?.checkoutUrl || data?.hostedUrl;
-    const paymentId = data?.sessionId || data?.id || data?.reference;
-    const depositAddress = data?.depositAddress || data?.address;
+    const payload: MyazaSessionPayload = data?.data ?? data;
+    const checkoutUrl =
+      (payload?.paymentUrl as string | undefined) ||
+      (payload?.checkoutUrl as string | undefined) ||
+      (payload?.hostedUrl as string | undefined);
+    const paymentId =
+      (payload?.sessionId as string | undefined) ||
+      (payload?.id as string | undefined) ||
+      (payload?.reference as string | undefined);
+    const depositAddress =
+      (payload?.depositAddress as string | undefined) ||
+      (payload?.address as string | undefined);
     if (!paymentId || !depositAddress) {
+      this.logger.warn(
+        `[payment] step=myaza_init_invalid_payload orderId=${order.id} ` +
+          `paymentId=${paymentId ?? 'missing'} depositAddress=${depositAddress ?? 'missing'} ` +
+          `response=${this.safeJson(this.sanitizeMyazaPayload(data))}`,
+      );
       throw new BadRequestException('Myaza initialization failed');
     }
     await this.ordersService.setPendingCheckoutReference(order.id, userId, {
@@ -395,25 +443,49 @@ export class PaymentService {
       details: {
         myazaSessionId: paymentId,
         depositAddress,
-        chain: data?.chain ?? chain,
-        token: data?.symbol ?? data?.token ?? token,
-        amount: data?.amount ?? order.total,
+        chain: (payload?.chain as string | undefined) ?? chain,
+        token:
+          (payload?.symbol as string | undefined) ||
+          (payload?.token as string | undefined) ||
+          token,
+        amount:
+          (payload?.amount as string | undefined) ||
+          (payload?.amountExpected as string | undefined) ||
+          order.total,
       },
     });
-    return {
+    const responsePayload = {
       provider: PaymentProvider.MYAZA,
       paymentId,
       sessionId: paymentId,
       checkoutUrl: checkoutUrl ?? null,
       depositAddress,
-      qrCode: data?.qrCode ?? data?.qrCodeDataUrl ?? data?.qrCodeUrl ?? null,
-      chain: data?.chain ?? chain,
-      token: data?.symbol ?? data?.token ?? token,
-      amount: data?.amount ?? order.total,
-      status: data?.status ?? 'pending',
-      expiresAt: data?.expiresAt ?? null,
-      createdAt: data?.createdAt ?? null,
+      qrCode:
+        (payload?.qrCode as string | undefined) ||
+        (payload?.qrCodeDataUrl as string | undefined) ||
+        (payload?.qrCodeUrl as string | undefined) ||
+        null,
+      chain: (payload?.chain as string | undefined) ?? chain,
+      token:
+        (payload?.symbol as string | undefined) ||
+        (payload?.token as string | undefined) ||
+        token,
+      amount:
+        (payload?.amount as string | undefined) ||
+        (payload?.amountExpected as string | undefined) ||
+        order.total,
+      status: (payload?.status as string | undefined) ?? 'pending',
+      expiresAt: (payload?.expiresAt as string | undefined) ?? null,
+      createdAt: (payload?.createdAt as string | undefined) ?? null,
     };
+    this.logger.log(
+      `[payment] step=myaza_init_client_payload orderId=${order.id} ` +
+        `paymentId=${responsePayload.paymentId} ` +
+        `status=${responsePayload.status} ` +
+        `chain=${responsePayload.chain} token=${responsePayload.token} ` +
+        `amount=${responsePayload.amount}`,
+    );
+    return responsePayload;
   }
 
   private async initPaypal(
@@ -845,10 +917,17 @@ export class PaymentService {
   }) {
     const orderId = data.metadata?.orderId || data.reference;
     const status = (data.status || '').toLowerCase();
+    this.logger.log(
+      `[payment] step=myaza_webhook_received orderId=${orderId ?? 'missing'} ` +
+        `status=${status || 'missing'} payload=${this.safeJson(data)}`,
+    );
     if (
       !orderId ||
       !['paid', 'completed', 'confirmed', 'success', 'delivered'].includes(status)
     ) {
+      this.logger.warn(
+        `[payment] step=myaza_webhook_ignored orderId=${orderId ?? 'missing'} status=${status || 'missing'}`,
+      );
       return;
     }
     await this.ordersService.markOrderPaid(orderId, {
@@ -865,5 +944,8 @@ export class PaymentService {
         status: data.status ?? null,
       },
     });
+    this.logger.log(
+      `[payment] step=myaza_webhook_paid_marked orderId=${orderId} status=${status}`,
+    );
   }
 }

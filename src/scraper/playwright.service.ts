@@ -1,11 +1,14 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  chromium,
-  Browser,
+  type Browser,
   type BrowserContext,
   type BrowserContextOptions,
 } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+
+chromium.use(StealthPlugin());
 import { parseScrapeProxy } from './utils/parse-scrape-proxy.util';
 import { pickScrapeUserAgent } from './utils/user-agent-rotation.util';
 

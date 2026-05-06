@@ -12,7 +12,6 @@ interface LlmRefinedShape {
   title?: string | null;
   price?: string | number | null;
   currency?: string | null;
-  compareAtPrice?: string | null;
   brand?: string | null;
   description?: string | null;
   availability?: string | null;
@@ -128,7 +127,6 @@ Task: Return ONE JSON object with the SAME schema as ADAPTER_JSON (ScrapedProduc
 - configurationPrices: one row per priced variant combination when the site shows per-size or per-color prices. Each row must have:
   - label (short), originalPrice (decimal string like "49.99"), variantAxis and optionValue matching variants[].name and one of variants[].options for that axis.
   - currency optional per row; available boolean if you can infer.
-- compareAtPrice only if there is a real "was" / list price.
 - description: Write 2–4 sentences of clear, factual product copy covering key features, materials, intended use, and notable specs. Derive from VISIBLE_PAGE_TEXT when available; otherwise use the product title, brand, and any specs in ADAPTER_JSON. Do not invent specs not present in the source data. Do not use marketing filler like "revolutionary" or "game-changing".
 - Do NOT invent prices: if unsure, keep the adapter value. Prefer VISIBLE_PAGE_TEXT over ADAPTER_JSON when they disagree on numbers.
 - If you cannot improve data, return ADAPTER_JSON unchanged (same numbers).
@@ -181,15 +179,6 @@ Return ONLY valid JSON, no markdown.`;
       out.currency = String(llm.currency).toUpperCase().slice(0, 8);
     }
 
-    if (llm.compareAtPrice != null) {
-      const c = parsePriceToDecimalString(String(llm.compareAtPrice));
-      if (c && parseFloat(c) > 0) {
-        const cmp = parseFloat(c);
-        const base = parseAdapterPrice(out.price);
-        if (base == null || cmp >= base) out.compareAtPrice = c;
-      }
-    }
-
     if (Array.isArray(llm.variants) && llm.variants.length > 0) {
       const cleaned = llm.variants
         .filter(
@@ -208,6 +197,14 @@ Return ONLY valid JSON, no markdown.`;
     }
 
     if (Array.isArray(llm.configurationPrices) && llm.configurationPrices.length > 0) {
+      // Build a lookup from the adapter's rows so we can restore fields the LLM
+      // doesn't know about (variantSelections, sku, metadata, etc.).
+      const adapterRowByKey = new Map<string, ProductConfigurationPrice>();
+      for (const r of adapter.configurationPrices ?? []) {
+        const key = `${r.variantAxis ?? ''}|${r.optionValue ?? ''}`;
+        adapterRowByKey.set(key, r);
+      }
+
       const rows: ProductConfigurationPrice[] = [];
       for (const row of llm.configurationPrices) {
         if (!row || typeof row !== 'object') continue;
@@ -216,22 +213,25 @@ Return ONLY valid JSON, no markdown.`;
         const axis = String(row.variantAxis ?? '').trim();
         const opt = String(row.optionValue ?? '').trim();
         if (!axis || !opt) continue;
+        // Merge back adapter fields that the LLM output doesn't carry.
+        const adapterRow = adapterRowByKey.get(`${axis}|${opt}`);
         rows.push({
           label: String(row.label ?? `${axis} ${opt}`).slice(0, 300),
           originalPrice: op,
-          partNumber: row.partNumber,
-          sku: row.sku,
+          partNumber: row.partNumber ?? adapterRow?.partNumber,
+          sku: row.sku ?? adapterRow?.sku,
           variantAxis: axis,
           optionValue: opt,
+          variantSelections: adapterRow?.variantSelections ?? row.variantSelections,
           currency: row.currency
             ? String(row.currency).toUpperCase().slice(0, 8)
-            : undefined,
-          available: row.available,
-          displayLabel: row.displayLabel,
+            : adapterRow?.currency,
+          available: row.available ?? adapterRow?.available,
+          displayLabel: row.displayLabel ?? adapterRow?.displayLabel,
           metadata:
             row.metadata && typeof row.metadata === 'object'
               ? (row.metadata as Record<string, unknown>)
-              : { source: 'openrouter-refine' },
+              : adapterRow?.metadata ?? { source: 'openrouter-refine' },
         });
       }
       if (rows.length) out.configurationPrices = rows;

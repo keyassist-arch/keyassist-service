@@ -190,7 +190,9 @@ export class CartService {
     let currency = '';
     for (const i of cart.items || []) {
       if (!i.product) continue;
-      const unit = parseFloat(i.product.salePrice);
+      const unit = parseFloat(
+        this.productsService.resolveVariantPrice(i.product, i.variantSelection),
+      );
       if (Number.isFinite(unit)) {
         subtotal += unit * i.quantity;
       }

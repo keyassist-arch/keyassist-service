@@ -32,9 +32,8 @@ export class ProductsService {
   }
 
   private salePrice(original: string, markupPercent: string): string {
-    const o = parseFloat(original);
-    const m = parseFloat(markupPercent);
-    return (o * (1 + m / 100)).toFixed(2);
+    void markupPercent;
+    return parsePriceToDecimalString(original) ?? '0.00';
   }
 
   /**
@@ -63,15 +62,10 @@ export class ProductsService {
     const orig =
       parsePriceToDecimalString(scraped.price) ??
       (typeof scraped.price === 'number' ? scraped.price.toFixed(2) : '0');
-    const markup = markupPercent ?? this.defaultMarkup();
+    const markup = '0.00';
     const descParts: string[] = [];
     if (scraped.description?.trim()) {
       descParts.push(scraped.description.trim());
-    }
-    if (scraped.compareAtPrice?.trim()) {
-      descParts.push(
-        `Retailer list price before discount: ${scraped.currency} ${scraped.compareAtPrice.trim()} (current selling price in price field).`,
-      );
     }
     if (scraped.configurationSummaries?.length) {
       descParts.push(
@@ -289,8 +283,49 @@ export class ProductsService {
     return this.products.save(product);
   }
 
+  /**
+   * Returns the correct unit price for a product given the buyer's variant selection.
+   * Looks up `configurationPrices` by `variantSelections` (multi-axis) then by
+   * `variantAxis`+`optionValue` (single-axis). Falls back to `salePrice` when there
+   * is no match or no selection.
+   */
+  resolveVariantPrice(
+    product: Product,
+    variantSelection?: Record<string, string> | null,
+  ): string {
+    const rows = product.configurationPrices ?? [];
+    if (!variantSelection || !rows.length) return product.salePrice;
+
+    const entries = Object.entries(variantSelection);
+    if (!entries.length) return product.salePrice;
+
+    // Multi-axis: variantSelections must match ALL selected axes.
+    for (const row of rows) {
+      if (row.variantSelections) {
+        if (entries.every(([axis, value]) => row.variantSelections![axis] === value)) {
+          return row.originalPrice;
+        }
+      }
+    }
+
+    // Single-axis fallback: variantAxis + optionValue.
+    if (entries.length === 1) {
+      const [axis, value] = entries[0];
+      for (const row of rows) {
+        if (row.variantAxis === axis && row.optionValue === value) {
+          return row.originalPrice;
+        }
+      }
+    }
+
+    return product.salePrice;
+  }
+
   toResponse(p: Product) {
-    const markup = p.markupPercent;
+    const variantOptions: Record<string, string[]> = {};
+    for (const v of p.variants ?? []) {
+      variantOptions[v.name] = v.options;
+    }
     return {
       id: p.id,
       slug: p.slug ?? p.id,
@@ -307,20 +342,33 @@ export class ProductsService {
       currency: p.currency,
       markupPercent: p.markupPercent,
       images: p.images,
-      variants: p.variants,
-      configurationPrices: (p.configurationPrices ?? []).map((row) => ({
-        label: row.label,
-        originalPrice: row.originalPrice,
-        salePrice: this.salePrice(row.originalPrice, markup),
-        partNumber: row.partNumber,
-        sku: row.sku,
-        variantAxis: row.variantAxis,
-        optionValue: row.optionValue,
-        currency: row.currency,
-        available: row.available,
-        displayLabel: row.displayLabel,
-        metadata: row.metadata,
-      })),
+      /**
+       * Variant axes and their options as a map, e.g. `{ Color: ["Black", "White"], Storage: ["128 GB", "256 GB"] }`.
+       * Use `configurationPrices[].variantSelections` to look up the price for the active combination.
+       */
+      variantOptions,
+      configurationPrices: (p.configurationPrices ?? []).map((row) => {
+        // Derive variantSelections from single-axis fields when not already set (GOAT, Zara, Converse, etc.).
+        const variantSelections: Record<string, string> | undefined =
+          row.variantSelections ??
+          (row.variantAxis && row.optionValue
+            ? { [row.variantAxis]: row.optionValue }
+            : undefined);
+        return {
+          label: row.label,
+          originalPrice: row.originalPrice,
+          salePrice: row.originalPrice,
+          partNumber: row.partNumber,
+          sku: row.sku,
+          variantAxis: row.variantAxis,
+          optionValue: row.optionValue,
+          variantSelections,
+          currency: row.currency,
+          available: row.available,
+          displayLabel: row.displayLabel,
+          metadata: row.metadata,
+        };
+      }),
       availability: p.availability,
       stockQuantity: p.stockQuantity,
       lastScrapedAt: p.lastScrapedAt,

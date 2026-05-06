@@ -3,19 +3,26 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI, { APIError } from 'openai';
 
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+export const GEMINI_BASE_URL =
+  'https://generativelanguage.googleapis.com/v1beta/openai/';
 
 /** Default free Stepfun model on OpenRouter (override with OPEN_ROUTER_MODEL). */
 export const OPENROUTER_DEFAULT_MODEL = 'stepfun/step-3.5-flash:free';
+export const GEMINI_DEFAULT_MODEL = 'gemini-2.0-flash';
 
 const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant for a unified commerce platform. Be concise, accurate, and grounded in the data provided.';
 
-/** ms before an OpenRouter request is aborted (free-tier models can queue for a long time). */
+/** ms before an LLM request is aborted (free-tier models can queue for a long time). */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+export type LlmProvider = 'openrouter' | 'gemini';
+
 /**
- * Single LLM entrypoint: **OpenRouter only** (Stepfun flash by default).
- * Set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY.
+ * Single LLM entrypoint supporting OpenRouter and Google Gemini (direct).
+ *
+ * Set LLM_PROVIDER=gemini + GEMINI_API_KEY to use Gemini directly.
+ * Set LLM_PROVIDER=openrouter (default) + OPEN_ROUTER_ENABLED=true + OPEN_ROUTER_API_KEY for OpenRouter.
  */
 @Injectable()
 export class LlmGatewayService implements OnModuleInit {
@@ -23,6 +30,7 @@ export class LlmGatewayService implements OnModuleInit {
   private readonly systemPrompt: string;
   private readonly enabled: boolean;
   private readonly model: string;
+  private readonly provider: LlmProvider;
   private readonly defaultTemperature: number;
   private readonly defaultMaxTokens: number;
   private readonly client: OpenAI | null;
@@ -32,17 +40,9 @@ export class LlmGatewayService implements OnModuleInit {
       this.config.get<string>('LLM_SYSTEM_PROMPT')?.trim() ||
       DEFAULT_SYSTEM_PROMPT;
 
-    this.enabled =
-      this.config.get<string>('OPEN_ROUTER_ENABLED')?.trim() === 'true';
-
-    const apiKey =
-      this.config.get<string>('OPEN_ROUTER_API_KEY')?.trim() ||
-      this.config.get<string>('OPENROUTER_API_KEY')?.trim();
-
-    this.model =
-      this.config.get<string>('OPEN_ROUTER_MODEL')?.trim() ||
-      this.config.get<string>('OPENROUTER_MODEL')?.trim() ||
-      OPENROUTER_DEFAULT_MODEL;
+    this.provider =
+      (this.config.get<string>('LLM_PROVIDER')?.trim().toLowerCase() as LlmProvider) ||
+      'openrouter';
 
     const rawTemp = this.config.get<string>('LLM_TEMPERATURE')?.trim();
     this.defaultTemperature =
@@ -52,35 +52,58 @@ export class LlmGatewayService implements OnModuleInit {
     this.defaultMaxTokens =
       rawTokens && Number.isFinite(Number(rawTokens)) ? Number(rawTokens) : 4096;
 
-    const referer =
-      this.config.get<string>('OPENROUTER_HTTP_REFERER')?.trim() ||
-      'http://localhost';
-
     const timeoutRaw = this.config.get<string>('LLM_TIMEOUT_MS')?.trim();
     const timeout =
       timeoutRaw && Number.isFinite(Number(timeoutRaw))
         ? Number(timeoutRaw)
         : DEFAULT_TIMEOUT_MS;
 
-    this.client =
-      this.enabled && apiKey
+    if (this.provider === 'gemini') {
+      const apiKey = this.config.get<string>('GEMINI_API_KEY')?.trim();
+      this.model =
+        this.config.get<string>('GEMINI_MODEL')?.trim() || GEMINI_DEFAULT_MODEL;
+      this.enabled = !!apiKey;
+      this.client = apiKey
         ? new OpenAI({
-            baseURL: OPENROUTER_BASE_URL,
+            baseURL: GEMINI_BASE_URL,
             apiKey,
-            defaultHeaders: {
-              'HTTP-Referer': referer,
-              'X-Title': 'unified-commerce',
-            },
-            // Let the application layer own retry logic — SDK retries on 400/422
-            // are useless (same deterministic error) and interfere with the manual
-            // json-mode fallback below.
             maxRetries: 0,
             timeout,
           })
         : null;
+    } else {
+      const apiKey =
+        this.config.get<string>('OPEN_ROUTER_API_KEY')?.trim() ||
+        this.config.get<string>('OPENROUTER_API_KEY')?.trim();
+      this.model =
+        this.config.get<string>('OPEN_ROUTER_MODEL')?.trim() ||
+        this.config.get<string>('OPENROUTER_MODEL')?.trim() ||
+        OPENROUTER_DEFAULT_MODEL;
+      this.enabled =
+        this.config.get<string>('OPEN_ROUTER_ENABLED')?.trim() === 'true';
+      const referer =
+        this.config.get<string>('OPENROUTER_HTTP_REFERER')?.trim() ||
+        'http://localhost';
+      this.client =
+        this.enabled && apiKey
+          ? new OpenAI({
+              baseURL: OPENROUTER_BASE_URL,
+              apiKey,
+              defaultHeaders: {
+                'HTTP-Referer': referer,
+                'X-Title': 'unified-commerce',
+              },
+              // Let the application layer own retry logic — SDK retries on 400/422
+              // are useless (same deterministic error) and interfere with the manual
+              // json-mode fallback below.
+              maxRetries: 0,
+              timeout,
+            })
+          : null;
+    }
   }
 
-  /** True when OpenRouter is configured and enabled. */
+  /** True when the configured LLM provider is ready. */
   get llmAvailable(): boolean {
     return this.client != null;
   }
@@ -123,9 +146,11 @@ export class LlmGatewayService implements OnModuleInit {
     },
   ): Promise<string> {
     if (!this.client) {
-      throw new Error(
-        'OpenRouter is not configured. Set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY.',
-      );
+      const hint =
+        this.provider === 'gemini'
+          ? 'Set LLM_PROVIDER=gemini and GEMINI_API_KEY.'
+          : 'Set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY.';
+      throw new Error(`LLM provider "${this.provider}" is not configured. ${hint}`);
     }
 
     const model = options?.model ?? this.model;
@@ -150,10 +175,17 @@ export class LlmGatewayService implements OnModuleInit {
         });
       } catch (e) {
         const details = this.formatApiErrorDetails(e);
-        this.logger.error(
-          `[llm] step=api_error model=${model} jsonMode=${jsonMode} ${details}: ${e instanceof Error ? e.message : String(e)}`,
-          e instanceof Error ? e.stack : undefined,
-        );
+        const isRateLimit = e instanceof APIError && e.status === 429;
+        if (isRateLimit) {
+          this.logger.warn(
+            `[llm] step=rate_limited model=${model} jsonMode=${jsonMode} ${details}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        } else {
+          this.logger.error(
+            `[llm] step=api_error model=${model} jsonMode=${jsonMode} ${details}: ${e instanceof Error ? e.message : String(e)}`,
+            e instanceof Error ? e.stack : undefined,
+          );
+        }
         throw e;
       }
 
@@ -199,12 +231,14 @@ export class LlmGatewayService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (this.client) {
       this.logger.log(
-        `[llm] OpenRouter enabled — model=${this.model} temperature=${this.defaultTemperature} maxTokens=${this.defaultMaxTokens}`,
+        `[llm] provider=${this.provider} model=${this.model} temperature=${this.defaultTemperature} maxTokens=${this.defaultMaxTokens}`,
       );
     } else {
-      this.logger.log(
-        '[llm] OpenRouter disabled — set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY to enable LLM features',
-      );
+      const hint =
+        this.provider === 'gemini'
+          ? 'set LLM_PROVIDER=gemini and GEMINI_API_KEY'
+          : 'set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY';
+      this.logger.log(`[llm] disabled — ${hint} to enable LLM features`);
     }
   }
 }

@@ -7,6 +7,8 @@ export interface ScrapedProduct {
   images: string[];
   description?: string;
   brand?: string;
+  /** Marketplace-specific product identifier (e.g. Amazon ASIN). */
+  asin?: string;
   variants: { name: string; options: string[] }[];
   /**
    * Retailer “was” / list price when the PDP shows a markdown (e.g. Amazon strike price).

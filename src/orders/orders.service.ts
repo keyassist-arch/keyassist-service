@@ -81,10 +81,14 @@ export class OrdersService {
           product,
           scraped,
         );
+        const unitPrice = this.productsService.resolveVariantPrice(
+          refreshed,
+          line.variantSelection,
+        );
         return {
           productId: refreshed.id,
           title: refreshed.title,
-          price: refreshed.salePrice,
+          price: unitPrice,
           currency: refreshed.currency,
           qty: line.quantity,
           images: refreshed.images,
@@ -451,6 +455,10 @@ export class OrdersService {
         nextStep: pending
           ? ('initialize_payment' as const)
           : ('none' as const),
+      },
+      support: {
+        canRequestPriceVerification: true,
+        priceVerificationEndpoint: '/reconciliation/price-disputes',
       },
     };
   }

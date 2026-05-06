@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(grep -i \"Air Jordan\\\\|currentPrice\\\\|\\\\$\" \"C:\\\\Users\\\\USER\\\\Documents\\\\code\\\\unified-commerce\\\\nike.html\")",
+      "Bash(grep -E \"currentPrice|>\\\\$|price\")",
+      "Bash(grep -E '\\\\$165|\\\\$' \"C:\\\\Users\\\\USER\\\\Documents\\\\code\\\\unified-commerce\\\\nike.html\")",
+      "Bash(grep -o '\\\\$[0-9]*')",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(npm install *)",
+      "Bash(node -e \"const {execSync} = require\\('child_process'\\); console.log\\(execSync\\('npm install playwright-extra puppeteer-extra-plugin-stealth --legacy-peer-deps 2>&1', {encoding:'utf8'}\\)\\)\")",
+      "Bash(npm --version)",
+      "Bash(npm cache *)",
+      "Bash(npm view *)",
+      "Bash(pnpm add *)",
+      "Bash(npx ts-node *)"
     ]
   }
 }
