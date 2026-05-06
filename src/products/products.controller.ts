@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   DefaultValuePipe,
   Get,
@@ -8,15 +9,24 @@ import {
 } from '@nestjs/common';
 import { ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
+import { CurrencyService } from '../currency/currency.service';
 import { ProductsService } from './products.service';
 
 const RECENT_PRODUCTS_DEFAULT = 24;
 const RECENT_PRODUCTS_MAX = 100;
 
+/** Loose ISO 4217 check — 3 uppercase letters */
+function isValidCurrencyCode(code: string): boolean {
+  return /^[A-Z]{3}$/.test(code.trim().toUpperCase());
+}
+
 @ApiTags('Products')
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly currencyService: CurrencyService,
+  ) {}
 
   /** Recent products for storefront home / discovery — no auth. Full admin list: `GET /admin/products`. */
   @Public()
@@ -27,13 +37,34 @@ export class ProductsController {
     description: `Max products to return (default ${RECENT_PRODUCTS_DEFAULT}, max ${RECENT_PRODUCTS_MAX})`,
     example: RECENT_PRODUCTS_DEFAULT,
   })
+  @ApiQuery({
+    name: 'displayCurrency',
+    required: false,
+    description:
+      'ISO 4217 currency code to convert prices into (e.g. USD, EUR, NGN). Rates are cached hourly.',
+    example: 'USD',
+  })
   async listRecent(
     @Query('limit', new DefaultValuePipe(RECENT_PRODUCTS_DEFAULT), ParseIntPipe)
     limit: number,
+    @Query('displayCurrency') displayCurrency?: string,
   ) {
     const capped = Math.min(RECENT_PRODUCTS_MAX, Math.max(1, limit));
     const list = await this.productsService.findRecentForPublic(capped);
-    return list.map((p) => this.productsService.toResponse(p));
+    const responses = list.map((p) => this.productsService.toResponse(p));
+
+    if (!displayCurrency) return responses;
+
+    const target = displayCurrency.trim().toUpperCase();
+    if (!isValidCurrencyCode(target)) {
+      throw new BadRequestException(
+        `Invalid displayCurrency "${displayCurrency}" — must be a 3-letter ISO 4217 code (e.g. USD, EUR, NGN)`,
+      );
+    }
+
+    return Promise.all(
+      responses.map((r) => this.currencyService.convertProductResponse(r, target)),
+    );
   }
 
   @Public()
@@ -44,8 +75,29 @@ export class ProductsController {
       'Product UUID (e.g. for cart `productId`) or readable **slug** from `GET /products` responses (`slug` field).',
     example: 'iphone-air-256gb-light-gold',
   })
-  async getOne(@Param('idOrSlug') idOrSlug: string) {
+  @ApiQuery({
+    name: 'displayCurrency',
+    required: false,
+    description:
+      'ISO 4217 currency code to convert prices into (e.g. USD, EUR, NGN). Rates are cached hourly.',
+    example: 'USD',
+  })
+  async getOne(
+    @Param('idOrSlug') idOrSlug: string,
+    @Query('displayCurrency') displayCurrency?: string,
+  ) {
     const p = await this.productsService.findByIdOrSlug(idOrSlug);
-    return this.productsService.toResponse(p);
+    const response = this.productsService.toResponse(p);
+
+    if (!displayCurrency) return response;
+
+    const target = displayCurrency.trim().toUpperCase();
+    if (!isValidCurrencyCode(target)) {
+      throw new BadRequestException(
+        `Invalid displayCurrency "${displayCurrency}" — must be a 3-letter ISO 4217 code (e.g. USD, EUR, NGN)`,
+      );
+    }
+
+    return this.currencyService.convertProductResponse(response, target);
   }
 }

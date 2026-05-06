@@ -22,6 +22,25 @@ export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
   private readonly adapters: Map<ProductSource, ScraperAdapter>;
 
+  private logScrapeSummary(
+    source: ProductSource,
+    url: string,
+    result: ScrapedProduct,
+  ): void {
+    this.logger.log(
+      `[scrape] step=result ` +
+        `source=${source} ` +
+        `url=${previewUrl(url)} ` +
+        `title=${previewText(result.title, 80)} ` +
+        `price=${result.price} ` +
+        `currency=${result.currency} ` +
+        `images=${result.images?.length ?? 0} ` +
+        `variants=${result.variants?.length ?? 0} ` +
+        `configRows=${result.configurationPrices?.length ?? 0} ` +
+        `availability=${result.availability ?? 'n/a'}`,
+    );
+  }
+
   constructor(
     private readonly openRouterRefine: OpenRouterScrapeRefinementService,
     private readonly jumia: JumiaAdapter,
@@ -68,10 +87,7 @@ export class ScraperService {
       this.logger.log(
         `[scrape] step=ok source=${s} title=${previewText(result.title, 60)}`,
       );
-      /** Full adapter output (variants, availability, etc.) — API/UI may expose a subset */
-      this.logger.log(
-        `[scrape] raw_scrape source=${s} url=${previewUrl(url)} json=${JSON.stringify(result)}`,
-      );
+      this.logScrapeSummary(s, url, result);
       return result;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

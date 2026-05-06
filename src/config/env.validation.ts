@@ -284,6 +284,16 @@ class EnvironmentVariables {
   @IsOptional()
   SCRAPE_OPENROUTER_REFINE?: string;
 
+  /**
+   * Optional OpenRouter model override specifically for the scrape-refinement + description pass.
+   * Recommended free options: `google/gemini-2.0-flash-exp:free`, `meta-llama/llama-4-scout:free`
+   * Recommended paid:        `anthropic/claude-haiku-4-5`, `google/gemini-1.5-pro`
+   * Defaults to OPEN_ROUTER_MODEL when unset.
+   */
+  @IsString()
+  @IsOptional()
+  SCRAPE_REFINE_MODEL?: string;
+
   /** Must be `true` to enable the OpenRouter LLM gateway (Stepfun flash by default). */
   @IsString()
   @IsOptional()

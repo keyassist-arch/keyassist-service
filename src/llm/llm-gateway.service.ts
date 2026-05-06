@@ -89,6 +89,18 @@ export class LlmGatewayService implements OnModuleInit {
     return this.model;
   }
 
+  private formatApiErrorDetails(err: unknown): string {
+    if (err instanceof APIError) {
+      const details: string[] = [];
+      if (err.status != null) details.push(`status=${err.status}`);
+      if (err.name) details.push(`name=${err.name}`);
+      if (err.code != null) details.push(`code=${String(err.code)}`);
+      if (err.type) details.push(`type=${err.type}`);
+      return details.length ? details.join(' ') : 'api_error';
+    }
+    return err instanceof Error ? err.name : 'unknown_error';
+  }
+
   /**
    * Chat completion.
    *
@@ -137,8 +149,9 @@ export class LlmGatewayService implements OnModuleInit {
           ...(jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
         });
       } catch (e) {
+        const details = this.formatApiErrorDetails(e);
         this.logger.error(
-          `[llm] step=api_error model=${model} jsonMode=${jsonMode}: ${e instanceof Error ? e.message : String(e)}`,
+          `[llm] step=api_error model=${model} jsonMode=${jsonMode} ${details}: ${e instanceof Error ? e.message : String(e)}`,
           e instanceof Error ? e.stack : undefined,
         );
         throw e;

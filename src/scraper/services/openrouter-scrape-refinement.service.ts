@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { APIError } from 'openai';
 import { LlmGatewayService } from '../../llm/llm-gateway.service';
 import type { ProductConfigurationPrice } from '../../products/entities/product.entity';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
@@ -21,7 +22,7 @@ interface LlmRefinedShape {
 
 /** System message for JSON-only scrape refinement (user prompt has full task). */
 const REFINE_SYSTEM_PROMPT =
-  'You are a strict e-commerce scrape normalizer. Reply with a single JSON object only — no markdown, no code fences, no commentary.';
+  'You are a strict e-commerce scrape normalizer and product copywriter. Reply with a single JSON object only — no markdown, no code fences, no commentary.';
 
 function stripHtmlToText(html: string, maxLen: number): string {
   return html
@@ -67,6 +68,17 @@ export class OpenRouterScrapeRefinementService {
   }
 
   /**
+   * Optional model override for the refinement pass.
+   * Set SCRAPE_REFINE_MODEL to a better model for descriptions, e.g.:
+   *   google/gemini-2.0-flash-exp:free  (free, great for product copy)
+   *   meta-llama/llama-4-scout:free     (free, good instruction following)
+   *   anthropic/claude-haiku-4-5        (paid, best quality for descriptions)
+   */
+  private refineModel(): string | undefined {
+    return this.config.get<string>('SCRAPE_REFINE_MODEL')?.trim() || undefined;
+  }
+
+  /**
    * Optional lightweight HTML fetch for LLM context (no Playwright second pass).
    * Often blocked on heavy bot sites — refinement still runs on adapter JSON only.
    */
@@ -102,7 +114,7 @@ export class OpenRouterScrapeRefinementService {
     const pageBlock = pageText
       ? `\n\nVISIBLE_PAGE_TEXT (may be partial; use as ground truth for prices/sizes when it conflicts with ADAPTER_JSON):\n${pageText}\n`
       : '';
-    return `You are a strict product-data normalizer for e-commerce.
+    return `You are a strict product-data normalizer and copywriter for e-commerce.
 
 URL: ${url}
 ${pageBlock}
@@ -111,11 +123,13 @@ ${base}
 
 Task: Return ONE JSON object with the SAME schema as ADAPTER_JSON (ScrapedProduct). Fix:
 - Base price and currency to match the real selling price for the default/selected variant when possible.
+- currency must be a correct ISO 4217 3-letter code (e.g. USD, NGN, GBP, EUR) inferred from the URL domain, page text, or price symbols. Never leave it as a symbol like "$" or "₦".
 - variants[].name and variants[].options must list every selectable axis (e.g. Size, Color) and values.
 - configurationPrices: one row per priced variant combination when the site shows per-size or per-color prices. Each row must have:
   - label (short), originalPrice (decimal string like "49.99"), variantAxis and optionValue matching variants[].name and one of variants[].options for that axis.
   - currency optional per row; available boolean if you can infer.
 - compareAtPrice only if there is a real "was" / list price.
+- description: Write 2–4 sentences of clear, factual product copy covering key features, materials, intended use, and notable specs. Derive from VISIBLE_PAGE_TEXT when available; otherwise use the product title, brand, and any specs in ADAPTER_JSON. Do not invent specs not present in the source data. Do not use marketing filler like "revolutionary" or "game-changing".
 - Do NOT invent prices: if unsure, keep the adapter value. Prefer VISIBLE_PAGE_TEXT over ADAPTER_JSON when they disagree on numbers.
 - If you cannot improve data, return ADAPTER_JSON unchanged (same numbers).
 
@@ -236,6 +250,7 @@ Return ONLY valid JSON, no markdown.`;
       const content = await this.llm.generate(prompt, {
         jsonMode: true,
         systemPrompt: REFINE_SYSTEM_PROMPT,
+        model: this.refineModel(),
       });
 
       if (!content) {
@@ -255,8 +270,13 @@ Return ONLY valid JSON, no markdown.`;
       );
       return merged;
     } catch (e) {
+      const apiStatus = e instanceof APIError ? e.status : undefined;
+      const retryHint =
+        apiStatus === 429 ? 'hint=rate_limited_retry_later' : 'hint=using_adapter_output';
       this.logger.warn(
-        `[openrouter] refine failed: ${e instanceof Error ? e.message : String(e)}`,
+        `[openrouter] step=refine_failed url=${url} ` +
+          `status=${apiStatus ?? 'n/a'} ${retryHint}: ` +
+          `${e instanceof Error ? e.message : String(e)}`,
       );
       return scraped;
     }
