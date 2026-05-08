@@ -4,6 +4,7 @@ import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import { parsePriceToDecimalString } from '../utils/normalize-price.util';
+import { currencyFromPriceString } from '../utils/currency-symbol.util';
 
 @Injectable()
 export class GenericAdapter implements ScraperAdapter {
@@ -191,7 +192,11 @@ export class GenericAdapter implements ScraperAdapter {
       return {
         title: data.title,
         price: priceParsed,
-        currency: (data.currency || 'USD').toUpperCase().slice(0, 8),
+        currency: (
+          currencyFromPriceString(data.price ?? '') ||
+          data.currency ||
+          'USD'
+        ).toUpperCase().slice(0, 8),
         images: [...new Set(data.images)].filter(Boolean).slice(0, 20),
         description: data.description,
         brand: data.brand,

@@ -19,6 +19,7 @@ import { AdminService } from './admin.service';
 import { AdminPatchOrderDto } from './dto/admin-patch-order.dto';
 import { ScraperService } from '../scraper/scraper.service';
 import { AdminScrapePreviewDto } from './dto/admin-scrape-preview.dto';
+import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
 
 @ApiTags('Admin')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -53,6 +54,16 @@ export class AdminController {
    * Scrape.do–style “run scrape now” for debugging — does not persist import/product.
    * Product ingestion for users stays on `POST /products/import` + Bull queue.
    */
+  @Get('shipping-rates')
+  getShippingRates() {
+    return this.adminService.getShippingRates();
+  }
+
+  @Patch('shipping-rates')
+  updateShippingRates(@Body() dto: UpdateShippingRatesDto) {
+    return this.adminService.updateShippingRates(dto);
+  }
+
   @Post('scrape-preview')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({

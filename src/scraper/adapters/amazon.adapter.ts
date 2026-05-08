@@ -365,7 +365,7 @@ export class AmazonAdapter implements ScraperAdapter {
         };
       });
 
-      const price = this.resolvePrice(raw);
+      const price = this.resolvePrice(raw, url);
 
       if (!raw.title || !price.current) {
         this.logger.warn(
@@ -421,11 +421,51 @@ export class AmazonAdapter implements ScraperAdapter {
     }
   }
 
-  private resolvePrice(raw: AmazonRawData): ParsedPrice {
+  private currencyFromAmazonUrl(url: string): string {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+      const map: Record<string, string> = {
+        'amazon.com.ng': 'NGN',
+        'amazon.co.uk': 'GBP',
+        'amazon.de': 'EUR',
+        'amazon.fr': 'EUR',
+        'amazon.it': 'EUR',
+        'amazon.es': 'EUR',
+        'amazon.nl': 'EUR',
+        'amazon.com.be': 'EUR',
+        'amazon.pl': 'PLN',
+        'amazon.se': 'SEK',
+        'amazon.co.jp': 'JPY',
+        'amazon.in': 'INR',
+        'amazon.com.br': 'BRL',
+        'amazon.ca': 'CAD',
+        'amazon.com.au': 'AUD',
+        'amazon.com.mx': 'MXN',
+        'amazon.com.tr': 'TRY',
+        'amazon.com.eg': 'EGP',
+        'amazon.sa': 'SAR',
+        'amazon.ae': 'AED',
+        'amazon.sg': 'SGD',
+      };
+      return map[host] ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  private resolvePrice(raw: AmazonRawData, url: string): ParsedPrice {
+    // Priority: symbol in price text → domain mapping → structured data.
+    // Amazon regional sites (e.g. amazon.com.ng) frequently emit
+    // priceCurrency:"USD" in JSON-LD even when displaying local-currency prices.
+    // Domain mapping is the most reliable fallback when the symbol is absent
+    // (fromWholeFraction strips non-digit chars, so the ₦/£/€ glyph can be lost).
     const currency = this.normaliseCurrency(
-      raw.ldCurrency ||
+      this.symbolFromString(raw.payPrice) ||
+        this.symbolFromString(raw.a11yPrice) ||
+        this.symbolFromString(raw.listPrice) ||
+        this.currencyFromAmazonUrl(url) ||
+        raw.ldCurrency ||
         raw.metaCurrency ||
-        this.symbolFromString(raw.payPrice) ||
         'USD',
     );
 

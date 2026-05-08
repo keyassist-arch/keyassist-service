@@ -13,7 +13,20 @@
       "Bash(npm cache *)",
       "Bash(npm view *)",
       "Bash(pnpm add *)",
-      "Bash(npx ts-node *)"
+      "Bash(npx ts-node *)",
+      "Bash(xargs grep -l \"symbol\\\\|SYMBOL\\\\|£€$₦₹¥\")",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/apple.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/ebay.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/shein.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/zara.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/nike.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/goat.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/stockx.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/converse.adapter.ts)",
+      "Bash(grep -n \"currency\\\\|Currency\\\\|symbol\\\\|Symbol\\\\|₦\\\\|\\\\$\\\\|£\\\\|€\\\\|₹\\\\|¥\\\\|priceCurrency\\\\|ldCurrency\\\\|metaCurrency\" /Users/aniebietabasi/Documents/code/unified-commerce/src/scraper/adapters/generic.adapter.ts)",
+      "Bash(xargs ls)",
+      "Bash(npm show *)",
+      "Bash(node *)"
     ]
   }
 }

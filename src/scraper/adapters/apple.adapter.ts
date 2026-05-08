@@ -6,6 +6,7 @@ import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import { parsePriceToDecimalString } from '../utils/normalize-price.util';
+import { currencyFromPriceString } from '../utils/currency-symbol.util';
 
 interface MetricsSku {
   sku: string;
@@ -292,7 +293,7 @@ export class AppleAdapter implements ScraperAdapter {
         let title = '';
         let ldLow: number | null = null;
         let ldHigh: number | null = null;
-        let ldCurrency = 'USD';
+        let ldCurrency = '';
         let ldDescription = '';
         const ldImages: string[] = [];
 
@@ -510,7 +511,15 @@ export class AppleAdapter implements ScraperAdapter {
       const descParts: string[] = [];
       if (raw.ldDescription)
         descParts.push(raw.ldDescription.slice(0, 800).trim());
-      const currency = (raw.ldCurrency || 'USD').toUpperCase().slice(0, 8);
+      const priceSymbolCurrency =
+        raw.configRows
+          .map((r) => currencyFromPriceString(r.priceText))
+          .find((c) => !!c) ?? null;
+      const currency = (
+        priceSymbolCurrency ||
+        raw.ldCurrency ||
+        'USD'
+      ).toUpperCase().slice(0, 8);
       const priceNums = skus.length
         ? skus.map((s) => s.fullPrice)
         : raw.configRows

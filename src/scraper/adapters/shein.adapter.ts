@@ -8,6 +8,7 @@ import {
   parseFirstUsdInString,
   parsePriceToDecimalString,
 } from '../utils/normalize-price.util';
+import { currencyFromPriceString } from '../utils/currency-symbol.util';
 
 type SheinPagePayload = {
   title: string;
@@ -285,7 +286,11 @@ export class SheinAdapter implements ScraperAdapter {
         };
       })) as SheinPagePayload;
 
-      const currency = data.currency || inferSheinCurrencyFromUrl(url);
+      const currency =
+        currencyFromPriceString(data.priceText) ||
+        inferSheinCurrencyFromUrl(url) ||
+        data.currency ||
+        'USD';
       let priceStr =
         parseFirstUsdInString(data.priceText) ??
         parsePriceToDecimalString(data.priceText);

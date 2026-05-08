@@ -5,6 +5,7 @@ import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import { parsePriceToDecimalString } from '../utils/normalize-price.util';
+import { currencyFromPriceString } from '../utils/currency-symbol.util';
 
 type RawEbayData = {
   title?: string;
@@ -192,7 +193,11 @@ export class EbayAdapter implements ScraperAdapter {
         return {
           title: data.title,
           price: normalizedPrice,
-          currency: (data.currency || 'USD').toUpperCase(),
+          currency: (
+            currencyFromPriceString(data.domPrice ?? '') ||
+            data.currency ||
+            'USD'
+          ).toUpperCase(),
           images: [...new Set(data.images)].slice(0, 24),
           description,
           brand: data.brand,

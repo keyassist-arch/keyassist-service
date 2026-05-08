@@ -6,6 +6,7 @@ import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import { parsePriceToDecimalString } from '../utils/normalize-price.util';
+import { currencyFromPriceString } from '../utils/currency-symbol.util';
 
 interface SfccPrice {
   sales?: { value: number; formatted?: string; currency?: string };
@@ -312,17 +313,21 @@ function buildMagentoScrapedProduct(
 
   if (!priceStr) return null;
 
-  let currency = (dom.currencyMeta || 'USD').toUpperCase();
-  if (ldProduct?.offers) {
-    const offers = Array.isArray(ldProduct.offers)
+  const ldOffers = ldProduct?.offers
+    ? Array.isArray(ldProduct.offers)
       ? ldProduct.offers[0]
-      : ldProduct.offers;
-    if (offers && typeof offers === 'object') {
-      const o = offers as Record<string, unknown>;
-      if (typeof o.priceCurrency === 'string')
-        currency = o.priceCurrency.toUpperCase();
-    }
-  }
+      : ldProduct.offers
+    : null;
+  const ldPriceCurrency =
+    ldOffers && typeof ldOffers === 'object'
+      ? ((ldOffers as Record<string, unknown>).priceCurrency as string | undefined)
+      : undefined;
+  let currency = (
+    currencyFromPriceString(dom.priceAmountAttr ?? '') ||
+    ldPriceCurrency ||
+    dom.currencyMeta ||
+    'USD'
+  ).toUpperCase();
 
   const attrEntries = sortedMagentoAttrEntries(cfg.attributes);
 
@@ -678,7 +683,11 @@ export class ConverseAdapter implements ScraperAdapter {
 
         if (sales?.value != null) {
           priceStr = parsePriceToDecimalString(sales.value);
-          currency = (sales.currency ?? 'USD').toUpperCase();
+          currency = (
+            currencyFromPriceString(sales.formatted ?? '') ||
+            sales.currency ||
+            'USD'
+          ).toUpperCase();
         }
         if (
           list?.value != null &&
@@ -697,8 +706,12 @@ export class ConverseAdapter implements ScraperAdapter {
             const o = offers as Record<string, unknown>;
             if (o.price != null)
               priceStr = parsePriceToDecimalString(o.price as string | number);
-            if (typeof o.priceCurrency === 'string')
+            const ldSymbol = currencyFromPriceString(String(o.price ?? ''));
+            if (ldSymbol) {
+              currency = ldSymbol;
+            } else if (typeof o.priceCurrency === 'string') {
               currency = o.priceCurrency.toUpperCase();
+            }
           }
         } catch {
           /* malformed */

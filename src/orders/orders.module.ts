@@ -10,6 +10,7 @@ import { ScraperModule } from '../scraper/scraper.module';
 import { UsersModule } from '../users/users.module';
 import { QueuesModule } from '../jobs/queues.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { ShippingModule } from '../shipping/shipping.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     UsersModule,
     QueuesModule,
     RealtimeModule,
+    ShippingModule,
   ],
   providers: [OrdersService],
   controllers: [OrdersController],

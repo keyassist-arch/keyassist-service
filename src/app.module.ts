@@ -23,6 +23,9 @@ import { AdminModule } from './admin/admin.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { TotpModule } from './totp/totp.module';
+import { ShippingModule } from './shipping/shipping.module';
+import { SavesModule } from './saves/saves.module';
+import { PasskeyModule } from './passkey/passkey.module';
 import { ApiRootController } from './api-root.controller';
 import { HealthController } from './health.controller';
 
@@ -105,6 +108,9 @@ import { HealthController } from './health.controller';
     AdminModule,
     RealtimeModule,
     ReconciliationModule,
+    ShippingModule,
+    SavesModule,
+    PasskeyModule,
   ],
   controllers: [HealthController, ApiRootController],
   providers: [

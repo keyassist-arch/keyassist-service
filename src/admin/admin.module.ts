@@ -8,6 +8,7 @@ import { OrdersModule } from '../orders/orders.module';
 import { ProductsModule } from '../products/products.module';
 import { QueuesModule } from '../jobs/queues.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { ShippingModule } from '../shipping/shipping.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     ProductsModule,
     QueuesModule,
     RealtimeModule,
+    ShippingModule,
   ],
   providers: [AdminService],
   controllers: [AdminController],

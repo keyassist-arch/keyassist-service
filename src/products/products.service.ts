@@ -13,6 +13,7 @@ import { ImportStatus } from '../common/enums/import-status.enum';
 import { ScrapedProduct } from '../scraper/interfaces/scraped-product.interface';
 import { parsePriceToDecimalString } from '../scraper/utils/normalize-price.util';
 import { slugifyTitle } from '../common/utils/slugify.util';
+import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
 export class ProductsService {
@@ -24,6 +25,7 @@ export class ProductsService {
     @InjectRepository(ImportedProduct)
     private readonly imports: Repository<ImportedProduct>,
     private readonly config: ConfigService,
+    private readonly currency: CurrencyService,
   ) {}
 
   private defaultMarkup(): string {
@@ -53,15 +55,24 @@ export class ProductsService {
     ) as ProductConfigurationPrice[];
   }
 
-  buildProductFromScrape(
+  async buildProductFromScrape(
     url: string,
     source: ProductSource,
     scraped: ScrapedProduct,
     markupPercent?: string,
-  ): Partial<Product> {
-    const orig =
+  ): Promise<Partial<Product>> {
+    const sourceCurrency = (scraped.currency || 'USD').toUpperCase();
+    const rawOrig =
       parsePriceToDecimalString(scraped.price) ??
       (typeof scraped.price === 'number' ? scraped.price.toFixed(2) : '0');
+
+    const orig = await this.toUsd(parseFloat(rawOrig), sourceCurrency);
+
+    const configurationPrices = await this.convertConfigPricesToUsd(
+      scraped.configurationPrices ?? [],
+      sourceCurrency,
+    );
+
     const markup = '0.00';
     const descParts: string[] = [];
     if (scraped.description?.trim()) {
@@ -80,16 +91,42 @@ export class ProductsService {
       description,
       brand: scraped.brand ?? null,
       originalPrice: orig,
-      currency: scraped.currency,
+      currency: 'USD',
       markupPercent: markup,
       salePrice: this.salePrice(orig, markup),
       images: scraped.images ?? [],
       variants: scraped.variants ?? [],
-      configurationPrices: scraped.configurationPrices ?? [],
+      configurationPrices,
       availability: scraped.availability ?? null,
       lastScrapedAt: new Date(),
       lastVerifiedAt: new Date(),
     };
+  }
+
+  private async toUsd(amount: number, fromCurrency: string): Promise<string> {
+    if (fromCurrency === 'USD') return amount.toFixed(2);
+    try {
+      const usd = await this.currency.convert(amount, fromCurrency, 'USD');
+      return usd.toFixed(2);
+    } catch (err) {
+      this.logger.warn(
+        `[product] usd_conversion_failed from=${fromCurrency} amount=${amount} — storing original: ${(err as Error).message}`,
+      );
+      return amount.toFixed(2);
+    }
+  }
+
+  private async convertConfigPricesToUsd(
+    rows: ProductConfigurationPrice[],
+    productCurrency: string,
+  ): Promise<ProductConfigurationPrice[]> {
+    return Promise.all(
+      rows.map(async (row) => {
+        const rowCurrency = (row.currency || productCurrency).toUpperCase();
+        const converted = await this.toUsd(parseFloat(row.originalPrice), rowCurrency);
+        return { ...row, originalPrice: converted, currency: 'USD' };
+      }),
+    );
   }
 
   /**
@@ -134,7 +171,7 @@ export class ProductsService {
     const existing = await this.products.findOne({
       where: { sourceUrl: importRow.sourceUrl },
     });
-    const data = this.buildProductFromScrape(
+    const data = await this.buildProductFromScrape(
       importRow.sourceUrl,
       importRow.source,
       scraped,
@@ -241,7 +278,7 @@ export class ProductsService {
       `[product] step=rescrape_apply_begin productId=${productId}`,
     );
     const product = await this.findById(productId);
-    const patch = this.buildProductFromScrape(
+    const patch = await this.buildProductFromScrape(
       product.sourceUrl,
       product.source,
       scraped,
@@ -267,7 +304,7 @@ export class ProductsService {
    * Updates catalog fields the same way as import rescrape so JSON columns and copy stay in sync.
    */
   async refreshPriceFromScrape(product: Product, scraped: ScrapedProduct) {
-    const patch = this.buildProductFromScrape(
+    const patch = await this.buildProductFromScrape(
       product.sourceUrl,
       product.source,
       scraped,

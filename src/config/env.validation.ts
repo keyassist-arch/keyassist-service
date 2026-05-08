@@ -123,13 +123,6 @@ class EnvironmentVariables {
   @IsOptional()
   MYAZA_API_KEY?: string;
 
-  /**
-   * How to send MYAZA_API_KEY: `x-api-key` (default header X-API-Key) or `bearer` (Authorization: Bearer).
-   */
-  @IsString()
-  @IsOptional()
-  MYAZA_AUTH_MODE?: string;
-
   @IsString()
   @IsOptional()
   MYAZA_BASE_URL?: string;
@@ -167,6 +160,16 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   MYAZA_WEBHOOK_URL?: string;
+
+  /** Chain for the POS sessions quote endpoint — defaults to MYAZA_CHAIN when not set */
+  @IsString()
+  @IsOptional()
+  MYAZA_QUOTE_CHAIN?: string;
+
+  /** Override URL for the POS sessions quote endpoint (default: https://secureapi.gridlog.io/api/v1/pos/sessions/quote) */
+  @IsString()
+  @IsOptional()
+  MYAZA_QUOTE_URL?: string;
 
   /** Optional temporary kill-switches for checkout method availability (set to `true` / `1` to hide+disable). */
   @IsString()
@@ -359,6 +362,28 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   LLM_SYSTEM_PROMPT?: string;
+
+  /**
+   * WebAuthn Relying Party ID — the bare domain of your frontend, no protocol or path
+   * (e.g. `example.com` or `localhost`). Required to use passkeys.
+   */
+  @IsString()
+  @IsOptional()
+  PASSKEY_RP_ID?: string;
+
+  /** Human-readable site name shown in passkey dialogs (e.g. "My Store"). */
+  @IsString()
+  @IsOptional()
+  PASSKEY_RP_NAME?: string;
+
+  /**
+   * Comma-separated allowed origins for WebAuthn verification
+   * (e.g. `https://example.com,http://localhost:3000`).
+   * Falls back to FRONTEND_URL / PUBLIC_APP_URL when unset.
+   */
+  @IsString()
+  @IsOptional()
+  PASSKEY_ORIGIN?: string;
 
   @Transform(({ value }) =>
     value === undefined || value === '' ? 10 : Number(value),

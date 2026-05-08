@@ -44,6 +44,15 @@ type MyazaSessionResponse = MyazaSessionPayload & {
   data?: MyazaSessionPayload;
 };
 
+type MyazaQuoteResponse = {
+  chain?: string;
+  token?: string;
+  amount?: string;
+  localAmount?: string;
+  fee?: string;
+  fxMargin?: string;
+};
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -275,21 +284,8 @@ export class PaymentService {
     return `${b}${p}`;
   }
 
-  /**
-   * Myaza deployments differ: some expect `X-API-Key`, others `Authorization: Bearer` (JWT-style
-   * "auth token"). `MYAZA_AUTH_MODE` selects which header receives `MYAZA_API_KEY`.
-   */
   private buildMyazaRequestHeaders(apiKey: string): Record<string, string> {
-    const mode =
-      this.config.get<string>('MYAZA_AUTH_MODE')?.trim().toLowerCase() ||
-      'x-api-key';
-    const h: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (mode === 'bearer' || mode === 'authorization' || mode === 'jwt') {
-      h.Authorization = `Bearer ${apiKey}`;
-    } else {
-      h['X-API-Key'] = apiKey;
-    }
-    return h;
+    return { 'X-API-Key': apiKey, 'Content-Type': 'application/json' };
   }
 
   private safeJson(input: unknown): string {
@@ -341,6 +337,41 @@ export class PaymentService {
     throw new BadRequestException('Unsupported payment provider');
   }
 
+  private async fetchMyazaQuote(
+    apiKey: string,
+    baseUrl: string,
+    chain: string,
+    token: string,
+    localAmount: string | number,
+    localCurrency: string,
+  ): Promise<string | null> {
+    const quoteUrl =
+      this.config.get<string>('MYAZA_QUOTE_URL')?.trim() ||
+      this.myazaSessionUrl(baseUrl, '/api/v1/pos/sessions/quote');
+    const body = { chain, token, localAmount: String(localAmount), localCurrency };
+    try {
+      const { data } = await axios.post<MyazaQuoteResponse>(quoteUrl, body, {
+        headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      });
+      const amount = data?.amount;
+      if (!amount) {
+        this.logger.warn(
+          `[payment] step=myaza_quote_missing_amount response=${this.safeJson(data)}`,
+        );
+        return null;
+      }
+      return amount;
+    } catch (e) {
+      if (axios.isAxiosError(e)) {
+        this.logger.warn(
+          `[payment] step=myaza_quote_failed status=${e.response?.status} ` +
+            `response=${this.safeJson(e.response?.data)}`,
+        );
+      }
+      throw e;
+    }
+  }
+
   private async initMyaza(
     orderId: string,
     userId: string,
@@ -367,19 +398,36 @@ export class PaymentService {
     void dto;
     const currency = (order.currency || '').trim().toUpperCase();
     const tokenUpper = token.trim().toUpperCase();
+
+    const quoteChain =
+      this.config.get<string>('MYAZA_QUOTE_CHAIN')?.trim() || chain;
+
+    const quotedAmount = await this.fetchMyazaQuote(
+      apiKey,
+      baseUrl,
+      quoteChain,
+      token,
+      order.total,
+      currency || 'USD',
+    );
+    this.logger.log(
+      `[payment] step=myaza_quote orderId=${order.id} chain=${quoteChain} ` +
+        `token=${token} localAmount=${order.total} localCurrency=${currency || 'USD'} ` +
+        `quotedAmount=${quotedAmount ?? 'unavailable'}`,
+    );
+
     const body: Record<string, unknown> = {
-      // Myaza POS sessions use amount in this deployment.
       localAmount: order.total,
+      localCurrency: currency || 'USD',
+      ...(quotedAmount ? { amount: quotedAmount } : {}),
       chain,
       token,
       ...(webhookUrl ? { webhookUrl } : {}),
     };
     const headers = this.buildMyazaRequestHeaders(apiKey);
-    const usingBearerAuth = typeof headers.Authorization === 'string';
     this.logger.log(
       `[payment] step=myaza_init_request orderId=${order.id} userId=${userId} ` +
-        `url=${sessionUrl} authMode=${usingBearerAuth ? 'bearer' : 'x-api-key'} ` +
-        `pricingMode=amount orderCurrency=${currency || 'n/a'} token=${tokenUpper} ` +
+        `url=${sessionUrl} orderCurrency=${currency || 'n/a'} token=${tokenUpper} ` +
         `body=${this.safeJson(body)}`,
     );
     let data: MyazaSessionResponse;
@@ -406,9 +454,7 @@ export class PaymentService {
         }
         if (status === 401) {
           throw new BadRequestException(
-            'Myaza rejected the API key (401). Value is sent from MYAZA_API_KEY. ' +
-              'If the server expects a Bearer token, set MYAZA_AUTH_MODE=bearer. ' +
-              'If it expects X-API-Key, use MYAZA_AUTH_MODE=x-api-key (default).',
+            'Myaza rejected the API key (401). Check that MYAZA_API_KEY is correct.',
           );
         }
         throw new BadRequestException(

@@ -11,6 +11,8 @@ import { ProductsService } from '../products/products.service';
 import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
+import { ShippingRatesService } from '../shipping/shipping-rates.service';
+import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
 
 @Injectable()
 export class AdminService {
@@ -26,6 +28,7 @@ export class AdminService {
     @InjectQueue(QUEUE_SEND_NOTIFICATION)
     private readonly notifyQueue: Queue<SendNotificationJob>,
     private readonly orderRealtime: OrderRealtimeService,
+    private readonly shippingRatesService: ShippingRatesService,
   ) {}
 
   async listOrders() {
@@ -127,5 +130,13 @@ export class AdminService {
     // `order` already has items, user, and trackingEvents loaded (from findById
     // + the in-memory push above) — no second DB query needed.
     return this.ordersService.toResponse(order, true);
+  }
+
+  async getShippingRates() {
+    return this.shippingRatesService.getRow();
+  }
+
+  async updateShippingRates(dto: UpdateShippingRatesDto) {
+    return this.shippingRatesService.update(dto);
   }
 }

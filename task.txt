@@ -1,3 +1,13 @@
 discount calculations at checkout
 price correction
 shipping fee calculations
+Potential concerns worth knowing:
+  - These are mid-market rates — actual rates from Myaza's quote endpoint will differ (they apply their own FX margin, which is even
+  in their response: "fxMargin": "2.5"). This means the USD price stored in the DB may not exactly match what Myaza charges in
+  crypto.
+  - The 1-hour cache means prices can be up to an hour stale.
+  - If Redis is down and the CDN fetch fails, toUsd() catches the error, logs a warning, and falls back to the raw number — so a
+  ₦27,000 product would be stored as 27000.00 USD silently.
+
+  The Myaza quote handles the FX correctly on the payment side (it takes localAmount + localCurrency and returns the real crypto
+  equivalent), so the stored USD price is for display — the actual charge comes from the quote.

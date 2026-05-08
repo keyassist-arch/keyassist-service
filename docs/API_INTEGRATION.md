@@ -113,6 +113,157 @@ Optional **`cart`** if `localCart` was non-empty.
 
 **Status only:** `GET /me/2fa` — `{ "enabled": false, "setupPending": true }` (or both booleans as applicable). Same flags appear in **`GET /me`** as **`twoFactor: { enabled, setupPending }`**.
 
+### Passkeys (WebAuthn)
+
+Passkeys let users authenticate with Face ID, Touch ID, Windows Hello, or a hardware security key — no password needed. The implementation uses the [WebAuthn Level 2](https://www.w3.org/TR/webauthn-2/) standard via `@simplewebauthn/server`.
+
+**Server environment variables (required):**
+
+| Variable | Example | Notes |
+|----------|---------|-------|
+| `PASSKEY_RP_ID` | `example.com` | Bare domain only — no `https://` or path. Use `localhost` in development. |
+| `PASSKEY_RP_NAME` | `My Store` | Shown in the browser passkey dialog |
+| `PASSKEY_ORIGIN` | `https://example.com` | Comma-separated. Falls back to `FRONTEND_URL`. |
+
+Redis (`REDIS_URL`) is **required** for passkeys — challenges are stored there with a 5-minute TTL.
+
+---
+
+#### Registration (add a passkey to an existing account)
+
+The user must already be logged in with password/TOTP.
+
+**Step 1 — get options**
+
+`POST /auth/passkey/register/start` — Bearer required.
+
+No request body. Returns WebAuthn `PublicKeyCredentialCreationOptions` JSON.
+
+**Step 2 — create credential on device**
+
+Pass the options to `@simplewebauthn/browser`:
+
+```ts
+import { startRegistration } from '@simplewebauthn/browser';
+
+const optionsRes = await fetch('/auth/passkey/register/start', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${accessToken}` },
+});
+const options = await optionsRes.json();
+
+const registrationResponse = await startRegistration({ optionsJSON: options });
+```
+
+**Step 3 — verify and save**
+
+`POST /auth/passkey/register/finish` — Bearer required.
+
+```json
+{
+  "response": { /* registrationResponse from startRegistration() */ },
+  "friendlyName": "My iPhone"
+}
+```
+
+`friendlyName` is optional (max 128 chars) — shown in the passkeys list so users know which device each key is from.
+
+**Response:**
+
+```json
+{ "verified": true, "credentialId": "abc123..." }
+```
+
+---
+
+#### Authentication (sign in with a passkey)
+
+**Step 1 — get challenge**
+
+`POST /auth/passkey/login/start` — no auth, rate-limited (20/min).
+
+No request body. Returns `PublicKeyCredentialRequestOptions` JSON.
+
+**Step 2 — sign with device**
+
+```ts
+import { startAuthentication } from '@simplewebauthn/browser';
+
+const optionsRes = await fetch('/auth/passkey/login/start', { method: 'POST' });
+const options = await optionsRes.json();
+
+const authResponse = await startAuthentication({ optionsJSON: options });
+```
+
+**Step 3 — verify and get tokens**
+
+`POST /auth/passkey/login/finish` — no auth, rate-limited (10/min).
+
+Body: the raw `authResponse` object from `startAuthentication()` (send it directly).
+
+**Response (same shape as password login):**
+
+```json
+{
+  "accessToken": "eyJhbG...",
+  "refreshToken": "eyJhbG...",
+  "expiresIn": "15m"
+}
+```
+
+Store tokens the same way as a password login. The same refresh flow applies.
+
+**Error codes:**
+- `401` — passkey not found, bad signature, or counter mismatch (potential replay attack)
+- `400` — challenge expired (> 5 min) or session not started — call `login/start` again
+
+---
+
+#### Credential management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/auth/passkey/credentials` | List the user's registered passkeys |
+| `PATCH` | `/auth/passkey/credentials/:id` | Rename a passkey (`{ "friendlyName": "Work Mac" }`) |
+| `DELETE` | `/auth/passkey/credentials/:id` | Remove a passkey |
+
+`GET /auth/passkey/credentials` response:
+
+```json
+[
+  {
+    "id": "uuid",
+    "credentialId": "base64url...",
+    "deviceType": "multiDevice",
+    "backedUp": true,
+    "transports": ["internal"],
+    "friendlyName": "My iPhone",
+    "createdAt": "2026-05-08T10:00:00.000Z"
+  }
+]
+```
+
+`deviceType` is `"singleDevice"` (bound to one device) or `"multiDevice"` (synced passkey, e.g. iCloud Keychain). Show this in a security settings screen so users understand which passkeys are cross-device.
+
+---
+
+#### Frontend integration summary
+
+```
+Register:  POST /auth/passkey/register/start (Bearer)
+           → startRegistration({ optionsJSON })   [browser]
+           → POST /auth/passkey/register/finish (Bearer, body = { response, friendlyName? })
+
+Login:     POST /auth/passkey/login/start
+           → startAuthentication({ optionsJSON })  [browser]
+           → POST /auth/passkey/login/finish (body = authResponse)
+           → store accessToken + refreshToken
+```
+
+Install on the frontend: `npm install @simplewebauthn/browser` (or `pnpm add @simplewebauthn/browser`). The browser package handles all `navigator.credentials` calls and encoding.
+
+---
+
 ### Refresh flow
 
 1. `POST /auth/refresh` with body `{ "refreshToken": "<refreshToken>" }` (no `Authorization` header required).
@@ -184,15 +335,23 @@ Use `role` to show/hide admin UI; the API still enforces roles server-side.
 | `POST /auth/register`, `POST /auth/login`, `POST /auth/login/2fa`, `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password` | None |
 | `POST /products/import`, `GET /products/import/:importId` | None (import is rate-limited) |
 | Socket.IO `/realtime` | None for **`import.subscribe`** / **`import.updated`**; optional Bearer JWT in `auth.token` for **`order.updated`** |
-| `GET /products` | None — recent products (`?limit=`, capped) |
-| `GET /products/:idOrSlug` | None — **`idOrSlug`** is the product **UUID** or the readable **`slug`** from list/detail JSON |
+| `GET /products` | None — recent products (`?limit=`, `?displayCurrency=` optional) |
+| `GET /products/:idOrSlug` | None — **`idOrSlug`** is the product **UUID** or the readable **`slug`** from list/detail JSON; optional `?displayCurrency=` |
+| `POST /shipping/quote` | None — shipping cost calculator |
 | `GET /me`, `PATCH /me` | Bearer access token |
 | `GET /me/2fa`, `POST /me/2fa/*` (setup, enable, setup/cancel, disable) | Bearer access token |
+| `POST /auth/passkey/login/start`, `POST /auth/passkey/login/finish` | None |
+| `POST /auth/passkey/register/start`, `POST /auth/passkey/register/finish` | Bearer |
+| `GET /auth/passkey/credentials`, `PATCH /auth/passkey/credentials/:id`, `DELETE /auth/passkey/credentials/:id` | Bearer |
 | `GET /cart`, cart mutations | Bearer |
+| `GET /saves`, `POST /saves/:productId`, `DELETE /saves/:productId`, `GET /saves/:productId/status` | Bearer |
 | `POST /orders`, `GET /orders`, `GET /orders/:id` | Bearer |
+| `POST /reconciliation/price-disputes` | Bearer |
+| `GET /reconciliation/my-issues`, `GET /reconciliation/my-issues/:id` | Bearer |
 | `GET /payments/methods` | None (recommended before checkout) |
 | `POST /payments/initialize`, `POST /payments/paypal/capture` | Bearer |
 | `GET /admin/*`, `PATCH /admin/*`, `POST /admin/scrape-preview` | Bearer + `ADMIN_SUPER` or `ADMIN_STAFF` |
+| `GET /admin/shipping-rates`, `PATCH /admin/shipping-rates` | Bearer + `ADMIN_SUPER` or `ADMIN_STAFF` |
 | `POST /admin/reconciliation/*`, `GET /admin/reconciliation/*`, `PATCH /admin/reconciliation/*` | Bearer + `ADMIN_SUPER` or `ADMIN_STAFF` |
 
 Webhook routes (`POST /payments/webhooks/*`) are server-to-server — not called from the browser.
@@ -637,6 +796,20 @@ Returns `status` (`QUEUED` | `PROCESSING` | `COMPLETED` | `FAILED`), the same **
 
 **Rate limit:** this route is throttled (e.g. 10 requests per minute per IP). Expect `429` if exceeded.
 
+### Currency conversion (`displayCurrency`)
+
+Both `GET /products` and `GET /products/:idOrSlug` accept an optional `?displayCurrency=` query parameter (3-letter ISO 4217 code, e.g. `NGN`, `EUR`, `GBP`). When supplied, the API converts `originalPrice`, `salePrice`, and every `configurationPrices[].originalPrice` / `salePrice` into the target currency using live exchange rates cached hourly. Prices stored in the DB remain USD; the conversion is applied on the response only.
+
+```http
+GET /products?displayCurrency=NGN
+GET /products/iphone-air-256gb-light-gold?displayCurrency=EUR
+```
+
+- If the code is not a valid 3-letter uppercase string, the API returns **`400`**.
+- The `currency` field on the response will reflect the converted currency code.
+- When conversion fails (rate unavailable), the server falls back to the original USD prices and logs a warning — always guard against unexpected currency values in the UI.
+- **Do not send `displayCurrency` in cart or order calls** — those are always stored and transacted in USD. Use conversion only for display.
+
 ### Get product (public)
 
 `GET /products/:idOrSlug` — pass either the product **`id`** (UUID) or the human-readable **`slug`** (same value as in JSON responses). Use **`slug`** in storefront URLs for readable paths (e.g. `/products/iphone-air-256gb-light-gold`); cart and orders still use **`productId`** = UUID.
@@ -729,6 +902,138 @@ Not every row includes every field; **`partNumber` / `sku`** are typical for **A
 
 ---
 
+## Shipping
+
+### Get a shipping quote (public)
+
+`POST /shipping/quote` — no auth required. Use this to preview shipping cost before the user places an order, so they can see the fee before committing.
+
+```json
+{
+  "weight": 2.5,
+  "length": 12,
+  "width": 8,
+  "height": 6,
+  "destination": "lagos",
+  "service": "air",
+  "bulkCommercial": false,
+  "isTV": false
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `weight` | Yes | Actual weight in **lbs** (min 0.1) |
+| `length`, `width`, `height` | No | Dimensions in **inches** for dimensional weight; omit if unknown |
+| `destination` | Yes | `"lagos"` or `"outside_lagos"` |
+| `service` | Yes | `"air"` or `"ocean_small"` |
+| `bulkCommercial` | No | Adds a bulk/commercial surcharge |
+| `isTV` | No | Adds a TV clearing fee |
+
+**Response:**
+
+```json
+{
+  "carrier": "Kingz International Logistics",
+  "service": "air",
+  "destination": "lagos",
+  "actualWeight": 2.5,
+  "dimWeight": 3.47,
+  "billableWeight": 3.47,
+  "baseRate": 17.35,
+  "tvFee": 0,
+  "bulkSurcharge": 0,
+  "total": 17.35,
+  "breakdown": [
+    "3.47 billable lbs × $5.00/lb = $17.35",
+    "Dimensional weight used: (12×8×6) / 166 = 3.47 lbs > actual 2.5 lbs",
+    "Total: $17.35"
+  ]
+}
+```
+
+Pass `total` from this response as context when prompting the user to confirm shipping cost. When calling `POST /orders`, send the same inputs in the `shipping` field to have the calculated fee stored on the order.
+
+---
+
+## Saves
+
+All routes require Bearer. Saves are a per-user wishlist of products.
+
+### List saved products
+
+`GET /saves`
+
+Returns all of the current user's saved products, newest first. Each entry includes the full nested `product` object (same shape as `GET /products/:idOrSlug`).
+
+### Save a product
+
+`POST /saves/:productId`
+
+- `:productId` — UUID of the product to save.
+- Returns the new save record with nested `product`.
+- Returns **`409`** if the product is already saved.
+
+### Unsave a product
+
+`DELETE /saves/:productId`
+
+- Returns **`404`** if the product is not in the user's saves.
+
+### Check save status
+
+`GET /saves/:productId/status`
+
+```json
+{ "saved": true }
+```
+
+Use this to drive a heart / bookmark toggle on product cards or detail pages without fetching the full saves list.
+
+---
+
+## User reconciliation
+
+Bearer required. These routes let a logged-in buyer open a price-dispute ticket and view their own issue history.
+
+### Request a price dispute
+
+`POST /reconciliation/price-disputes`
+
+Use when a buyer believes the charged amount was incorrect (e.g. wrong variant price was applied).
+
+```json
+{
+  "orderId": "uuid",
+  "expectedTotal": 299.99,
+  "reason": "I selected the 256 GB model but was charged the 512 GB price."
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `orderId` | Yes | UUID of the order to dispute |
+| `expectedTotal` | No | Amount the customer expected to pay |
+| `reason` | No | Customer context (max 2048 chars) |
+
+**Response:** the created issue object (`id`, `status: "OPEN"`, `type: "PAYMENT_DISPUTE"`, timestamps, etc.).
+
+### List my issues
+
+`GET /reconciliation/my-issues`
+
+Optional query params: `?status=OPEN`, `?orderId=<uuid>`, `?limit=20` (max 100), `?offset=0`.
+
+**Response:** paginated array of the user's own issue tickets.
+
+### Get one of my issues
+
+`GET /reconciliation/my-issues/:id`
+
+Returns **`404`** if the issue does not belong to the requesting user.
+
+---
+
 ## Cart
 
 All routes require Bearer.
@@ -741,10 +1046,12 @@ Response includes server-computed pricing fields so the frontend does not perfor
 
 - `subtotal`
 - `serviceCharge` (20% of subtotal)
-- `discount` (20% of subtotal when subtotal is strictly greater than `1000`)
-- `fees` (`serviceCharge - discount`)
-- `total` (`subtotal + fees`)
+- `discount` (20% of subtotal when subtotal is strictly greater than `1000`; `"0.00"` otherwise)
+- `fees` (`serviceCharge` — the discount is **not** subtracted from `fees`; it is subtracted in `total`)
+- `total` (`subtotal + fees - discount`)
 - `currency`
+
+> **Note:** `fees` only contains `serviceCharge`. Display `discount` as a separate line item and compute the visible "you save" copy from it directly.
 
 Plus `id` and `items[]` with `id`, `quantity`, `variantSelection`, and nested `product` (or minimal `{ id }` if relation missing).
 
@@ -816,11 +1123,34 @@ Bearer required.
     "line1": "...",
     "city": "...",
     "country": "NG"
+  },
+  "shipping": {
+    "weight": 2.5,
+    "length": 12,
+    "width": 8,
+    "height": 6,
+    "destination": "lagos",
+    "service": "air",
+    "bulkCommercial": false,
+    "isTV": false
   }
 }
 ```
 
-Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set.
+Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set. `shipping` is **optional** — when omitted, `shippingFee` on the order is `"0.00"`.
+
+**`shipping` fields:**
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `weight` | Yes | Actual weight in **lbs** (minimum 0.1) |
+| `length`, `width`, `height` | No | Dimensions in **inches** for dimensional weight calculation |
+| `destination` | Yes | `"lagos"` or `"outside_lagos"` |
+| `service` | Yes | `"air"` or `"ocean_small"` (ocean small box is a flat-rate service) |
+| `bulkCommercial` | No | `true` adds a bulk/commercial surcharge |
+| `isTV` | No | `true` adds a TV clearing fee |
+
+Use `POST /shipping/quote` (below) to preview the shipping cost before placing the order.
 
 **Behavior:** re-scrapes each cart line to refresh price, checks **stock** when `stockQuantity` is set on products, creates the order as `PENDING`, snapshots line items, clears the cart, and may enqueue a confirmation email.
 
@@ -847,7 +1177,7 @@ This avoids scanning **`GET /orders`** on the client, though filtering with **`?
 **Order response highlights:**
 
 - `status` — `PENDING` | `PAID` | `PROCESSING` | `ORDERED_FROM_SUPPLIER` | `SHIPPED` | `DELIVERED` | `CANCELLED` | `REFUNDED` | `DISPUTED`
-- `subtotal`, `serviceCharge`, `discount`, `fees`, `total`, `currency` — server-computed checkout totals (same pricing rules as cart)
+- `subtotal`, `serviceCharge`, `discount`, `fees`, `shippingFee`, `total`, `currency` — server-computed checkout totals. `fees = serviceCharge`; `discount` is a separate line (20% of subtotal when subtotal > $1000); `shippingFee` is `"0.00"` when no `shipping` was sent. `total = subtotal + fees + shippingFee - discount`.
 - `checkout` — **machine-readable next action** (on every order response):
   - `canInitializePayment` — `true` when `status === "PENDING"` (user may call **`POST /payments/initialize`**)
   - `nextStep` — `initialize_payment` when unpaid, or `none` when not awaiting payment. Use to show a **Pay / Complete checkout** CTA and route to a payment page that uses **`id`**.
@@ -1084,6 +1414,28 @@ All fields optional. When `carrier` and `trackingNumber` are both sent **and at 
 
 `GET /admin/products`
 
+### Shipping rates (admin)
+
+`GET /admin/shipping-rates` — returns the active Kingz International Logistics rate row from the database (or `null` if the defaults are still in use).
+
+`PATCH /admin/shipping-rates` — update one or more rate fields. All fields are optional; only supplied fields are changed.
+
+```json
+{
+  "airRateLagosPerLb": 5.5,
+  "airRateOutsideLagosPerLb": 6.5,
+  "airMinimumLagos": 80,
+  "airMinimumOutsideLagos": 110,
+  "minWeightLbs": 15,
+  "bulkCommercialSurcharge": 110,
+  "tvClearingFee": 320,
+  "oceanSmallBoxRate": 105,
+  "dimDivisor": 166
+}
+```
+
+Rate changes take effect immediately for new `POST /shipping/quote` calls and new orders.
+
 ### Scrape preview (debug only)
 
 `POST /admin/scrape-preview`
@@ -1307,6 +1659,13 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | POST | `/auth/resend-verification` | — |
 | POST | `/auth/login` | — |
 | POST | `/auth/login/2fa` | — |
+| POST | `/auth/passkey/login/start` | — |
+| POST | `/auth/passkey/login/finish` | — |
+| POST | `/auth/passkey/register/start` | Bearer |
+| POST | `/auth/passkey/register/finish` | Bearer |
+| GET | `/auth/passkey/credentials` | Bearer |
+| PATCH | `/auth/passkey/credentials/:id` | Bearer |
+| DELETE | `/auth/passkey/credentials/:id` | Bearer |
 | POST | `/auth/refresh` | — |
 | POST | `/auth/forgot-password` | — |
 | POST | `/auth/reset-password` | — |
@@ -1319,17 +1678,25 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | POST | `/me/2fa/disable` | Bearer |
 | POST | `/products/import` | — |
 | GET | `/products/import/:importId` | — |
-| GET | `/products` | — |
-| GET | `/products/:idOrSlug` | — |
+| GET | `/products` | — (optional `?displayCurrency=`) |
+| GET | `/products/:idOrSlug` | — (optional `?displayCurrency=`) |
+| POST | `/shipping/quote` | — |
+| GET | `/saves` | Bearer |
+| POST | `/saves/:productId` | Bearer |
+| DELETE | `/saves/:productId` | Bearer |
+| GET | `/saves/:productId/status` | Bearer |
 | GET | `/cart` | Bearer |
 | POST | `/cart/sync` | Bearer |
 | POST | `/cart/items` | Bearer |
 | PATCH | `/cart/items/:itemId` | Bearer |
 | DELETE | `/cart/items/:itemId` | Bearer |
-| POST | `/orders` | Bearer |
+| POST | `/orders` | Bearer (optional `shipping` body field) |
 | GET | `/orders` | Bearer — optional `?status=PENDING` (etc.) |
 | GET | `/orders/pending-payment` | Bearer — most recent unpaid order for banners |
 | GET | `/orders/:id` | Bearer |
+| POST | `/reconciliation/price-disputes` | Bearer |
+| GET | `/reconciliation/my-issues` | Bearer |
+| GET | `/reconciliation/my-issues/:id` | Bearer |
 | GET | `/payments/methods` | — |
 | POST | `/payments/initialize` | Bearer |
 | POST | `/payments/paypal/capture` | Bearer |
@@ -1338,6 +1705,8 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | PATCH | `/admin/orders/:id` | Bearer admin |
 | GET | `/admin/products` | Bearer admin |
 | POST | `/admin/scrape-preview` | Bearer admin |
+| GET | `/admin/shipping-rates` | Bearer admin |
+| PATCH | `/admin/shipping-rates` | Bearer admin |
 | POST | `/admin/reconciliation/refunds` | Bearer admin |
 | GET | `/admin/reconciliation/refunds` | Bearer admin |
 | GET | `/admin/reconciliation/refunds/:id` | Bearer admin |

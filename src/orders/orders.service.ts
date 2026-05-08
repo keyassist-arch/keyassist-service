@@ -25,6 +25,7 @@ import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { computePricing } from '../common/utils/pricing.util';
+import { ShippingService } from '../shipping/shipping.service';
 
 @Injectable()
 export class OrdersService {
@@ -43,6 +44,7 @@ export class OrdersService {
     @InjectQueue(QUEUE_SEND_NOTIFICATION)
     private readonly notifyQueue: Queue<SendNotificationJob>,
     private readonly orderRealtime: OrderRealtimeService,
+    private readonly shippingService: ShippingService,
   ) {}
 
   async createFromCart(userId: string, dto: CreateOrderDto) {
@@ -97,14 +99,17 @@ export class OrdersService {
       }),
     );
 
-    // Last item's currency wins — all items in a cart are assumed to share a currency.
-    const currency = lines[lines.length - 1]?.currency ?? 'USD';
+    const currency = 'USD';
     const subtotal = lines.reduce(
       (acc, l) => acc + parseFloat(l.price) * l.qty,
       0,
     );
 
-    const pricing = computePricing(subtotal);
+    const shippingFee = dto.shipping
+      ? (await this.shippingService.calculate(dto.shipping)).total
+      : 0;
+
+    const pricing = computePricing(subtotal, shippingFee);
     const fees = pricing.fees;
     const total = pricing.total;
 
@@ -135,6 +140,8 @@ export class OrdersService {
         status: OrderStatus.PENDING,
         subtotal: subtotal.toFixed(2),
         fees: fees.toFixed(2),
+        discount: pricing.discount.toFixed(2),
+        shippingFee: shippingFee.toFixed(2),
         total: total.toFixed(2),
         currency,
         shippingAddress: shipping,
