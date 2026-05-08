@@ -17,7 +17,7 @@ async function bootstrap() {
   // Enable CORS with explicit configuration
   app.enableCors({
     origin: [
-      'https://unified-commerce-frontend-production.up.railway.app',
+      'https://keyassist.up.railway.app',
       'http://localhost:3000',
       'http://localhost:3001',
       'http://127.0.0.1:3000',
