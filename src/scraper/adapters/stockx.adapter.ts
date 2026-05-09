@@ -81,9 +81,12 @@ export class StockxAdapter implements ScraperAdapter {
         const isProductType = (t: unknown) =>
           t === 'Product' ||
           t === 'product' ||
-          (Array.isArray(t) && t.some((x) => String(x).toLowerCase() === 'product'));
+          (Array.isArray(t) &&
+            t.some((x) => String(x).toLowerCase() === 'product'));
 
-        const walkForProduct = (node: unknown): Record<string, unknown> | null => {
+        const walkForProduct = (
+          node: unknown,
+        ): Record<string, unknown> | null => {
           if (!node || typeof node !== 'object') return null;
           const obj = node as Record<string, unknown>;
           if (isProductType(obj['@type'])) return obj;
@@ -105,26 +108,34 @@ export class StockxAdapter implements ScraperAdapter {
           jsonLdNodes.map((n) => walkForProduct(n)).find(Boolean) ?? null;
 
         if (productNode) {
-          if (typeof productNode.name === 'string') result.title = productNode.name;
+          if (typeof productNode.name === 'string')
+            result.title = productNode.name;
           if (typeof productNode.description === 'string') {
             result.description = productNode.description;
           }
           const b = productNode.brand;
           if (typeof b === 'string') result.brand = b;
-          else if (b && typeof b === 'object' && typeof (b as { name?: unknown }).name === 'string') {
+          else if (
+            b &&
+            typeof b === 'object' &&
+            typeof (b as { name?: unknown }).name === 'string'
+          ) {
             result.brand = (b as { name: string }).name;
           }
           const image = productNode.image;
           const imgs = Array.isArray(image) ? image : image ? [image] : [];
           result.images.push(
-            ...imgs.map((x) => String(x)).filter((x) => /^https?:\/\//i.test(x)),
+            ...imgs
+              .map((x) => String(x))
+              .filter((x) => /^https?:\/\//i.test(x)),
           );
           const offers = productNode.offers;
           const offer = Array.isArray(offers) ? offers[0] : offers;
           if (offer && typeof offer === 'object') {
             const o = offer as Record<string, unknown>;
             if (o.price != null) result.ldPrice = String(o.price);
-            if (o.priceCurrency != null) result.currency = String(o.priceCurrency);
+            if (o.priceCurrency != null)
+              result.currency = String(o.priceCurrency);
           }
         }
 
@@ -152,8 +163,11 @@ export class StockxAdapter implements ScraperAdapter {
           if (ogImage) result.images.push(ogImage);
         }
 
-        const moneyRegex = /([A-Z]{3}\s*)?[$£€₦]\s?[\d,]+(?:\.\d{1,2})?|([A-Z]{3})\s*[\d,]+(?:\.\d{1,2})?/;
-        const labels = Array.from(document.querySelectorAll('div,span,p,strong,h2,h3'));
+        const moneyRegex =
+          /([A-Z]{3}\s*)?[$£€₦]\s?[\d,]+(?:\.\d{1,2})?|([A-Z]{3})\s*[\d,]+(?:\.\d{1,2})?/;
+        const labels = Array.from(
+          document.querySelectorAll('div,span,p,strong,h2,h3'),
+        );
         for (const labelEl of labels) {
           const label = text(labelEl);
           if (!/lowest ask/i.test(label)) continue;
@@ -216,4 +230,3 @@ export class StockxAdapter implements ScraperAdapter {
     return this.generic.scrape(url);
   }
 }
-

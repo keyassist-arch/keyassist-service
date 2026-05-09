@@ -164,9 +164,11 @@ export class PlaywrightService implements OnModuleDestroy {
     return {
       geoCode,
       locale: this.config.get<string>('SCRAPE_LOCALE') ?? base.locale,
-      timezoneId: this.config.get<string>('SCRAPE_TIMEZONE_ID') ?? base.timezoneId,
+      timezoneId:
+        this.config.get<string>('SCRAPE_TIMEZONE_ID') ?? base.timezoneId,
       acceptLanguage:
-        this.config.get<string>('SCRAPE_ACCEPT_LANGUAGE') ?? base.acceptLanguage,
+        this.config.get<string>('SCRAPE_ACCEPT_LANGUAGE') ??
+        base.acceptLanguage,
     };
   }
 

@@ -9,7 +9,10 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import type { ShippingDestination, ShippingService } from '../../shipping/utils/kingz-rates';
+import type {
+  ShippingDestination,
+  ShippingService,
+} from '../../shipping/utils/kingz-rates';
 
 class ShippingAddressDto {
   @IsOptional()

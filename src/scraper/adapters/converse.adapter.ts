@@ -76,9 +76,7 @@ function extractSfccProduct(
       const p =
         state.product ??
         state.pdpMain?.product ??
-        (state.productCache
-          ? Object.values(state.productCache)[0]
-          : null);
+        (state.productCache ? Object.values(state.productCache)[0] : null);
       if (p?.productName) return p;
     } catch {
       /* malformed */
@@ -209,7 +207,9 @@ function parseJsonObjectAt(s: string, braceStart: number): unknown | null {
   return null;
 }
 
-function extractMagentoJsonConfig(scriptText: string): MagentoJsonConfig | null {
+function extractMagentoJsonConfig(
+  scriptText: string,
+): MagentoJsonConfig | null {
   const key = '"jsonConfig"';
   let from = 0;
   while (from < scriptText.length) {
@@ -320,9 +320,11 @@ function buildMagentoScrapedProduct(
     : null;
   const ldPriceCurrency =
     ldOffers && typeof ldOffers === 'object'
-      ? ((ldOffers as Record<string, unknown>).priceCurrency as string | undefined)
+      ? ((ldOffers as Record<string, unknown>).priceCurrency as
+          | string
+          | undefined)
       : undefined;
-  let currency = (
+  const currency = (
     currencyFromPriceString(dom.priceAmountAttr ?? '') ||
     ldPriceCurrency ||
     dom.currencyMeta ||
@@ -415,8 +417,7 @@ function buildMagentoScrapedProduct(
       ([, a]) => a.code?.toLowerCase() === 'size',
     );
     const sizeAxisId = sizeAttr?.[0];
-    const sizeLabel =
-      sizeAxisId != null ? idx[sizeAxisId] : undefined;
+    const sizeLabel = sizeAxisId != null ? idx[sizeAxisId] : undefined;
     const variantAxis = sizeAttr?.[1]?.label ?? 'Size';
     const optionValue =
       sizeAxisId != null && sizeLabel != null
@@ -430,12 +431,14 @@ function buildMagentoScrapedProduct(
     if (typeof stockQ === 'number' && stockQ < 0) available = false;
 
     if (cfg.salable && !Array.isArray(cfg.salable)) {
-      const sal = (cfg.salable as Record<string, unknown>)[pid];
+      const sal = cfg.salable[pid];
       if (sal === false) available = false;
     }
 
     const sku = cfg.sku?.[pid];
-    const label = axisLabels.length ? axisLabels.join(' · ') : `SKU ${sku ?? pid}`;
+    const label = axisLabels.length
+      ? axisLabels.join(' · ')
+      : `SKU ${sku ?? pid}`;
     const displayLabel = `${label} — ${currency} ${originalPrice}`;
 
     const colorFromAxes = metaAxes.color;
@@ -472,8 +475,7 @@ function buildMagentoScrapedProduct(
   });
 
   const descParts: string[] = [];
-  if (dom.genderOrSubdesc.trim())
-    descParts.push(dom.genderOrSubdesc.trim());
+  if (dom.genderOrSubdesc.trim()) descParts.push(dom.genderOrSubdesc.trim());
   if (dom.overviewText.trim()) descParts.push(dom.overviewText.trim());
   if (ldProduct?.description && typeof ldProduct.description === 'string') {
     const stripped = stripHtmlToText(ldProduct.description);
@@ -491,7 +493,7 @@ function buildMagentoScrapedProduct(
 
   const globalCompare =
     globalCompareAmount != null
-      ? parsePriceToDecimalString(globalCompareAmount) ?? undefined
+      ? (parsePriceToDecimalString(globalCompareAmount) ?? undefined)
       : undefined;
 
   return {
@@ -520,12 +522,15 @@ export class ConverseAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      locale: 'en-US',
-    }, url);
+    const context = await this.playwright.newScrapeContext(
+      {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        locale: 'en-US',
+      },
+      url,
+    );
 
     try {
       const page = await context.newPage();
@@ -633,8 +638,9 @@ export class ConverseAdapter implements ScraperAdapter {
             ?.textContent?.trim() ?? '';
 
         const magentoGenderInner =
-          document.querySelector('.product.attribute.gender')?.textContent?.trim() ??
-          '';
+          document
+            .querySelector('.product.attribute.gender')
+            ?.textContent?.trim() ?? '';
 
         const magentoInStockInner = !!document.querySelector(
           '.product-info-main .stock.available',
@@ -646,9 +652,7 @@ export class ConverseAdapter implements ScraperAdapter {
           '.pdp-gallery img, .product-images img, [data-test="product-image"] img, .custom-gallery--container img, .gallery-placeholder img, .gallery-placeholder__image',
         )) {
           const src =
-            (img as HTMLImageElement).src ||
-            img.getAttribute('data-src') ||
-            '';
+            (img as HTMLImageElement).src || img.getAttribute('data-src') || '';
           if (src && !src.startsWith('data:') && !seen.has(src)) {
             seen.add(src);
             fallbackImagesInner.push(src);
@@ -725,7 +729,9 @@ export class ConverseAdapter implements ScraperAdapter {
           ? extractSfccImages(product.images, product.colorVariations)
           : fallbackImages.slice(0, 20);
 
-        const finalImages = images.length ? images : fallbackImages.slice(0, 20);
+        const finalImages = images.length
+          ? images
+          : fallbackImages.slice(0, 20);
 
         const variants: ScrapedProduct['variants'] = [];
 
@@ -784,7 +790,7 @@ export class ConverseAdapter implements ScraperAdapter {
                 const label = cv.color?.displayValue ?? cv.name ?? 'Color';
                 return {
                   label,
-                  originalPrice: priceStr!,
+                  originalPrice: priceStr,
                   variantAxis: 'Color',
                   optionValue: label,
                   available: true,
@@ -836,17 +842,12 @@ export class ConverseAdapter implements ScraperAdapter {
           title: magentoTitle,
           priceAmountAttr: magentoPriceAmount,
           currencyMeta: magentoCurrencyMeta,
-          imageUrls:
-            magentoImages.length > 0 ? magentoImages : fallbackImages,
+          imageUrls: magentoImages.length > 0 ? magentoImages : fallbackImages,
           overviewText: magentoOverview,
           genderOrSubdesc: magentoGender,
           parentInStock: magentoInStock,
         };
-        const magento = buildMagentoScrapedProduct(
-          magentoCfg,
-          dom,
-          ldProduct,
-        );
+        const magento = buildMagentoScrapedProduct(magentoCfg, dom, ldProduct);
         if (magento) return magento;
       }
 

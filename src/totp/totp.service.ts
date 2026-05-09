@@ -9,8 +9,7 @@ export class TotpService {
 
   issuerName(): string {
     return (
-      this.config.get<string>('TOTP_ISSUER_NAME')?.trim() ||
-      'Unified Commerce'
+      this.config.get<string>('TOTP_ISSUER_NAME')?.trim() || 'Unified Commerce'
     );
   }
 

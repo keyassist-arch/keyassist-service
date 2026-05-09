@@ -55,7 +55,8 @@ export class AuthController {
 
   @Public()
   @ApiOperation({
-    summary: 'Complete login with TOTP (after password step returns requiresTwoFactor)',
+    summary:
+      'Complete login with TOTP (after password step returns requiresTwoFactor)',
   })
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('login/2fa')

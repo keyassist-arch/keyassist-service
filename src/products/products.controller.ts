@@ -63,7 +63,9 @@ export class ProductsController {
     }
 
     return Promise.all(
-      responses.map((r) => this.currencyService.convertProductResponse(r, target)),
+      responses.map((r) =>
+        this.currencyService.convertProductResponse(r, target),
+      ),
     );
   }
 

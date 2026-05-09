@@ -350,9 +350,7 @@ export class ProductImportService {
           const fresh = await this.imports.findOne({
             where: { id: winner.id },
           });
-          const phase = importPhaseFromStatus(
-            fresh?.status ?? winner.status,
-          )!;
+          const phase = importPhaseFromStatus(fresh?.status ?? winner.status)!;
           return {
             status: 'processing' as const,
             importId: winner.id,
@@ -371,9 +369,7 @@ export class ProductImportService {
         if (winner.status === ImportStatus.FAILED) {
           return this.importByUrl(rawUrl);
         }
-        throw new ServiceUnavailableException(
-          'Import conflict; please retry.',
-        );
+        throw new ServiceUnavailableException('Import conflict; please retry.');
       }
       await this.redis.releaseScrapeLock(normalized);
       throw e;

@@ -41,8 +41,22 @@ interface ApplePagePayload {
 
 /** Words that appear in Apple product names but are NOT color tokens. */
 const APPLE_PRODUCT_NOUNS = new Set([
-  'iphone', 'ipad', 'mac', 'macbook', 'pro', 'max', 'plus', 'air', 'mini',
-  'apple', 'watch', 'ultra', 'titanium-finish', 'aluminum', 'stainless', 'steel',
+  'iphone',
+  'ipad',
+  'mac',
+  'macbook',
+  'pro',
+  'max',
+  'plus',
+  'air',
+  'mini',
+  'apple',
+  'watch',
+  'ultra',
+  'titanium-finish',
+  'aluminum',
+  'stainless',
+  'steel',
 ]);
 
 /** Extract { Storage, Color } from an Apple SKU name like "iPhone 17 256GB Black Titanium". */
@@ -258,12 +272,15 @@ export class AppleAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      locale: 'en-US',
-      timezoneId: 'America/Los_Angeles',
-    }, url);
+    const context = await this.playwright.newScrapeContext(
+      {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        locale: 'en-US',
+        timezoneId: 'America/Los_Angeles',
+      },
+      url,
+    );
 
     try {
       const page = await context.newPage();
@@ -515,11 +532,9 @@ export class AppleAdapter implements ScraperAdapter {
         raw.configRows
           .map((r) => currencyFromPriceString(r.priceText))
           .find((c) => !!c) ?? null;
-      const currency = (
-        priceSymbolCurrency ||
-        raw.ldCurrency ||
-        'USD'
-      ).toUpperCase().slice(0, 8);
+      const currency = (priceSymbolCurrency || raw.ldCurrency || 'USD')
+        .toUpperCase()
+        .slice(0, 8);
       const priceNums = skus.length
         ? skus.map((s) => s.fullPrice)
         : raw.configRows

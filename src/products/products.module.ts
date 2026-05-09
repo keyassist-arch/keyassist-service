@@ -8,7 +8,10 @@ import { ProductsController } from './products.controller';
 import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Product, ImportedProduct]), CurrencyModule],
+  imports: [
+    TypeOrmModule.forFeature([Product, ImportedProduct]),
+    CurrencyModule,
+  ],
   providers: [ProductsService, ProductSlugBackfillService],
   controllers: [ProductsController],
   exports: [ProductsService, TypeOrmModule],

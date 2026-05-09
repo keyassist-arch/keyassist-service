@@ -10,7 +10,12 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -35,8 +40,14 @@ export class ReconciliationController {
   // --------------------------------------------------------------------------
 
   @Post('refunds')
-  @ApiOperation({ summary: 'Issue a refund for an order (Stripe / Paystack / PayPal / manual)' })
-  issueRefund(@Body() dto: CreateRefundDto, @Request() req: { user: { sub: string } }) {
+  @ApiOperation({
+    summary:
+      'Issue a refund for an order (Stripe / Paystack / PayPal / manual)',
+  })
+  issueRefund(
+    @Body() dto: CreateRefundDto,
+    @Request() req: { user: { sub: string } },
+  ) {
     return this.reconciliationService.issueRefund(dto, req.user.sub);
   }
 
@@ -58,7 +69,9 @@ export class ReconciliationController {
   // --------------------------------------------------------------------------
 
   @Post('issues')
-  @ApiOperation({ summary: 'Open a customer issue (dispute / complaint / request)' })
+  @ApiOperation({
+    summary: 'Open a customer issue (dispute / complaint / request)',
+  })
   createIssue(@Body() dto: CreateIssueDto) {
     return this.reconciliationService.createIssue(dto);
   }
@@ -70,13 +83,17 @@ export class ReconciliationController {
   }
 
   @Get('issues/:id')
-  @ApiOperation({ summary: 'Get a single customer issue with related order and user' })
+  @ApiOperation({
+    summary: 'Get a single customer issue with related order and user',
+  })
   getIssue(@Param('id', ParseUUIDPipe) id: string) {
     return this.reconciliationService.getIssue(id);
   }
 
   @Patch('issues/:id')
-  @ApiOperation({ summary: 'Update a customer issue (status, assignment, resolution note)' })
+  @ApiOperation({
+    summary: 'Update a customer issue (status, assignment, resolution note)',
+  })
   patchIssue(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: PatchIssueDto,
@@ -93,6 +110,10 @@ export class ReconciliationController {
     @Body() dto: CreateRefundDto,
     @Request() req: { user: { sub: string } },
   ) {
-    return this.reconciliationService.resolveIssueWithRefund(id, dto, req.user.sub);
+    return this.reconciliationService.resolveIssueWithRefund(
+      id,
+      dto,
+      req.user.sub,
+    );
   }
 }

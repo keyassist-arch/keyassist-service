@@ -93,7 +93,8 @@ export class PaymentService {
       },
       {
         provider: PaymentProvider.STRIPE,
-        available: stripeConfigured && !this.isDisabled('PAYMENT_DISABLE_STRIPE'),
+        available:
+          stripeConfigured && !this.isDisabled('PAYMENT_DISABLE_STRIPE'),
         reason: !stripeConfigured
           ? 'not_configured'
           : this.isDisabled('PAYMENT_DISABLE_STRIPE')
@@ -102,7 +103,8 @@ export class PaymentService {
       },
       {
         provider: PaymentProvider.PAYPAL,
-        available: paypalConfigured && !this.isDisabled('PAYMENT_DISABLE_PAYPAL'),
+        available:
+          paypalConfigured && !this.isDisabled('PAYMENT_DISABLE_PAYPAL'),
         reason: !paypalConfigured
           ? 'not_configured'
           : this.isDisabled('PAYMENT_DISABLE_PAYPAL')
@@ -169,9 +171,10 @@ export class PaymentService {
   /**
    * Secret: `PAYPAL_SECRET_KEY` or PayPal’s usual `PAYPAL_CLIENT_SECRET` if the former is unset.
    */
-  private resolvePaypalClientCredentials():
-    | { clientId: string; secret: string }
-    | null {
+  private resolvePaypalClientCredentials(): {
+    clientId: string;
+    secret: string;
+  } | null {
     const clientId = this.config.get<string>('PAYPAL_CLIENT_ID')?.trim();
     const secret =
       this.config.get<string>('PAYPAL_SECRET_KEY')?.trim() ||
@@ -194,7 +197,9 @@ export class PaymentService {
     const { clientId, secret } = this.paypalCredentials();
     const basic = Buffer.from(`${clientId}:${secret}`).toString('base64');
     const base = this.paypalBaseUrl();
-    const host = this.isPaypalLiveMode() ? 'api-m.paypal.com' : 'api-m.sandbox.paypal.com';
+    const host = this.isPaypalLiveMode()
+      ? 'api-m.paypal.com'
+      : 'api-m.sandbox.paypal.com';
     try {
       const { data } = await axios.post<{ access_token?: string }>(
         `${base}/v1/oauth2/token`,
@@ -348,7 +353,12 @@ export class PaymentService {
     const quoteUrl =
       this.config.get<string>('MYAZA_QUOTE_URL')?.trim() ||
       this.myazaSessionUrl(baseUrl, '/api/v1/pos/sessions/quote');
-    const body = { chain, token, localAmount: String(localAmount), localCurrency };
+    const body = {
+      chain,
+      token,
+      localAmount: String(localAmount),
+      localCurrency,
+    };
     try {
       const { data } = await axios.post<MyazaQuoteResponse>(quoteUrl, body, {
         headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
@@ -386,14 +396,8 @@ export class PaymentService {
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not payable in current state');
     }
-    const {
-      baseUrl,
-      sessionsPath,
-      apiKey,
-      chain,
-      token,
-      webhookUrl,
-    } = this.myazaConfig();
+    const { baseUrl, sessionsPath, apiKey, chain, token, webhookUrl } =
+      this.myazaConfig();
     const sessionUrl = this.myazaSessionUrl(baseUrl, sessionsPath);
     void dto;
     const currency = (order.currency || '').trim().toUpperCase();
@@ -465,16 +469,9 @@ export class PaymentService {
     }
     const payload: MyazaSessionPayload = data?.data ?? data;
     const checkoutUrl =
-      (payload?.paymentUrl as string | undefined) ||
-      (payload?.checkoutUrl as string | undefined) ||
-      (payload?.hostedUrl as string | undefined);
-    const paymentId =
-      (payload?.sessionId as string | undefined) ||
-      (payload?.id as string | undefined) ||
-      (payload?.reference as string | undefined);
-    const depositAddress =
-      (payload?.depositAddress as string | undefined) ||
-      (payload?.address as string | undefined);
+      payload?.paymentUrl || payload?.checkoutUrl || payload?.hostedUrl;
+    const paymentId = payload?.sessionId || payload?.id || payload?.reference;
+    const depositAddress = payload?.depositAddress || payload?.address;
     if (!paymentId || !depositAddress) {
       this.logger.warn(
         `[payment] step=myaza_init_invalid_payload orderId=${order.id} ` +
@@ -489,15 +486,9 @@ export class PaymentService {
       details: {
         myazaSessionId: paymentId,
         depositAddress,
-        chain: (payload?.chain as string | undefined) ?? chain,
-        token:
-          (payload?.symbol as string | undefined) ||
-          (payload?.token as string | undefined) ||
-          token,
-        amount:
-          (payload?.amount as string | undefined) ||
-          (payload?.amountExpected as string | undefined) ||
-          order.total,
+        chain: payload?.chain ?? chain,
+        token: payload?.symbol || payload?.token || token,
+        amount: payload?.amount || payload?.amountExpected || order.total,
       },
     });
     const responsePayload = {
@@ -507,22 +498,13 @@ export class PaymentService {
       checkoutUrl: checkoutUrl ?? null,
       depositAddress,
       qrCode:
-        (payload?.qrCode as string | undefined) ||
-        (payload?.qrCodeDataUrl as string | undefined) ||
-        (payload?.qrCodeUrl as string | undefined) ||
-        null,
-      chain: (payload?.chain as string | undefined) ?? chain,
-      token:
-        (payload?.symbol as string | undefined) ||
-        (payload?.token as string | undefined) ||
-        token,
-      amount:
-        (payload?.amount as string | undefined) ||
-        (payload?.amountExpected as string | undefined) ||
-        order.total,
-      status: (payload?.status as string | undefined) ?? 'pending',
-      expiresAt: (payload?.expiresAt as string | undefined) ?? null,
-      createdAt: (payload?.createdAt as string | undefined) ?? null,
+        payload?.qrCode || payload?.qrCodeDataUrl || payload?.qrCodeUrl || null,
+      chain: payload?.chain ?? chain,
+      token: payload?.symbol || payload?.token || token,
+      amount: payload?.amount || payload?.amountExpected || order.total,
+      status: payload?.status ?? 'pending',
+      expiresAt: payload?.expiresAt ?? null,
+      createdAt: payload?.createdAt ?? null,
     };
     this.logger.log(
       `[payment] step=myaza_init_client_payload orderId=${order.id} ` +
@@ -969,7 +951,9 @@ export class PaymentService {
     );
     if (
       !orderId ||
-      !['paid', 'completed', 'confirmed', 'success', 'delivered'].includes(status)
+      !['paid', 'completed', 'confirmed', 'success', 'delivered'].includes(
+        status,
+      )
     ) {
       this.logger.warn(
         `[payment] step=myaza_webhook_ignored orderId=${orderId ?? 'missing'} status=${status || 'missing'}`,

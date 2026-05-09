@@ -54,7 +54,12 @@ export class RedisService {
   ): Promise<void> {
     if (!this.enabled()) return;
     try {
-      await this.client!.set(this.urlKey(normalizedUrl), productId, 'EX', ttlSec);
+      await this.client!.set(
+        this.urlKey(normalizedUrl),
+        productId,
+        'EX',
+        ttlSec,
+      );
     } catch (err) {
       this.logger.warn(
         `[redis] setCachedProductId failed -- skipping cache write: ${(err as Error).message}`,

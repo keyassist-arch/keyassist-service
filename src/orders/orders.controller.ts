@@ -8,7 +8,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiQuery,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -36,10 +41,7 @@ export class OrdersController {
       'Filter by order status, e.g. PENDING to list unpaid orders only',
     example: 'PENDING',
   })
-  list(
-    @CurrentUser() user: JwtPayload,
-    @Query('status') status?: string,
-  ) {
+  list(@CurrentUser() user: JwtPayload, @Query('status') status?: string) {
     return this.ordersService.listForUser(user.sub, { status });
   }
 

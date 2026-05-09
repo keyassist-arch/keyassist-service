@@ -29,7 +29,9 @@ function buildClient(url: string): Redis {
      */
     retryStrategy(times: number) {
       const delay = Math.min(times * 200, 5_000);
-      logger.warn(`[redis] reconnect attempt #${times} -- next try in ${delay} ms`);
+      logger.warn(
+        `[redis] reconnect attempt #${times} -- next try in ${delay} ms`,
+      );
       return delay;
     },
     /**
@@ -38,8 +40,7 @@ function buildClient(url: string): Redis {
      */
     reconnectOnError(err: Error) {
       return (
-        err.message.includes('ECONNRESET') ||
-        err.message.includes('READONLY')
+        err.message.includes('ECONNRESET') || err.message.includes('READONLY')
       );
     },
   });
@@ -65,7 +66,9 @@ function buildClient(url: string): Redis {
       useFactory: (config: ConfigService): Redis | null => {
         const url = config.get<string>('REDIS_URL')?.trim();
         if (!url) {
-          logger.warn('[redis] REDIS_URL not set -- caching and scrape-locks disabled');
+          logger.warn(
+            '[redis] REDIS_URL not set -- caching and scrape-locks disabled',
+          );
           return null;
         }
         return buildClient(url);

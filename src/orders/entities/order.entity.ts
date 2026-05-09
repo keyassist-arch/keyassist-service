@@ -42,7 +42,13 @@ export class Order {
   @Column({ type: 'decimal', precision: 14, scale: 2, default: '0' })
   discount: string;
 
-  @Column({ name: 'shipping_fee', type: 'decimal', precision: 14, scale: 2, default: '0' })
+  @Column({
+    name: 'shipping_fee',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
   shippingFee: string;
 
   @Column({ type: 'decimal', precision: 14, scale: 2 })

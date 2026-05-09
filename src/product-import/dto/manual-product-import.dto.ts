@@ -53,7 +53,10 @@ export class ManualProductImportDto {
   imageUrls?: string[];
 
   @ApiProperty({ description: 'Original product page URL' })
-  @IsUrl({ require_protocol: true }, { message: 'sourceUrl must be a valid URL' })
+  @IsUrl(
+    { require_protocol: true },
+    { message: 'sourceUrl must be a valid URL' },
+  )
   @MaxLength(2048)
   sourceUrl: string;
 }

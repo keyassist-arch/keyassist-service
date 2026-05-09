@@ -51,7 +51,6 @@ interface ParsedPrice {
   currency: string;
 }
 
-
 @Injectable()
 export class AmazonAdapter implements ScraperAdapter {
   readonly source = ProductSource.AMAZON;
@@ -63,12 +62,15 @@ export class AmazonAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      locale: 'en-US',
-    }, url);
+    const context = await this.playwright.newScrapeContext(
+      {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        locale: 'en-US',
+      },
+      url,
+    );
 
     try {
       const page = await context.newPage();
@@ -270,8 +272,13 @@ export class AmazonAdapter implements ScraperAdapter {
         const scripts = document.querySelectorAll('script:not([src])');
         for (const s of scripts) {
           const txt = s.textContent ?? '';
-          if (!imageDataJson && (txt.includes("'colorImages'") || txt.includes('"colorImages"'))) {
-            const m2 = txt.match(/'colorImages'\s*:\s*(\{[\s\S]{0,8000}?\})\s*[,}]/);
+          if (
+            !imageDataJson &&
+            (txt.includes("'colorImages'") || txt.includes('"colorImages"'))
+          ) {
+            const m2 = txt.match(
+              /'colorImages'\s*:\s*(\{[\s\S]{0,8000}?\})\s*[,}]/,
+            );
             if (m2) imageDataJson = m2[1];
           }
           if (!twisterFinal) {
@@ -294,9 +301,8 @@ export class AmazonAdapter implements ScraperAdapter {
 
         // ASIN from hidden input (reliable across page layouts).
         const asin =
-          (
-            document.querySelector('input#ASIN') as HTMLInputElement | null
-          )?.value?.trim() ?? '';
+          (document.querySelector('input#ASIN') as HTMLInputElement | null)
+            ?.value?.trim() ?? '';
 
         // Rating and review count.
         const rating =
@@ -317,13 +323,16 @@ export class AmazonAdapter implements ScraperAdapter {
 
         // Product overview spec table → [[key, value], ...]
         const specsEntries: [string, string][] = [];
-        const overviewDiv = document.querySelector('#productOverview_feature_div');
+        const overviewDiv = document.querySelector(
+          '#productOverview_feature_div',
+        );
         if (overviewDiv) {
           for (const row of overviewDiv.querySelectorAll('tr')) {
             const key =
               row.querySelector('span.a-text-bold')?.textContent?.trim() ?? '';
             const val =
-              row.querySelector('span.po-break-word')?.textContent?.trim() ?? '';
+              row.querySelector('span.po-break-word')?.textContent?.trim() ??
+              '';
             if (key && val) specsEntries.push([key, val]);
           }
         }
@@ -378,22 +387,19 @@ export class AmazonAdapter implements ScraperAdapter {
       let productSpecs: [string, string][] = [];
       try {
         productSpecs = JSON.parse(raw.productSpecsJson) as [string, string][];
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Brand: prefer spec table (clean name like "LG") over bylineInfo ("Visit the LG Store").
       const specBrand = productSpecs.find(
         ([k]) => k.toLowerCase() === 'brand',
       )?.[1];
-      const brand =
-        specBrand ||
-        this.cleanBrand(raw.brand) ||
-        undefined;
+      const brand = specBrand || this.cleanBrand(raw.brand) || undefined;
 
       const images = this.resolveImages(raw);
-      const { variants, configurationPrices, currentAsin } = this.parseTwisterData(
-        raw.twisterJson,
-        price.current,
-      );
+      const { variants, configurationPrices, currentAsin } =
+        this.parseTwisterData(raw.twisterJson, price.current);
       const asin = currentAsin || raw.asin || undefined;
       const availability = this.resolveAvailability(raw);
       const description = this.buildDescription(raw, productSpecs);
@@ -554,13 +560,23 @@ export class AmazonAdapter implements ScraperAdapter {
       /"variationValues"\s*:\s*(\{[\s\S]+?\})\s*[,}]/,
     );
     if (varMatch) {
-      try { variationValues = JSON.parse(varMatch[1]) as Record<string, string[]>; } catch { /* */ }
+      try {
+        variationValues = JSON.parse(varMatch[1]) as Record<string, string[]>;
+      } catch {
+        /* */
+      }
     }
 
     let displayLabels: Record<string, string> = {};
-    const labelMatch = twisterJson.match(/"variationDisplayLabels"\s*:\s*(\{[^}]+\})/);
+    const labelMatch = twisterJson.match(
+      /"variationDisplayLabels"\s*:\s*(\{[^}]+\})/,
+    );
     if (labelMatch) {
-      try { displayLabels = JSON.parse(labelMatch[1]) as Record<string, string>; } catch { /* */ }
+      try {
+        displayLabels = JSON.parse(labelMatch[1]) as Record<string, string>;
+      } catch {
+        /* */
+      }
     }
 
     // `dimensions` preserves the declared order of dimension keys.
@@ -570,13 +586,21 @@ export class AmazonAdapter implements ScraperAdapter {
       try {
         const parsed = JSON.parse(dimArrMatch[1]) as string[];
         if (parsed.length) dimensions = parsed;
-      } catch { /* */ }
+      } catch {
+        /* */
+      }
     }
 
     let dimToAsin: Record<string, string> = {};
-    const dimAsinMatch = twisterJson.match(/"dimensionToAsinMap"\s*:\s*(\{[^}]+\})/);
+    const dimAsinMatch = twisterJson.match(
+      /"dimensionToAsinMap"\s*:\s*(\{[^}]+\})/,
+    );
     if (dimAsinMatch) {
-      try { dimToAsin = JSON.parse(dimAsinMatch[1]) as Record<string, string>; } catch { /* */ }
+      try {
+        dimToAsin = JSON.parse(dimAsinMatch[1]) as Record<string, string>;
+      } catch {
+        /* */
+      }
     }
 
     let currentAsin = '';
@@ -633,7 +657,10 @@ export class AmazonAdapter implements ScraperAdapter {
 
   /** `size_name` → `Size`, `style_name` → `Style`, etc. */
   private humaniseDimKey(key: string): string {
-    return key.replace(/_name$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    return key
+      .replace(/_name$/, '')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
   /** Strip Amazon store-link noise from bylineInfo ("Visit the LG Store" → "LG"). */

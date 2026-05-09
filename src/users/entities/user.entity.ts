@@ -66,7 +66,12 @@ export class User {
   totpSecret: string | null;
 
   /** Pending secret during setup; cleared after enable or cancel. */
-  @Column({ name: 'totp_setup_secret', type: 'varchar', length: 64, nullable: true })
+  @Column({
+    name: 'totp_setup_secret',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
   totpSetupSecret: string | null;
 
   @OneToOne(() => Cart, (c) => c.user)

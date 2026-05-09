@@ -91,27 +91,40 @@ export class ShippingRatesService implements OnModuleInit {
           oceanSmallBoxRate: parseFloat(row.oceanSmallBoxRate),
         };
       } else {
-        this.logger.warn('No shipping_rates row found, using hardcoded defaults');
+        this.logger.warn(
+          'No shipping_rates row found, using hardcoded defaults',
+        );
         this.cache = DEFAULTS;
       }
     } catch (err) {
-      this.logger.error('Failed to load shipping rates from DB, using defaults', err);
+      this.logger.error(
+        'Failed to load shipping rates from DB, using defaults',
+        err,
+      );
       this.cache = DEFAULTS;
     }
-    return this.cache!;
+    return this.cache;
   }
 
   private dtoToEntity(dto: UpdateShippingRatesDto): Partial<ShippingRates> {
     const result: Partial<ShippingRates> = {};
-    if (dto.airRateLagosPerLb !== undefined) result.airRateLagosPerLb = String(dto.airRateLagosPerLb);
-    if (dto.airRateOutsideLagosPerLb !== undefined) result.airRateOutsideLagosPerLb = String(dto.airRateOutsideLagosPerLb);
+    if (dto.airRateLagosPerLb !== undefined)
+      result.airRateLagosPerLb = String(dto.airRateLagosPerLb);
+    if (dto.airRateOutsideLagosPerLb !== undefined)
+      result.airRateOutsideLagosPerLb = String(dto.airRateOutsideLagosPerLb);
     if (dto.dimDivisor !== undefined) result.dimDivisor = dto.dimDivisor;
-    if (dto.airMinimumLagos !== undefined) result.airMinimumLagos = String(dto.airMinimumLagos);
-    if (dto.airMinimumOutsideLagos !== undefined) result.airMinimumOutsideLagos = String(dto.airMinimumOutsideLagos);
-    if (dto.minWeightLbs !== undefined) result.minWeightLbs = String(dto.minWeightLbs);
-    if (dto.bulkCommercialSurcharge !== undefined) result.bulkCommercialSurcharge = String(dto.bulkCommercialSurcharge);
-    if (dto.tvClearingFee !== undefined) result.tvClearingFee = String(dto.tvClearingFee);
-    if (dto.oceanSmallBoxRate !== undefined) result.oceanSmallBoxRate = String(dto.oceanSmallBoxRate);
+    if (dto.airMinimumLagos !== undefined)
+      result.airMinimumLagos = String(dto.airMinimumLagos);
+    if (dto.airMinimumOutsideLagos !== undefined)
+      result.airMinimumOutsideLagos = String(dto.airMinimumOutsideLagos);
+    if (dto.minWeightLbs !== undefined)
+      result.minWeightLbs = String(dto.minWeightLbs);
+    if (dto.bulkCommercialSurcharge !== undefined)
+      result.bulkCommercialSurcharge = String(dto.bulkCommercialSurcharge);
+    if (dto.tvClearingFee !== undefined)
+      result.tvClearingFee = String(dto.tvClearingFee);
+    if (dto.oceanSmallBoxRate !== undefined)
+      result.oceanSmallBoxRate = String(dto.oceanSmallBoxRate);
     return result;
   }
 }

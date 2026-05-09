@@ -59,9 +59,12 @@ export class NotificationsService {
       );
       // Preserve the Resend error as the cause so callers and BullMQ
       // retry logic see the full chain, not just a re-wrapped message.
-      throw Object.assign(new Error(`Email delivery failed: ${error.message}`), {
-        cause: error,
-      });
+      throw Object.assign(
+        new Error(`Email delivery failed: ${error.message}`),
+        {
+          cause: error,
+        },
+      );
     }
 
     this.logger.log(
@@ -80,7 +83,10 @@ export class NotificationsService {
    */
   private resolveResendFrom(): string {
     const nodeEnv = this.config.get<string>('NODE_ENV') ?? 'development';
-    const explicit = this.config.get<string>('RESEND_SANDBOX')?.trim().toLowerCase();
+    const explicit = this.config
+      .get<string>('RESEND_SANDBOX')
+      ?.trim()
+      .toLowerCase();
 
     let useOnboarding: boolean;
     if (explicit === 'true' || explicit === '1') {
@@ -121,7 +127,9 @@ function escapeHtml(s: string): string {
 function buildHtmlEmail(subject: string, text: string): string {
   const bodyLines = escapeHtml(text)
     .split('\n')
-    .map((l) => (l.trim() === '' ? '<br>' : `<p style="margin:0 0 12px">${l}</p>`))
+    .map((l) =>
+      l.trim() === '' ? '<br>' : `<p style="margin:0 0 12px">${l}</p>`,
+    )
     .join('\n');
 
   return `<!DOCTYPE html>

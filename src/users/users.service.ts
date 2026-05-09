@@ -130,9 +130,7 @@ export class UsersService {
       defaultShippingAddress: user.defaultShippingAddress,
       twoFactor: {
         enabled: user.totpEnabled,
-        setupPending: Boolean(
-          !user.totpEnabled && user.totpSetupSecret,
-        ),
+        setupPending: Boolean(!user.totpEnabled && user.totpSetupSecret),
       },
       role: user.role,
       createdAt: user.createdAt,
@@ -193,7 +191,9 @@ export class UsersService {
   async confirmTotpSetup(userId: string, code: string): Promise<void> {
     const user = await this.findById(userId);
     if (!user.totpSetupSecret) {
-      throw new BadRequestException('No 2FA setup in progress. Start setup first.');
+      throw new BadRequestException(
+        'No 2FA setup in progress. Start setup first.',
+      );
     }
     if (!this.totp.verifyCode(code, user.totpSetupSecret)) {
       throw new BadRequestException('Invalid authenticator code');

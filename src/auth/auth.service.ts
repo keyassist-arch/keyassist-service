@@ -143,9 +143,7 @@ export class AuthService implements OnModuleInit {
         'JWT_2FA_PREAUTH_EXPIRES',
         '5m',
       );
-      this.logger.log(
-        `[auth] step=login_requires_2fa userId=${user.id}`,
-      );
+      this.logger.log(`[auth] step=login_requires_2fa userId=${user.id}`);
       return {
         requiresTwoFactor: true,
         errorCode: AUTH_ERROR_CODES.TWO_FACTOR_REQUIRED,

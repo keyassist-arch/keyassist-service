@@ -34,18 +34,13 @@ function stripHtmlToText(html: string, maxLen: number): string {
 }
 
 function parseAdapterPrice(s: number | string): number | null {
-  const d = parsePriceToDecimalString(
-    typeof s === 'number' ? s : String(s),
-  );
+  const d = parsePriceToDecimalString(typeof s === 'number' ? s : String(s));
   if (!d) return null;
   const n = parseFloat(d);
   return Number.isFinite(n) ? n : null;
 }
 
-function saneVsReference(
-  llm: number,
-  adapter: number | null,
-): boolean {
+function saneVsReference(llm: number, adapter: number | null): boolean {
   if (adapter == null || adapter <= 0) return llm > 0 && llm < 1_000_000;
   const ratio = llm / adapter;
   return ratio >= 0.25 && ratio <= 4;
@@ -145,10 +140,7 @@ Return ONLY valid JSON, no markdown.`;
     }
   }
 
-  private merge(
-    adapter: ScrapedProduct,
-    llm: LlmRefinedShape,
-  ): ScrapedProduct {
+  private merge(adapter: ScrapedProduct, llm: LlmRefinedShape): ScrapedProduct {
     const adapterBase = parseAdapterPrice(adapter.price);
     const out: ScrapedProduct = { ...adapter };
 
@@ -175,7 +167,10 @@ Return ONLY valid JSON, no markdown.`;
       }
     }
 
-    if (llm.currency != null && /^[A-Z]{3}$/i.test(String(llm.currency).trim())) {
+    if (
+      llm.currency != null &&
+      /^[A-Z]{3}$/i.test(String(llm.currency).trim())
+    ) {
       out.currency = String(llm.currency).toUpperCase().slice(0, 8);
     }
 
@@ -191,12 +186,17 @@ Return ONLY valid JSON, no markdown.`;
         )
         .map((v) => ({
           name: v.name.trim(),
-          options: [...new Set(v.options.map((o) => String(o).trim()).filter(Boolean))],
+          options: [
+            ...new Set(v.options.map((o) => String(o).trim()).filter(Boolean)),
+          ],
         }));
       if (cleaned.length) out.variants = cleaned;
     }
 
-    if (Array.isArray(llm.configurationPrices) && llm.configurationPrices.length > 0) {
+    if (
+      Array.isArray(llm.configurationPrices) &&
+      llm.configurationPrices.length > 0
+    ) {
       // Build a lookup from the adapter's rows so we can restore fields the LLM
       // doesn't know about (variantSelections, sku, metadata, etc.).
       const adapterRowByKey = new Map<string, ProductConfigurationPrice>();
@@ -222,7 +222,8 @@ Return ONLY valid JSON, no markdown.`;
           sku: row.sku ?? adapterRow?.sku,
           variantAxis: axis,
           optionValue: opt,
-          variantSelections: adapterRow?.variantSelections ?? row.variantSelections,
+          variantSelections:
+            adapterRow?.variantSelections ?? row.variantSelections,
           currency: row.currency
             ? String(row.currency).toUpperCase().slice(0, 8)
             : adapterRow?.currency,
@@ -230,8 +231,8 @@ Return ONLY valid JSON, no markdown.`;
           displayLabel: row.displayLabel ?? adapterRow?.displayLabel,
           metadata:
             row.metadata && typeof row.metadata === 'object'
-              ? (row.metadata as Record<string, unknown>)
-              : adapterRow?.metadata ?? { source: 'openrouter-refine' },
+              ? row.metadata
+              : (adapterRow?.metadata ?? { source: 'openrouter-refine' }),
         });
       }
       if (rows.length) out.configurationPrices = rows;
@@ -272,7 +273,9 @@ Return ONLY valid JSON, no markdown.`;
     } catch (e) {
       const apiStatus = e instanceof APIError ? e.status : undefined;
       const retryHint =
-        apiStatus === 429 ? 'hint=rate_limited_retry_later' : 'hint=using_adapter_output';
+        apiStatus === 429
+          ? 'hint=rate_limited_retry_later'
+          : 'hint=using_adapter_output';
       this.logger.warn(
         `[openrouter] step=refine_failed url=${url} ` +
           `status=${apiStatus ?? 'n/a'} ${retryHint}: ` +

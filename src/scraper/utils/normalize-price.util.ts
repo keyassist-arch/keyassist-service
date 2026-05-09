@@ -21,7 +21,9 @@ export function parseFirstUsdInString(text: string): string | null {
  * Normalize money tokens for `parseFloat`, including EU decimals (`49,95`, `1.234,56`).
  */
 function normalizeMoneyToken(raw: string): string {
-  let s = raw.trim().replace(/\s*(EUR|USD|GBP|ZAR|CHF|NOK|SEK|DKK|\$|€|£)\s*/gi, ' ');
+  let s = raw
+    .trim()
+    .replace(/\s*(EUR|USD|GBP|ZAR|CHF|NOK|SEK|DKK|\$|€|£)\s*/gi, ' ');
   s = s.trim();
   if (/^\d+,\d{2}$/.test(s)) {
     return s.replace(',', '.');

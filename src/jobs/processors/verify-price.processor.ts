@@ -1,8 +1,4 @@
-import {
-  OnWorkerEvent,
-  Processor,
-  WorkerHost,
-} from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { QUEUE_VERIFY_PRICE } from '../queue.constants';
@@ -47,7 +43,11 @@ export class VerifyPriceProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('completed')
-  onJobCompleted(job: Job<{ productId: string }>, _result: unknown, prev: string): void {
+  onJobCompleted(
+    job: Job<{ productId: string }>,
+    _result: unknown,
+    prev: string,
+  ): void {
     const runMs =
       job.finishedOn != null && job.processedOn != null
         ? job.finishedOn - job.processedOn
@@ -107,7 +107,10 @@ export class VerifyPriceProcessor extends WorkerHost {
     this.logger.log(
       `[job:verify_price] step=scrape productId=${productId} source=${product.source}`,
     );
-    const scraped = await this.scraper.scrape(product.sourceUrl, product.source);
+    const scraped = await this.scraper.scrape(
+      product.sourceUrl,
+      product.source,
+    );
     await this.productsService.refreshPriceFromScrape(product, scraped);
     this.logger.log(
       `[job:verify_price] step=done productId=${productId} price=${scraped.price}`,

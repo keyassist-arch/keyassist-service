@@ -25,7 +25,9 @@ export class PatchIssueDto {
   @MaxLength(4096)
   resolutionNote?: string;
 
-  @ApiPropertyOptional({ description: 'Internal staff note (not shown to customer)' })
+  @ApiPropertyOptional({
+    description: 'Internal staff note (not shown to customer)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(2048)

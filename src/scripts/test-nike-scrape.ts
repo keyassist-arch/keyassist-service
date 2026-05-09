@@ -19,12 +19,24 @@ interface NikeImageProps {
   portrait?: { url: string };
   landscape?: { url: string };
 }
-interface NikeContentImage { properties?: NikeImageProps }
-interface NikeSize { label: string; status?: string; skuId?: string }
-interface NikePrices { currency?: string; currentPrice?: number }
+interface NikeContentImage {
+  properties?: NikeImageProps;
+}
+interface NikeSize {
+  label: string;
+  status?: string;
+  skuId?: string;
+}
+interface NikePrices {
+  currency?: string;
+  currentPrice?: number;
+}
 interface NikeProductInfo {
-  title?: string; subtitle?: string; fullTitle?: string;
-  productDescription?: string; featuresAndBenefits?: string[];
+  title?: string;
+  subtitle?: string;
+  fullTitle?: string;
+  productDescription?: string;
+  featuresAndBenefits?: string[];
 }
 interface NikeSelectedProduct {
   contentImages?: NikeContentImage[];
@@ -36,7 +48,9 @@ interface NikeSelectedProduct {
   productInfo?: NikeProductInfo;
 }
 
-function findSelectedProduct(root: Record<string, unknown>): NikeSelectedProduct | null {
+function findSelectedProduct(
+  root: Record<string, unknown>,
+): NikeSelectedProduct | null {
   const get = (obj: unknown, ...keys: string[]): unknown => {
     let cur = obj;
     for (const k of keys) {
@@ -48,7 +62,10 @@ function findSelectedProduct(root: Record<string, unknown>): NikeSelectedProduct
   const looksLike = (o: unknown) => {
     if (o == null || typeof o !== 'object') return false;
     const x = o as Record<string, unknown>;
-    return typeof (x.prices as Record<string, unknown>)?.currentPrice === 'number' || typeof x.styleColor === 'string';
+    return (
+      typeof (x.prices as Record<string, unknown>)?.currentPrice === 'number' ||
+      typeof x.styleColor === 'string'
+    );
   };
 
   const p1 = get(root, 'props', 'pageProps', 'initialState', 'selectedProduct');
@@ -57,7 +74,14 @@ function findSelectedProduct(root: Record<string, unknown>): NikeSelectedProduct
   const p2 = get(root, 'props', 'pageProps', 'selectedProduct');
   if (looksLike(p2)) return p2 as NikeSelectedProduct;
 
-  const threadsProducts = get(root, 'props', 'pageProps', 'initialState', 'Threads', 'products');
+  const threadsProducts = get(
+    root,
+    'props',
+    'pageProps',
+    'initialState',
+    'Threads',
+    'products',
+  );
   if (threadsProducts && typeof threadsProducts === 'object') {
     const first = Object.values(threadsProducts as Record<string, unknown>)[0];
     if (looksLike(first)) return first as NikeSelectedProduct;
@@ -65,11 +89,19 @@ function findSelectedProduct(root: Record<string, unknown>): NikeSelectedProduct
   return null;
 }
 
-function extractImages(contentImages?: NikeContentImage[], ogImage?: string | null): string[] {
+function extractImages(
+  contentImages?: NikeContentImage[],
+  ogImage?: string | null,
+): string[] {
   const pick = (img: NikeContentImage) =>
-    img.properties?.squarish?.url || img.properties?.portrait?.url || img.properties?.landscape?.url;
+    img.properties?.squarish?.url ||
+    img.properties?.portrait?.url ||
+    img.properties?.landscape?.url;
   const urls: string[] = [];
-  for (const img of contentImages ?? []) { const u = pick(img); if (u) urls.push(u); }
+  for (const img of contentImages ?? []) {
+    const u = pick(img);
+    if (u) urls.push(u);
+  }
   if (urls.length === 0 && ogImage) urls.push(ogImage);
   return [...new Set(urls)].slice(0, 20);
 }
@@ -101,29 +133,49 @@ async function main() {
     await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
 
     // Mirror the waitForFunction from the adapter
-    await page.waitForFunction(() => {
-      const el = document.getElementById('__NEXT_DATA__');
-      if (!el?.textContent) return false;
-      try {
-        const d = JSON.parse(el.textContent) as Record<string, unknown>;
-        const pp = (d?.props as Record<string, unknown>)?.pageProps as Record<string, unknown>;
-        const state = pp?.initialState as Record<string, unknown>;
-        const sel = state?.selectedProduct as Record<string, unknown>;
-        const prices = sel?.prices as Record<string, unknown>;
-        return typeof prices?.currentPrice === 'number';
-      } catch { return false; }
-    }, { timeout: 10_000 }).catch(() => console.warn('waitForFunction timed out'));
+    await page
+      .waitForFunction(
+        () => {
+          const el = document.getElementById('__NEXT_DATA__');
+          if (!el?.textContent) return false;
+          try {
+            const d = JSON.parse(el.textContent) as Record<string, unknown>;
+            const pp = (d?.props as Record<string, unknown>)
+              ?.pageProps as Record<string, unknown>;
+            const state = pp?.initialState as Record<string, unknown>;
+            const sel = state?.selectedProduct as Record<string, unknown>;
+            const prices = sel?.prices as Record<string, unknown>;
+            return typeof prices?.currentPrice === 'number';
+          } catch {
+            return false;
+          }
+        },
+        { timeout: 10_000 },
+      )
+      .catch(() => console.warn('waitForFunction timed out'));
 
     const raw = await page.evaluate(() => {
       const el = document.getElementById('__NEXT_DATA__');
       return {
         nextDataJson: el?.textContent ?? null,
-        ogImage: (document.querySelector('meta[property="og:image"]') as HTMLMetaElement | null)?.content ?? null,
-        titleFallback: document.querySelector('[data-testid="product_title"]')?.textContent?.trim() ?? document.querySelector('h1')?.textContent?.trim() ?? null,
+         ogImage:
+           (
+             document.querySelector(
+               'meta[property="og:image"]',
+             ) as HTMLMetaElement | null
+           )?.content ?? null,
+        titleFallback:
+          document
+            .querySelector('[data-testid="product_title"]')
+            ?.textContent?.trim() ??
+          document.querySelector('h1')?.textContent?.trim() ??
+          null,
       };
     });
 
-    console.log(`\n__NEXT_DATA__ present: ${raw.nextDataJson != null}, length: ${raw.nextDataJson?.length ?? 0}`);
+    console.log(
+      `\n__NEXT_DATA__ present: ${raw.nextDataJson != null}, length: ${raw.nextDataJson?.length ?? 0}`,
+    );
     console.log(`og:image: ${raw.ogImage}`);
     console.log(`title fallback: ${raw.titleFallback}`);
 
@@ -145,7 +197,10 @@ async function main() {
     const images = extractImages(selected.contentImages, raw.ogImage);
 
     console.log('\n── Extracted product ───────────────────────────────────');
-    console.log('title       :', info?.fullTitle || info?.title || raw.titleFallback);
+    console.log(
+      'title       :',
+      info?.fullTitle || info?.title || raw.titleFallback,
+    );
     console.log('price       :', prices?.currentPrice, prices?.currency);
     console.log('styleColor  :', selected.styleColor);
     console.log('color       :', selected.colorDescription);
@@ -153,10 +208,19 @@ async function main() {
     console.log('images      :', images.length, 'URLs');
     images.slice(0, 3).forEach((u, i) => console.log(`  [${i}]`, u));
     if (images.length > 3) console.log(`  ... and ${images.length - 3} more`);
-    console.log('sizes       :', (selected.sizes ?? []).map((s) => `${s.label}(${s.status})`).join(', '));
-    console.log('description :', (info?.productDescription ?? '').slice(0, 120) + '...');
-    console.log('features    :', (info?.featuresAndBenefits ?? []).length, 'items');
-
+    console.log(
+      'sizes       :',
+      (selected.sizes ?? []).map((s) => `${s.label}(${s.status})`).join(', '),
+    );
+    console.log(
+      'description :',
+      (info?.productDescription ?? '').slice(0, 120) + '...',
+    );
+    console.log(
+      'features    :',
+      (info?.featuresAndBenefits ?? []).length,
+      'items',
+    );
   } finally {
     await context.close();
     await browser.close();
@@ -164,4 +228,7 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

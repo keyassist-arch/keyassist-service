@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Patch,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -72,7 +65,9 @@ export class UsersController {
   }
 
   @Post('me/2fa/disable')
-  @ApiOperation({ summary: 'Turn off 2FA (password + app code; signs out other sessions)' })
+  @ApiOperation({
+    summary: 'Turn off 2FA (password + app code; signs out other sessions)',
+  })
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async disableTwoFactor(
     @CurrentUser() user: JwtPayload,

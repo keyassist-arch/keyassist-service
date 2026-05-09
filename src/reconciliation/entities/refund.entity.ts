@@ -41,7 +41,12 @@ export class Refund {
   reason: string | null;
 
   /** Internal note for staff only. */
-  @Column({ name: 'internal_note', type: 'varchar', length: 1024, nullable: true })
+  @Column({
+    name: 'internal_note',
+    type: 'varchar',
+    length: 1024,
+    nullable: true,
+  })
   internalNote: string | null;
 
   /** Provider reference returned on successful refund (e.g. Stripe re_xxx, Paystack ref). */

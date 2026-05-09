@@ -40,8 +40,7 @@ export class PaymentController {
 
   @Get('methods')
   @ApiOperation({
-    summary:
-      'List currently available payment methods for checkout rendering',
+    summary: 'List currently available payment methods for checkout rendering',
   })
   @ApiOkResponse({
     description: 'Currently available payment methods for checkout',
@@ -77,7 +76,8 @@ export class PaymentController {
   @Post('initialize')
   @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @ApiOperation({
-    summary: 'Start Paystack, Stripe, PayPal, or Myaza checkout for a pending order',
+    summary:
+      'Start Paystack, Stripe, PayPal, or Myaza checkout for a pending order',
   })
   @UseGuards(JwtAuthGuard)
   async initialize(
@@ -197,7 +197,10 @@ export class PaymentController {
       req.rawBody ?? Buffer.from(JSON.stringify((req.body as object) ?? {}));
     const shouldVerify =
       Boolean(process.env.MYAZA_WEBHOOK_SECRET) && Boolean(signature);
-    if (shouldVerify && !this.paymentService.verifyMyazaSignature(raw, signature)) {
+    if (
+      shouldVerify &&
+      !this.paymentService.verifyMyazaSignature(raw, signature)
+    ) {
       this.logger.warn('[payment] step=webhook_myaza reason=bad_signature');
       // Return non-200 so Myaza knows delivery failed and will retry the webhook.
       throw new UnauthorizedException('Invalid webhook signature');

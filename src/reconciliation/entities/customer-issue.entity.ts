@@ -9,7 +9,11 @@ import {
 } from 'typeorm';
 import { Order } from '../../orders/entities/order.entity';
 import { User } from '../../users/entities/user.entity';
-import { IssueStatus, IssuePriority, IssueType } from '../enums/issue-status.enum';
+import {
+  IssueStatus,
+  IssuePriority,
+  IssueType,
+} from '../enums/issue-status.enum';
 
 @Entity('customer_issues')
 export class CustomerIssue {

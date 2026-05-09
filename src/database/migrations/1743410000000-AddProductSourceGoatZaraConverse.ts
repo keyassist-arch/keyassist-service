@@ -3,9 +3,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 /**
  * Adds `goat`, `zara`, `converse` to PostgreSQL enums for `products.source` and `imported_products.source`.
  */
-export class AddProductSourceGoatZaraConverse1743410000000
-  implements MigrationInterface
-{
+export class AddProductSourceGoatZaraConverse1743410000000 implements MigrationInterface {
   name = 'AddProductSourceGoatZaraConverse1743410000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

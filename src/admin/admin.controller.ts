@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -17,6 +19,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/role.enum';
 import { AdminService } from './admin.service';
 import { AdminPatchOrderDto } from './dto/admin-patch-order.dto';
+import { AdminSeedDto } from './dto/admin-seed.dto';
 import { ScraperService } from '../scraper/scraper.service';
 import { AdminScrapePreviewDto } from './dto/admin-scrape-preview.dto';
 import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
@@ -48,6 +51,11 @@ export class AdminController {
   @Get('products')
   products() {
     return this.adminService.listProducts();
+  }
+
+  @Delete('products/:id')
+  deleteProduct(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.deleteProduct(id);
   }
 
   /**

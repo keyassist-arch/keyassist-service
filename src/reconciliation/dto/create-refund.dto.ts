@@ -35,7 +35,9 @@ export class CreateRefundDto {
   @MaxLength(512)
   reason?: string;
 
-  @ApiPropertyOptional({ description: 'Internal staff note (not sent to customer)' })
+  @ApiPropertyOptional({
+    description: 'Internal staff note (not sent to customer)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(1024)

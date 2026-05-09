@@ -54,12 +54,18 @@ export class PasskeyService {
   }
 
   private rpName(): string {
-    return this.config.get<string>('PASSKEY_RP_NAME')?.trim() || 'Unified Commerce';
+    return (
+      this.config.get<string>('PASSKEY_RP_NAME')?.trim() || 'Unified Commerce'
+    );
   }
 
   private expectedOrigins(): string[] {
     const raw = this.config.get<string>('PASSKEY_ORIGIN')?.trim() || '';
-    if (raw) return raw.split(',').map((o) => o.trim()).filter(Boolean);
+    if (raw)
+      return raw
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean);
     const frontend =
       this.config.get<string>('FRONTEND_URL')?.trim() ||
       this.config.get<string>('PUBLIC_APP_URL')?.trim();
@@ -180,7 +186,9 @@ export class PasskeyService {
     }
 
     if (!verification.verified || !verification.registrationInfo) {
-      throw new BadRequestException('Passkey registration could not be verified');
+      throw new BadRequestException(
+        'Passkey registration could not be verified',
+      );
     }
 
     const { credential, credentialDeviceType, credentialBackedUp } =
@@ -189,7 +197,9 @@ export class PasskeyService {
     const credentialId = credential.id;
     const publicKeyB64 = isoBase64URL.fromBuffer(credential.publicKey);
 
-    const existing = await this.credentials.findOne({ where: { credentialId } });
+    const existing = await this.credentials.findOne({
+      where: { credentialId },
+    });
     if (existing) {
       throw new BadRequestException('This passkey is already registered');
     }
@@ -250,7 +260,9 @@ export class PasskeyService {
       throw new UnauthorizedException('Passkey not found');
     }
 
-    const challengeFromClient = this.extractChallenge(body.response.clientDataJSON);
+    const challengeFromClient = this.extractChallenge(
+      body.response.clientDataJSON,
+    );
     const expectedChallenge = await this.consumeChallenge(
       this.authChallengeKey(challengeFromClient),
     );
@@ -301,15 +313,25 @@ export class PasskeyService {
       where: { userId },
       order: { createdAt: 'DESC' },
     });
-    return creds.map(({ id, credentialId, deviceType, backedUp, transports, friendlyName, createdAt }) => ({
-      id,
-      credentialId,
-      deviceType,
-      backedUp,
-      transports,
-      friendlyName,
-      createdAt,
-    }));
+    return creds.map(
+      ({
+        id,
+        credentialId,
+        deviceType,
+        backedUp,
+        transports,
+        friendlyName,
+        createdAt,
+      }) => ({
+        id,
+        credentialId,
+        deviceType,
+        backedUp,
+        transports,
+        friendlyName,
+        createdAt,
+      }),
+    );
   }
 
   async removeCredential(userId: string, id: string) {
@@ -321,7 +343,9 @@ export class PasskeyService {
   async renameCredential(userId: string, id: string, friendlyName: string) {
     const cred = await this.credentials.findOne({ where: { id, userId } });
     if (!cred) throw new NotFoundException('Credential not found');
-    await this.credentials.update(id, { friendlyName: friendlyName.trim() || null });
+    await this.credentials.update(id, {
+      friendlyName: friendlyName.trim() || null,
+    });
     return { id, friendlyName: friendlyName.trim() || null };
   }
 }

@@ -80,7 +80,8 @@ export class EbayAdapter implements ScraperAdapter {
         const isProductType = (t: unknown) =>
           t === 'Product' ||
           t === 'product' ||
-          (Array.isArray(t) && t.some((x) => String(x).toLowerCase() === 'product'));
+          (Array.isArray(t) &&
+            t.some((x) => String(x).toLowerCase() === 'product'));
         const findProduct = (node: unknown): Record<string, unknown> | null => {
           if (!node || typeof node !== 'object') return null;
           const obj = node as Record<string, unknown>;
@@ -119,15 +120,19 @@ export class EbayAdapter implements ScraperAdapter {
               ? [productNode.image]
               : [];
           result.images.push(
-            ...imgs.map((x) => String(x)).filter((x) => /^https?:\/\//i.test(x)),
+            ...imgs
+              .map((x) => String(x))
+              .filter((x) => /^https?:\/\//i.test(x)),
           );
           const offers = productNode.offers;
           const offer = Array.isArray(offers) ? offers[0] : offers;
           if (offer && typeof offer === 'object') {
             const o = offer as Record<string, unknown>;
             if (o.price != null) result.ldPrice = String(o.price);
-            if (o.priceCurrency != null) result.currency = String(o.priceCurrency);
-            if (o.itemCondition != null) result.conditionLabel = String(o.itemCondition);
+            if (o.priceCurrency != null)
+              result.currency = String(o.priceCurrency);
+            if (o.itemCondition != null)
+              result.conditionLabel = String(o.itemCondition);
           }
         }
 
@@ -146,12 +151,15 @@ export class EbayAdapter implements ScraperAdapter {
 
         if (!result.images.length) {
           const domImages = Array.from(
-            document.querySelectorAll('img[src*="ebayimg.com"], img[data-zoom-src*="ebayimg.com"]'),
+            document.querySelectorAll(
+              'img[src*="ebayimg.com"], img[data-zoom-src*="ebayimg.com"]',
+            ),
           )
-            .map((img) =>
-              (img as HTMLImageElement).src ||
-              (img as HTMLImageElement).getAttribute('data-zoom-src') ||
-              '',
+            .map(
+              (img) =>
+                (img as HTMLImageElement).src ||
+                (img as HTMLImageElement).getAttribute('data-zoom-src') ||
+                '',
             )
             .filter(Boolean);
           result.images.push(...domImages);
@@ -169,14 +177,15 @@ export class EbayAdapter implements ScraperAdapter {
           .map((el) => text(el))
           .filter(Boolean);
         result.domPrice =
-          priceCandidates.find((p) => /\d/.test(p) && /[$£€₦]|[A-Z]{3}/.test(p)) ??
-          undefined;
+          priceCandidates.find(
+            (p) => /\d/.test(p) && /[$£€₦]|[A-Z]{3}/.test(p),
+          ) ?? undefined;
 
         if (!result.currency) {
           const cur =
-            (document.querySelector('[itemprop="priceCurrency"]') as HTMLElement | null)
-              ?.getAttribute('content') ||
-            undefined;
+            document
+              .querySelector('[itemprop="priceCurrency"]')
+              ?.getAttribute('content') || undefined;
           if (cur) result.currency = cur;
         }
 
@@ -189,7 +198,7 @@ export class EbayAdapter implements ScraperAdapter {
         const description =
           data.conditionLabel && data.description
             ? `${data.description}\n\nCondition: ${data.conditionLabel}`
-            : data.description ?? data.conditionLabel;
+            : (data.description ?? data.conditionLabel);
         return {
           title: data.title,
           price: normalizedPrice,
@@ -213,4 +222,3 @@ export class EbayAdapter implements ScraperAdapter {
     return this.generic.scrape(url);
   }
 }
-

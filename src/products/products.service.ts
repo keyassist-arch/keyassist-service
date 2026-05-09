@@ -123,7 +123,10 @@ export class ProductsService {
     return Promise.all(
       rows.map(async (row) => {
         const rowCurrency = (row.currency || productCurrency).toUpperCase();
-        const converted = await this.toUsd(parseFloat(row.originalPrice), rowCurrency);
+        const converted = await this.toUsd(
+          parseFloat(row.originalPrice),
+          rowCurrency,
+        );
         return { ...row, originalPrice: converted, currency: 'USD' };
       }),
     );
@@ -229,6 +232,16 @@ export class ProductsService {
 
   async disableRescrape(id: string): Promise<void> {
     await this.products.update({ id }, { rescrapeEnabled: false });
+  }
+
+  async remove(id: string): Promise<void> {
+    const product = await this.findById(id);
+    await this.imports.update(
+      { product: { id: product.id } },
+      { product: null },
+    );
+    await this.products.remove(product);
+    this.logger.log(`[product] step=deleted productId=${id}`);
   }
 
   async findAllForAdmin(): Promise<Product[]> {
@@ -339,7 +352,11 @@ export class ProductsService {
     // Multi-axis: variantSelections must match ALL selected axes.
     for (const row of rows) {
       if (row.variantSelections) {
-        if (entries.every(([axis, value]) => row.variantSelections![axis] === value)) {
+        if (
+          entries.every(
+            ([axis, value]) => row.variantSelections![axis] === value,
+          )
+        ) {
           return row.originalPrice;
         }
       }

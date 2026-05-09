@@ -41,8 +41,10 @@ export class LlmGatewayService implements OnModuleInit {
       DEFAULT_SYSTEM_PROMPT;
 
     this.provider =
-      (this.config.get<string>('LLM_PROVIDER')?.trim().toLowerCase() as LlmProvider) ||
-      'openrouter';
+      (this.config
+        .get<string>('LLM_PROVIDER')
+        ?.trim()
+        .toLowerCase() as LlmProvider) || 'openrouter';
 
     const rawTemp = this.config.get<string>('LLM_TEMPERATURE')?.trim();
     this.defaultTemperature =
@@ -50,7 +52,9 @@ export class LlmGatewayService implements OnModuleInit {
 
     const rawTokens = this.config.get<string>('LLM_MAX_TOKENS')?.trim();
     this.defaultMaxTokens =
-      rawTokens && Number.isFinite(Number(rawTokens)) ? Number(rawTokens) : 4096;
+      rawTokens && Number.isFinite(Number(rawTokens))
+        ? Number(rawTokens)
+        : 4096;
 
     const timeoutRaw = this.config.get<string>('LLM_TIMEOUT_MS')?.trim();
     const timeout =
@@ -150,7 +154,9 @@ export class LlmGatewayService implements OnModuleInit {
         this.provider === 'gemini'
           ? 'Set LLM_PROVIDER=gemini and GEMINI_API_KEY.'
           : 'Set OPEN_ROUTER_ENABLED=true and OPEN_ROUTER_API_KEY.';
-      throw new Error(`LLM provider "${this.provider}" is not configured. ${hint}`);
+      throw new Error(
+        `LLM provider "${this.provider}" is not configured. ${hint}`,
+      );
     }
 
     const model = options?.model ?? this.model;
@@ -171,7 +177,9 @@ export class LlmGatewayService implements OnModuleInit {
           messages,
           temperature,
           max_tokens,
-          ...(jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
+          ...(jsonMode
+            ? { response_format: { type: 'json_object' as const } }
+            : {}),
         });
       } catch (e) {
         const details = this.formatApiErrorDetails(e);

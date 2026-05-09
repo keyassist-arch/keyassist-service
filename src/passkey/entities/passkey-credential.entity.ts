@@ -36,7 +36,12 @@ export class PasskeyCredential {
   counter: number;
 
   /** 'singleDevice' | 'multiDevice' */
-  @Column({ name: 'device_type', type: 'varchar', length: 32, default: 'singleDevice' })
+  @Column({
+    name: 'device_type',
+    type: 'varchar',
+    length: 32,
+    default: 'singleDevice',
+  })
   deviceType: string;
 
   @Column({ name: 'backed_up', type: 'boolean', default: false })
@@ -47,7 +52,12 @@ export class PasskeyCredential {
   transports: string[];
 
   /** Optional human-readable label set by the user (e.g. "My iPhone") */
-  @Column({ name: 'friendly_name', type: 'varchar', length: 128, nullable: true })
+  @Column({
+    name: 'friendly_name',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
   friendlyName: string | null;
 
   @CreateDateColumn({ name: 'created_at' })

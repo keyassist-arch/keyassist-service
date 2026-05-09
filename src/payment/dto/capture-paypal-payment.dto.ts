@@ -15,4 +15,3 @@ export class CapturePaypalPaymentDto {
   @IsString()
   paypalOrderId: string;
 }
-

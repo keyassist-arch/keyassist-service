@@ -1,11 +1,8 @@
-import {
-  IsBoolean,
-  IsEnum,
-  IsNumber,
-  IsOptional,
-  Min,
-} from 'class-validator';
-import type { ShippingDestination, ShippingService } from '../utils/kingz-rates';
+import { IsBoolean, IsEnum, IsNumber, IsOptional, Min } from 'class-validator';
+import type {
+  ShippingDestination,
+  ShippingService,
+} from '../utils/kingz-rates';
 
 export class ShippingQuoteDto {
   @IsNumber()

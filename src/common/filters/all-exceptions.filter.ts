@@ -10,7 +10,11 @@ import { Request, Response } from 'express';
 
 function isTransientPostgresTcpError(err: Error): boolean {
   const code = (err as NodeJS.ErrnoException).code;
-  if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT') {
+  if (
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT'
+  ) {
     return true;
   }
   const m = err.message;

@@ -97,7 +97,8 @@ export class ReconciliationService {
       },
     );
     const token = data?.access_token;
-    if (!token) throw new BadRequestException('Could not authenticate with PayPal');
+    if (!token)
+      throw new BadRequestException('Could not authenticate with PayPal');
     return token;
   }
 
@@ -105,7 +106,10 @@ export class ReconciliationService {
   // Refunds
   // ---------------------------------------------------------------------------
 
-  async issueRefund(dto: CreateRefundDto, adminUserId: string): Promise<Refund> {
+  async issueRefund(
+    dto: CreateRefundDto,
+    adminUserId: string,
+  ): Promise<Refund> {
     const order = await this.ordersService.findById(dto.orderId);
 
     if (order.status === OrderStatus.REFUNDED) {
@@ -138,7 +142,12 @@ export class ReconciliationService {
 
     try {
       const provider = order.paymentProvider as PaymentProvider | null;
-      await this.dispatchRefundToProvider(refund, order, provider, refundAmount);
+      await this.dispatchRefundToProvider(
+        refund,
+        order,
+        provider,
+        refundAmount,
+      );
     } catch (err: unknown) {
       refund.status = RefundStatus.FAILED;
       refund.failedReason = err instanceof Error ? err.message : String(err);
@@ -188,7 +197,13 @@ export class ReconciliationService {
 
   private async dispatchRefundToProvider(
     refund: Refund,
-    order: { id: string; stripePaymentIntentId: string | null; paystackReference: string | null; paymentMethodDetails: Record<string, unknown> | null; currency: string },
+    order: {
+      id: string;
+      stripePaymentIntentId: string | null;
+      paystackReference: string | null;
+      paymentMethodDetails: Record<string, unknown> | null;
+      currency: string;
+    },
     provider: PaymentProvider | null,
     amount: number,
   ): Promise<void> {
@@ -218,11 +233,17 @@ export class ReconciliationService {
 
   private async refundViaStripe(
     refund: Refund,
-    order: { id: string; stripePaymentIntentId: string | null; currency: string },
+    order: {
+      id: string;
+      stripePaymentIntentId: string | null;
+      currency: string;
+    },
     amount: number,
   ): Promise<void> {
     if (!order.stripePaymentIntentId) {
-      throw new BadRequestException('No Stripe payment intent found for this order');
+      throw new BadRequestException(
+        'No Stripe payment intent found for this order',
+      );
     }
     const stripe = this.getStripe();
     const stripeRefund = await stripe.refunds.create({
@@ -237,7 +258,10 @@ export class ReconciliationService {
           ? RefundStatus.FAILED
           : RefundStatus.PROCESSING;
     refund.providerRefundId = stripeRefund.id;
-    refund.providerResponse = stripeRefund as unknown as Record<string, unknown>;
+    refund.providerResponse = stripeRefund as unknown as Record<
+      string,
+      unknown
+    >;
     await this.refunds.save(refund);
   }
 
@@ -247,7 +271,9 @@ export class ReconciliationService {
     amount: number,
   ): Promise<void> {
     if (!order.paystackReference) {
-      throw new BadRequestException('No Paystack reference found for this order');
+      throw new BadRequestException(
+        'No Paystack reference found for this order',
+      );
     }
     const { data } = await axios.post<{
       status: boolean;
@@ -276,12 +302,20 @@ export class ReconciliationService {
 
   private async refundViaPaypal(
     refund: Refund,
-    order: { id: string; paymentMethodDetails: Record<string, unknown> | null; currency: string },
+    order: {
+      id: string;
+      paymentMethodDetails: Record<string, unknown> | null;
+      currency: string;
+    },
     amount: number,
   ): Promise<void> {
-    const captureId = order.paymentMethodDetails?.paypalCaptureId as string | undefined;
+    const captureId = order.paymentMethodDetails?.paypalCaptureId as
+      | string
+      | undefined;
     if (!captureId) {
-      throw new BadRequestException('No PayPal capture ID found for this order');
+      throw new BadRequestException(
+        'No PayPal capture ID found for this order',
+      );
     }
     const token = await this.paypalAccessToken();
     const { data } = await axios.post<{ id?: string; status?: string }>(
@@ -351,19 +385,24 @@ export class ReconciliationService {
     return issue;
   }
 
-  async patchIssue(issueId: string, dto: PatchIssueDto): Promise<CustomerIssue> {
+  async patchIssue(
+    issueId: string,
+    dto: PatchIssueDto,
+  ): Promise<CustomerIssue> {
     const issue = await this.issues.findOne({ where: { id: issueId } });
     if (!issue) throw new NotFoundException('Issue not found');
 
     if (dto.status !== undefined) issue.status = dto.status;
     if (dto.priority !== undefined) issue.priority = dto.priority;
-    if (dto.resolutionNote !== undefined) issue.resolutionNote = dto.resolutionNote;
+    if (dto.resolutionNote !== undefined)
+      issue.resolutionNote = dto.resolutionNote;
     if (dto.internalNote !== undefined) issue.internalNote = dto.internalNote;
     if (dto.assignedTo !== undefined) issue.assignedTo = dto.assignedTo;
 
     const isBeingResolved =
       dto.status !== undefined &&
-      (dto.status === IssueStatus.RESOLVED || dto.status === IssueStatus.CLOSED) &&
+      (dto.status === IssueStatus.RESOLVED ||
+        dto.status === IssueStatus.CLOSED) &&
       issue.resolvedAt === null;
 
     if (isBeingResolved) {
@@ -377,7 +416,9 @@ export class ReconciliationService {
     return issue;
   }
 
-  async listIssues(filters: ListIssuesDto): Promise<{ total: number; items: CustomerIssue[] }> {
+  async listIssues(
+    filters: ListIssuesDto,
+  ): Promise<{ total: number; items: CustomerIssue[] }> {
     const where: FindOptionsWhere<CustomerIssue> = {};
     if (filters.status) where.status = filters.status;
     if (filters.type) where.type = filters.type;
@@ -418,8 +459,12 @@ export class ReconciliationService {
 
     const subject = `Price verification request for order ${order.id}`;
     const expectedTotalBlock =
-      dto.expectedTotal != null ? `\nExpected total: ${dto.expectedTotal.toFixed(2)}` : '';
-    const reasonBlock = dto.reason?.trim() ? `\nCustomer reason: ${dto.reason.trim()}` : '';
+      dto.expectedTotal != null
+        ? `\nExpected total: ${dto.expectedTotal.toFixed(2)}`
+        : '';
+    const reasonBlock = dto.reason?.trim()
+      ? `\nCustomer reason: ${dto.reason.trim()}`
+      : '';
     const description =
       `Requested verification for charged total ${order.currency} ${order.total}.` +
       expectedTotalBlock +
@@ -441,7 +486,9 @@ export class ReconciliationService {
       ...new Set(
         (order.items ?? [])
           .map((item) => item.productId)
-          .filter((id): id is string => typeof id === 'string' && id.length > 0),
+          .filter(
+            (id): id is string => typeof id === 'string' && id.length > 0,
+          ),
       ),
     ];
     for (const productId of uniqueProductIds) {

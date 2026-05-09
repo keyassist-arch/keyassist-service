@@ -346,6 +346,7 @@ Use `role` to show/hide admin UI; the API still enforces roles server-side.
 | `GET /cart`, cart mutations | Bearer |
 | `GET /saves`, `POST /saves/:productId`, `DELETE /saves/:productId`, `GET /saves/:productId/status` | Bearer |
 | `POST /orders`, `GET /orders`, `GET /orders/:id` | Bearer |
+| `POST /reconciliation/issues` | Bearer — create a support ticket / issue |
 | `POST /reconciliation/price-disputes` | Bearer |
 | `GET /reconciliation/my-issues`, `GET /reconciliation/my-issues/:id` | Bearer |
 | `GET /payments/methods` | None (recommended before checkout) |
@@ -994,13 +995,50 @@ Use this to drive a heart / bookmark toggle on product cards or detail pages wit
 
 ## User reconciliation
 
-Bearer required. These routes let a logged-in buyer open a price-dispute ticket and view their own issue history.
+Bearer required. These routes let a logged-in buyer open a support ticket and view their own issue history.
 
-### Request a price dispute
+### Submit an issue (recommended for most cases)
+
+`POST /reconciliation/issues`
+
+Use this to create any type of support ticket: refund requests, item not received, wrong item, billing errors, or other questions.
+
+```json
+{
+  "orderId": "optional-uuid-of-related-order",
+  "type": "REFUND_REQUEST",
+  "subject": "Never received my order",
+  "description": "I placed order #1234 two weeks ago and tracking shows it was delivered but I never received it."
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `orderId` | No | UUID of the related order (omit for account-level issues) |
+| `type` | Yes | Issue type enum (see below) |
+| `subject` | Yes | Short title (max 256 chars) |
+| `description` | Yes | Full details (max 4096 chars) |
+
+**Issue types:**
+- `PAYMENT_DISPUTE` — Chargeback or payment query
+- `REFUND_REQUEST` — Requesting money back
+- `ITEM_NOT_RECEIVED` — Tracking shows delivered but customer didn't receive
+- `WRONG_ITEM` — Received different product than ordered
+- `DAMAGED_ITEM` — Item arrived damaged
+- `BILLING_ERROR` — Wrong price or duplicate charge
+- `OTHER` — Any other issue
+
+**Response:** the created issue object with `id`, `status: "OPEN"`, `type`, timestamps, etc.
+
+**Status lifecycle:** Issues start as `OPEN` ("Pending"). Admins can move them to `IN_PROGRESS` ("Working"), `AWAITING_CUSTOMER`, `RESOLVED`, or `CLOSED`.
+
+---
+
+### Request a price dispute (specialized)
 
 `POST /reconciliation/price-disputes`
 
-Use when a buyer believes the charged amount was incorrect (e.g. wrong variant price was applied).
+Use **only** when a buyer believes the charged amount was incorrect (e.g. wrong variant price was applied). For general support tickets, **prefer `POST /reconciliation/issues`** above.
 
 ```json
 {
@@ -1520,6 +1558,15 @@ Returns all refund records newest-first. Optional query: `?orderId=<uuid>` to fi
 
 **Issue status values:** `OPEN` | `IN_PROGRESS` | `AWAITING_CUSTOMER` | `RESOLVED` | `CLOSED`
 
+**Frontend → API status mapping:**
+| Frontend label | API enum value | Meaning |
+|----------------|----------------|---------|
+| Pending | `OPEN` | Newly submitted, not yet reviewed |
+| Working | `IN_PROGRESS` | Staff is actively investigating |
+| (Awaiting customer) | `AWAITING_CUSTOMER` | Waiting for reply from the customer |
+| (Resolved) | `RESOLVED` | Issue has been resolved (refund sent, replacement shipped, etc.) |
+| Closed | `CLOSED` | Ticket is complete and archived |
+
 #### List issues — `GET /admin/reconciliation/issues`
 
 Optional query params: `?status=OPEN`, `?userId=<uuid>`, `?orderId=<uuid>`, `?type=REFUND_REQUEST`, `?priority=HIGH`.
@@ -1694,6 +1741,7 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | GET | `/orders` | Bearer — optional `?status=PENDING` (etc.) |
 | GET | `/orders/pending-payment` | Bearer — most recent unpaid order for banners |
 | GET | `/orders/:id` | Bearer |
+| POST | `/reconciliation/issues` | Bearer |
 | POST | `/reconciliation/price-disputes` | Bearer |
 | GET | `/reconciliation/my-issues` | Bearer |
 | GET | `/reconciliation/my-issues/:id` | Bearer |

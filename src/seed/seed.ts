@@ -9,6 +9,7 @@ import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/role.enum';
 import { Product } from '../products/entities/product.entity';
 import { ImportedProduct } from '../products/entities/imported-product.entity';
+import { Cart } from '../cart/entities/cart.entity';
 import { ImportStatus } from '../common/enums/import-status.enum';
 import { ProductSource } from '../common/enums/product-source.enum';
 
@@ -19,7 +20,7 @@ async function main() {
   const ds = new DataSource({
     type: 'postgres',
     url,
-    entities: [User, Product, ImportedProduct],
+    entities: [User, Cart, Product, ImportedProduct],
     synchronize: (process.env.NODE_ENV ?? '') === 'development',
   });
   await ds.initialize();

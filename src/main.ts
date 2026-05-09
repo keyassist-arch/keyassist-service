@@ -8,11 +8,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalFilters(new AllExceptionsFilter());
 
-
-// app.enableCors({
-//   origin: true, // TEMP: allow all for debugging
-//   credentials: true,
-// });
+  // app.enableCors({
+  //   origin: true, // TEMP: allow all for debugging
+  //   credentials: true,
+  // });
 
   // Enable CORS with explicit configuration
   app.enableCors({

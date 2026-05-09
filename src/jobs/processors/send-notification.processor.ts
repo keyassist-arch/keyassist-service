@@ -1,8 +1,4 @@
-import {
-  OnWorkerEvent,
-  Processor,
-  WorkerHost,
-} from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { QUEUE_SEND_NOTIFICATION } from '../queue.constants';
@@ -41,7 +37,11 @@ export class SendNotificationProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('completed')
-  onJobCompleted(job: Job<SendNotificationJob>, _result: unknown, prev: string): void {
+  onJobCompleted(
+    job: Job<SendNotificationJob>,
+    _result: unknown,
+    prev: string,
+  ): void {
     const runMs =
       job.finishedOn != null && job.processedOn != null
         ? job.finishedOn - job.processedOn

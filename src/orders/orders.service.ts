@@ -199,10 +199,7 @@ export class OrdersService {
     return this.toResponse(order);
   }
 
-  async listForUser(
-    userId: string,
-    query?: { status?: string },
-  ) {
+  async listForUser(userId: string, query?: { status?: string }) {
     const status = query?.status?.trim();
     if (status) {
       const values = new Set<string>(Object.values(OrderStatus) as string[]);
@@ -459,9 +456,7 @@ export class OrdersService {
       checkout: {
         canInitializePayment: pending,
         /** `initialize_payment` when unpaid — use `id` on `POST /payments/initialize` (cart is often already empty). */
-        nextStep: pending
-          ? ('initialize_payment' as const)
-          : ('none' as const),
+        nextStep: pending ? ('initialize_payment' as const) : ('none' as const),
       },
       support: {
         canRequestPriceVerification: true,

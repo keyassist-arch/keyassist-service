@@ -1,7 +1,11 @@
 import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IssueStatus, IssueType, IssuePriority } from '../enums/issue-status.enum';
+import {
+  IssueStatus,
+  IssueType,
+  IssuePriority,
+} from '../enums/issue-status.enum';
 
 export class ListIssuesDto {
   @ApiPropertyOptional({ enum: IssueStatus })

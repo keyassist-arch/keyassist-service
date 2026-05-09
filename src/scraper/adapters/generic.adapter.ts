@@ -16,9 +16,11 @@ export class GenericAdapter implements ScraperAdapter {
     const context = await this.playwright.newScrapeContext({}, url);
     try {
       const page = await context.newPage();
-      await page.goto(url, { waitUntil: 'load', timeout: 60_000 }).catch(() =>
-        page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
-      );
+      await page
+        .goto(url, { waitUntil: 'load', timeout: 60_000 })
+        .catch(() =>
+          page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
+        );
       await new Promise((r) => setTimeout(r, 1200));
       await page.evaluate(() => window.scrollTo(0, 400)).catch(() => undefined);
 
@@ -71,7 +73,11 @@ export class GenericAdapter implements ScraperAdapter {
           }
           const b = node.brand;
           if (typeof b === 'string' && !result.brand) result.brand = b;
-          else if (b && typeof b === 'object' && (b as { name?: string }).name) {
+          else if (
+            b &&
+            typeof b === 'object' &&
+            (b as { name?: string }).name
+          ) {
             result.brand = (b as { name: string }).name;
           }
         };
@@ -115,7 +121,9 @@ export class GenericAdapter implements ScraperAdapter {
           document
             .querySelector('meta[property="og:title"]')
             ?.getAttribute('content') ||
-          document.querySelector('meta[name="twitter:title"]')?.getAttribute('content') ||
+          document
+            .querySelector('meta[name="twitter:title"]')
+            ?.getAttribute('content') ||
           document.querySelector('title')?.textContent;
         if (ogTitle) result.title = result.title || ogTitle.trim();
 
@@ -151,7 +159,8 @@ export class GenericAdapter implements ScraperAdapter {
         if (!result.title) {
           const h1 =
             document.querySelector('h1')?.textContent?.trim() ||
-            document.querySelector('[data-qa-article="product"] h1')
+            document
+              .querySelector('[data-qa-article="product"] h1')
               ?.textContent?.trim();
           if (h1) {
             result.title = h1.split('\n')[0].trim().slice(0, 300);
@@ -196,7 +205,9 @@ export class GenericAdapter implements ScraperAdapter {
           currencyFromPriceString(data.price ?? '') ||
           data.currency ||
           'USD'
-        ).toUpperCase().slice(0, 8),
+        )
+          .toUpperCase()
+          .slice(0, 8),
         images: [...new Set(data.images)].filter(Boolean).slice(0, 20),
         description: data.description,
         brand: data.brand,

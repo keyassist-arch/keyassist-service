@@ -20,10 +20,7 @@ interface GoatLocalizedPrice {
 interface GoatSizeOption {
   presentation: string;
   value?: number;
-  lowestPriceCents?:
-    | { amount: number; currency: string }
-    | number
-    | null;
+  lowestPriceCents?: { amount: number; currency: string } | number | null;
   localizedLowestPriceCents?: GoatLocalizedPrice | null;
   available?: boolean;
 }
@@ -36,10 +33,7 @@ interface GoatAvailableSizeRow {
   value?: number;
   size?: number;
   available?: boolean;
-  lowestPriceCents?:
-    | { amount: number; currency: string }
-    | number
-    | null;
+  lowestPriceCents?: { amount: number; currency: string } | number | null;
   localizedLowestPriceCents?: GoatLocalizedPrice | null;
   newLowestPriceCents?: unknown;
   usedLowestPriceCents?: unknown;
@@ -68,10 +62,7 @@ interface GoatProductData {
   availableSizesNew?: GoatAvailableSizeRow[];
   availableSizesNewV2?: GoatAvailableSizeRow[];
   availableSizesNewWithDefects?: GoatAvailableSizeRow[];
-  lowestPriceCents?:
-    | { amount: number; currency: string }
-    | number
-    | null;
+  lowestPriceCents?: { amount: number; currency: string } | number | null;
   specialDisplayPriceCents?: number;
   localizedSpecialDisplayPriceCents?: GoatLocalizedPrice;
   minimumOfferCents?: number;
@@ -145,10 +136,7 @@ function centsFromAvailableRow(row: GoatAvailableSizeRow): ParsedCents | null {
     const p = parseCentsField(f);
     if (p) return p;
   }
-  if (
-    typeof row.minimumOfferCents === 'number' &&
-    row.minimumOfferCents > 0
-  ) {
+  if (typeof row.minimumOfferCents === 'number' && row.minimumOfferCents > 0) {
     return { cents: row.minimumOfferCents, currency: 'USD' };
   }
   return null;
@@ -199,8 +187,7 @@ function mergeGoatSizes(pt: GoatProductData): MergedGoatSize[] {
 
     if (sizeOptions.length > 0 && byValue.size > 0) {
       return sizeOptions.map((so) => {
-        const row =
-          so.value != null ? byValue.get(so.value) : undefined;
+        const row = so.value != null ? byValue.get(so.value) : undefined;
         const fromAvail = row ? centsFromAvailableRow(row) : null;
         const fromOpt = centsFromSizeOption(so);
         const pick = fromAvail ?? fromOpt;
@@ -209,8 +196,7 @@ function mergeGoatSizes(pt: GoatProductData): MergedGoatSize[] {
           value: so.value,
           cents: pick?.cents ?? null,
           currency: pick?.currency ?? 'USD',
-          available:
-            row?.available !== false && so.available !== false,
+          available: row?.available !== false && so.available !== false,
         };
       });
     }
@@ -242,9 +228,7 @@ function mergeGoatSizes(pt: GoatProductData): MergedGoatSize[] {
 /**
  * Template-level “from” price when per-size asks are missing.
  */
-function resolveGoatDisplayPrice(
-  product: GoatProductData,
-): ParsedCents | null {
+function resolveGoatDisplayPrice(product: GoatProductData): ParsedCents | null {
   const loc = product.localizedSpecialDisplayPriceCents;
   if (
     loc &&
@@ -346,27 +330,35 @@ export class GoatAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      locale: 'en-US',
-    }, url);
+    const context = await this.playwright.newScrapeContext(
+      {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        locale: 'en-US',
+      },
+      url,
+    );
     const navTimeout = this.config.get<string>('SCRAPE_PROXY')?.trim()
       ? 90_000
       : 45_000;
 
     try {
       const page = await context.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeout });
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: navTimeout,
+      });
 
       await page
         .waitForSelector('script#__NEXT_DATA__', { timeout: 15_000 })
         .catch(() => undefined);
 
-      await page.waitForLoadState('networkidle', { timeout: 25_000 }).catch(() => {
-        /* GOAT is chatty; continue with whatever loaded */
-      });
+      await page
+        .waitForLoadState('networkidle', { timeout: 25_000 })
+        .catch(() => {
+          /* GOAT is chatty; continue with whatever loaded */
+        });
 
       // Client may fill `availableSizesNewV2` after XHR; __NEXT_DATA__ is usually static,
       // but a short pause helps live Playwright / Scrape.do timing.
@@ -464,7 +456,7 @@ export class GoatAdapter implements ScraperAdapter {
         product.brandName?.trim() ||
         (typeof product.brand === 'string'
           ? product.brand
-          : product.brand?.name ?? undefined);
+          : (product.brand?.name ?? undefined));
 
       const descParts: string[] = [];
       if (product.details) descParts.push(product.details.trim());

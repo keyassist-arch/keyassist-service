@@ -102,12 +102,12 @@ export class NikeAdapter implements ScraperAdapter {
         const nextDataEl = document.getElementById('__NEXT_DATA__');
         return {
           nextDataJson: nextDataEl?.textContent ?? null,
-          ogImage:
-            (
-              document.querySelector(
-                'meta[property="og:image"]',
-              ) as HTMLMetaElement | null
-            )?.content ?? null,
+           ogImage:
+             (
+               document.querySelector(
+                 'meta[property="og:image"]',
+               ) as HTMLMetaElement | null
+             )?.content ?? null,
           titleFallback:
             document
               .querySelector('[data-testid="product_title"]')
@@ -130,10 +130,14 @@ export class NikeAdapter implements ScraperAdapter {
       const parsed = this.parseNextData(raw);
       if (parsed) return parsed;
 
-      this.logger.warn('[nike] __NEXT_DATA__ parse failed — falling through to generic');
+      this.logger.warn(
+        '[nike] __NEXT_DATA__ parse failed — falling through to generic',
+      );
       // Log a snippet of the raw JSON so we can diagnose the live page structure
       if (raw.nextDataJson) {
-        this.logger.warn(`[nike] __NEXT_DATA__ snippet: ${raw.nextDataJson.slice(0, 300)}`);
+        this.logger.warn(
+          `[nike] __NEXT_DATA__ snippet: ${raw.nextDataJson.slice(0, 300)}`,
+        );
       }
     } catch (err) {
       this.logger.warn(
@@ -171,10 +175,7 @@ export class NikeAdapter implements ScraperAdapter {
     // ── Title ──────────────────────────────────────────────────────────────
     const info = selected.productInfo;
     const title =
-      info?.fullTitle ||
-      info?.title ||
-      raw.titleFallback ||
-      'Nike Product';
+      info?.fullTitle || info?.title || raw.titleFallback || 'Nike Product';
 
     // ── Images ─────────────────────────────────────────────────────────────
     const colorwayImages = this.getColorwayImages(root);
@@ -199,7 +200,8 @@ export class NikeAdapter implements ScraperAdapter {
     const sizeOptions = sizeList.map((s) => s.label).filter(Boolean);
 
     const variants: { name: string; options: string[] }[] = [];
-    if (sizeOptions.length) variants.push({ name: 'Size', options: sizeOptions });
+    if (sizeOptions.length)
+      variants.push({ name: 'Size', options: sizeOptions });
 
     const colorDescription = selected.colorDescription;
     if (colorDescription) {
@@ -207,20 +209,24 @@ export class NikeAdapter implements ScraperAdapter {
     }
 
     // ── Per-size configuration prices ──────────────────────────────────────
-    const configurationPrices: ProductConfigurationPrice[] = sizeList.map((s) => ({
-      label: s.label,
-      originalPrice: priceStr,
-      sku: s.skuId,
-      variantAxis: 'Size',
-      optionValue: s.label,
-      variantSelections: { Size: s.label },
-      available: s.status === 'ACTIVE',
-      currency,
-    }));
+    const configurationPrices: ProductConfigurationPrice[] = sizeList.map(
+      (s) => ({
+        label: s.label,
+        originalPrice: priceStr,
+        sku: s.skuId,
+        variantAxis: 'Size',
+        optionValue: s.label,
+        variantSelections: { Size: s.label },
+        available: s.status === 'ACTIVE',
+        currency,
+      }),
+    );
 
     // ── Availability ───────────────────────────────────────────────────────
     const statusMod = selected.statusModifier ?? '';
-    const availability = statusMod.includes('BUYABLE') ? 'In Stock' : 'Out of Stock';
+    const availability = statusMod.includes('BUYABLE')
+      ? 'In Stock'
+      : 'Out of Stock';
 
     return {
       title,
@@ -231,7 +237,9 @@ export class NikeAdapter implements ScraperAdapter {
       brand: 'Nike',
       asin: selected.styleColor,
       variants,
-      configurationPrices: configurationPrices.length ? configurationPrices : undefined,
+      configurationPrices: configurationPrices.length
+        ? configurationPrices
+        : undefined,
       availability,
     };
   }
@@ -253,16 +261,32 @@ export class NikeAdapter implements ScraperAdapter {
       return cur;
     };
 
-    const p1 = get(root, 'props', 'pageProps', 'initialState', 'selectedProduct');
+    const p1 = get(
+      root,
+      'props',
+      'pageProps',
+      'initialState',
+      'selectedProduct',
+    );
     if (this.looksLikeSelectedProduct(p1)) return p1 as NikeSelectedProduct;
 
     const p2 = get(root, 'props', 'pageProps', 'selectedProduct');
     if (this.looksLikeSelectedProduct(p2)) return p2 as NikeSelectedProduct;
 
-    const threadsProducts = get(root, 'props', 'pageProps', 'initialState', 'Threads', 'products');
+    const threadsProducts = get(
+      root,
+      'props',
+      'pageProps',
+      'initialState',
+      'Threads',
+      'products',
+    );
     if (threadsProducts && typeof threadsProducts === 'object') {
-      const first = Object.values(threadsProducts as Record<string, unknown>)[0];
-      if (this.looksLikeSelectedProduct(first)) return first as NikeSelectedProduct;
+      const first = Object.values(
+        threadsProducts as Record<string, unknown>,
+      )[0];
+      if (this.looksLikeSelectedProduct(first))
+        return first as NikeSelectedProduct;
     }
 
     // Deep fallback: walk the whole tree looking for any node named "selectedProduct"
@@ -273,8 +297,12 @@ export class NikeAdapter implements ScraperAdapter {
     } else {
       // Log top-level structure to help diagnose the live page layout
       const topKeys = Object.keys(root).join(', ');
-      const ppKeys = Object.keys((get(root, 'props', 'pageProps') as Record<string, unknown>) ?? {}).join(', ');
-      this.logger.warn(`[nike] selectedProduct not found. __NEXT_DATA__ top keys: ${topKeys} | pageProps keys: ${ppKeys}`);
+      const ppKeys = Object.keys(
+        (get(root, 'props', 'pageProps') as Record<string, unknown>) ?? {},
+      ).join(', ');
+      this.logger.warn(
+        `[nike] selectedProduct not found. __NEXT_DATA__ top keys: ${topKeys} | pageProps keys: ${ppKeys}`,
+      );
     }
     return found;
   }
@@ -292,7 +320,10 @@ export class NikeAdapter implements ScraperAdapter {
     // If this object IS a selectedProduct, return it
     if (this.looksLikeSelectedProduct(o)) return o as NikeSelectedProduct;
     // If a key named "selectedProduct" exists and looks right, return it
-    if ('selectedProduct' in o && this.looksLikeSelectedProduct(o.selectedProduct)) {
+    if (
+      'selectedProduct' in o &&
+      this.looksLikeSelectedProduct(o.selectedProduct)
+    ) {
       return o.selectedProduct as NikeSelectedProduct;
     }
     for (const val of Object.values(o)) {
@@ -314,8 +345,11 @@ export class NikeAdapter implements ScraperAdapter {
   }
 
   private getColorwayImages(root: Record<string, unknown>): NikeColorway[] {
-    const v = (root as Record<string, unknown>)?.props;
-    const pp = (v as Record<string, unknown>)?.pageProps as Record<string, unknown>;
+    const v = root?.props;
+    const pp = (v as Record<string, unknown>)?.pageProps as Record<
+      string,
+      unknown
+    >;
     return (pp?.colorwayImages ?? []) as NikeColorway[];
   }
 

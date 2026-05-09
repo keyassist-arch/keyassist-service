@@ -70,8 +70,7 @@ function resolveZaraImage(media: ZaraMedia): string {
   const raw = media.url ?? media.path ?? '';
   if (!raw) return '';
 
-  const bumpWidth = (u: string) =>
-    u.replace(/([?&])w=\d+/g, '$1w=1920');
+  const bumpWidth = (u: string) => u.replace(/([?&])w=\d+/g, '$1w=1920');
 
   if (raw.startsWith('http')) {
     return bumpWidth(raw);
@@ -117,7 +116,9 @@ async function scrapeZaraFromDom(page: Page): Promise<ScrapedProduct | null> {
       document
         .querySelector('meta[property="product:price:amount"]')
         ?.getAttribute('content') ||
-      document.querySelector('meta[itemprop="price"]')?.getAttribute('content') ||
+      document
+        .querySelector('meta[itemprop="price"]')
+        ?.getAttribute('content') ||
       null;
 
     let currency =
@@ -230,10 +231,7 @@ function readZaraPriceObj(p: unknown): ZaraPrice | null {
   if (typeof p !== 'object') return null;
   const z = p as Record<string, unknown>;
   if (typeof z.value === 'number') {
-    const c =
-      typeof z.currency === 'string' && z.currency
-        ? z.currency
-        : 'EUR';
+    const c = typeof z.currency === 'string' && z.currency ? z.currency : 'EUR';
     return { value: z.value, currency: c };
   }
   return null;
@@ -272,16 +270,16 @@ function coerceToZaraProductDetail(raw: unknown): ZaraProductDetail | null {
   const active = saleP ?? priceP ?? origP;
   if (!active) return null;
 
-  const colors = Array.isArray(o.colors) ? (o.colors as ZaraColor[]) : undefined;
+  const colors = Array.isArray(o.colors)
+    ? (o.colors as ZaraColor[])
+    : undefined;
 
   const listPrice: ZaraPrice = priceP ?? origP ?? saleP ?? active;
 
   return {
     name,
-    description:
-      typeof o.description === 'string' ? o.description : undefined,
-    sectionName:
-      typeof o.sectionName === 'string' ? o.sectionName : undefined,
+    description: typeof o.description === 'string' ? o.description : undefined,
+    sectionName: typeof o.sectionName === 'string' ? o.sectionName : undefined,
     colors,
     price: listPrice,
     salePrice: saleP ?? undefined,
@@ -305,7 +303,10 @@ function looksLikeZaraProductBlob(o: Record<string, unknown>): boolean {
   return hasColors || hasPrice;
 }
 
-function deepFindProductDetail(node: unknown, depth = 0): ZaraProductDetail | null {
+function deepFindProductDetail(
+  node: unknown,
+  depth = 0,
+): ZaraProductDetail | null {
   if (depth > 35 || node == null) return null;
   if (typeof node !== 'object') return null;
 
@@ -359,7 +360,9 @@ function tryParseZaraJsonSources(sources: string[]): ZaraProductDetail | null {
   return null;
 }
 
-function tryHydrationAndInlineScripts(scripts: string[]): ZaraProductDetail | null {
+function tryHydrationAndInlineScripts(
+  scripts: string[],
+): ZaraProductDetail | null {
   for (const txt of scripts) {
     if (!txt || txt.length < 50) continue;
     const staticObj = extractAssignmentRhsObject(
@@ -542,16 +545,19 @@ export class ZaraAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      locale: 'en-US',
-      extraHTTPHeaders: {
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    const context = await this.playwright.newScrapeContext(
+      {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        locale: 'en-US',
+        extraHTTPHeaders: {
+          Accept:
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
       },
-    }, url);
+      url,
+    );
 
     let page: Page | undefined;
     let lastResult: ScrapedProduct | undefined;
@@ -564,9 +570,11 @@ export class ZaraAdapter implements ScraperAdapter {
 
     try {
       page = await context.newPage();
-      await page.goto(url, { waitUntil: 'load', timeout: 60_000 }).catch(() =>
-        page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
-      );
+      await page
+        .goto(url, { waitUntil: 'load', timeout: 60_000 })
+        .catch(() =>
+          page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
+        );
 
       await page
         .waitForFunction(
@@ -678,7 +686,7 @@ export class ZaraAdapter implements ScraperAdapter {
 
       const comparePriceStr =
         wasPriceObj != null
-          ? zaraValueToDecimalString(wasPriceObj) ?? undefined
+          ? (zaraValueToDecimalString(wasPriceObj) ?? undefined)
           : undefined;
 
       if (!priceStr) {

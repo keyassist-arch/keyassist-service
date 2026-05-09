@@ -40,7 +40,9 @@ export class ShippingService {
         tvFee: 0,
         bulkSurcharge: 0,
         total: rates.oceanSmallBoxRate,
-        breakdown: [`Ocean small box flat rate: $${rates.oceanSmallBoxRate.toFixed(2)}`],
+        breakdown: [
+          `Ocean small box flat rate: $${rates.oceanSmallBoxRate.toFixed(2)}`,
+        ],
       };
     }
 
@@ -56,7 +58,9 @@ export class ShippingService {
         ? rates.airRateLagosPerLb
         : rates.airRateOutsideLagosPerLb;
     const minimum =
-      destination === 'lagos' ? rates.airMinimumLagos : rates.airMinimumOutsideLagos;
+      destination === 'lagos'
+        ? rates.airMinimumLagos
+        : rates.airMinimumOutsideLagos;
 
     const breakdown: string[] = [];
 
@@ -86,7 +90,9 @@ export class ShippingService {
 
     const bulkSurcharge = bulkCommercial ? rates.bulkCommercialSurcharge : 0;
     if (bulkCommercial) {
-      breakdown.push(`Bulk/commercial surcharge: $${rates.bulkCommercialSurcharge.toFixed(2)}`);
+      breakdown.push(
+        `Bulk/commercial surcharge: $${rates.bulkCommercialSurcharge.toFixed(2)}`,
+      );
     }
 
     const total = baseRate + tvFee + bulkSurcharge;

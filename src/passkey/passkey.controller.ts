@@ -55,7 +55,9 @@ export class PasskeyController {
 
   @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Complete passkey registration and save the credential' })
+  @ApiOperation({
+    summary: 'Complete passkey registration and save the credential',
+  })
   @Post('register/finish')
   registerFinish(
     @CurrentUser() user: JwtPayload,
@@ -81,7 +83,8 @@ export class PasskeyController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Complete passkey authentication — returns accessToken + refreshToken',
+    summary:
+      'Complete passkey authentication — returns accessToken + refreshToken',
   })
   @Post('login/finish')
   loginFinish(@Body() body: AuthenticationResponseJSON) {

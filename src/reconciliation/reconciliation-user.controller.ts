@@ -16,6 +16,8 @@ import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ReconciliationService } from './reconciliation.service';
 import { CreatePriceDisputeDto } from './dto/create-price-dispute.dto';
 import { ListMyIssuesDto } from './dto/list-my-issues.dto';
+import { CreateUserIssueDto } from './dto/create-user-issue.dto';
+import { CreateIssueDto } from './dto/create-issue.dto';
 
 @ApiTags('Reconciliation')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -23,6 +25,23 @@ import { ListMyIssuesDto } from './dto/list-my-issues.dto';
 @UseGuards(JwtAuthGuard)
 export class ReconciliationUserController {
   constructor(private readonly reconciliationService: ReconciliationService) {}
+
+  @Post('issues')
+  @ApiOperation({
+    summary: 'Submit a new issue/ticket to support',
+    description:
+      'Create a support ticket for refund requests, item issues, billing problems, etc.',
+  })
+  submitIssue(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateUserIssueDto,
+  ) {
+    const createDto: CreateIssueDto = {
+      ...dto,
+      userId: user.sub,
+    };
+    return this.reconciliationService.createIssue(createDto);
+  }
 
   @Post('price-disputes')
   @ApiOperation({
