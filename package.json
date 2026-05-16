@@ -21,7 +21,9 @@
     "seed": "ts-node -r tsconfig-paths/register src/seed/seed.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
-    "db:reset-catalog": "ts-node -r tsconfig-paths/register src/scripts/reset-catalog-commerce.ts"
+    "db:reset-catalog": "ts-node -r tsconfig-paths/register src/scripts/reset-catalog-commerce.ts",
+    "seed:categories": "ts-node -r tsconfig-paths/register src/scripts/seed-categories.ts",
+    "backfill:categories": "ts-node -r tsconfig-paths/register src/scripts/backfill-product-categories.ts"
   },
   "dependencies": {
     "@google/genai": "^2.3.0",

@@ -8,6 +8,7 @@ import { ScraperModule } from '../scraper/scraper.module';
 import { RedisModule } from '../redis/redis.module';
 import { QueuesModule } from '../jobs/queues.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     RedisModule,
     QueuesModule,
     forwardRef(() => RealtimeModule),
+    CategoriesModule,
   ],
   providers: [ProductImportService],
   controllers: [ProductImportController],

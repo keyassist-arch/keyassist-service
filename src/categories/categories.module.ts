@@ -4,6 +4,7 @@ import { Category } from './entities/category.entity';
 import { Product } from '../products/entities/product.entity';
 import { CategoriesService } from './categories.service';
 import { CategoriesController } from './categories.controller';
+import { CategoryClassifierService } from './category-classifier.service';
 import { ProductsModule } from '../products/products.module';
 import { CurrencyModule } from '../currency/currency.module';
 
@@ -13,8 +14,8 @@ import { CurrencyModule } from '../currency/currency.module';
     ProductsModule,
     CurrencyModule,
   ],
-  providers: [CategoriesService],
+  providers: [CategoriesService, CategoryClassifierService],
   controllers: [CategoriesController],
-  exports: [CategoriesService],
+  exports: [CategoriesService, CategoryClassifierService],
 })
 export class CategoriesModule {}

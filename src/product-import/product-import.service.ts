@@ -26,6 +26,7 @@ import {
 } from './import-client-hints';
 import { ImportRealtimeService } from '../realtime/import-realtime.service';
 import { ManualProductImportDto } from './dto/manual-product-import.dto';
+import { CategoryClassifierService } from '../categories/category-classifier.service';
 
 const SCRAPE_JOB_OPTS = {
   removeOnComplete: true,
@@ -56,6 +57,7 @@ export class ProductImportService {
     private readonly scrapeQueue: Queue,
     @Inject(forwardRef(() => ImportRealtimeService))
     private readonly importRealtime: ImportRealtimeService,
+    private readonly categoryClassifier: CategoryClassifierService,
   ) {}
 
   /**
@@ -561,6 +563,7 @@ export class ProductImportService {
 
     // Manual products should not be periodically re-scraped.
     await this.productsService.disableRescrape(product.id);
+    await this.categoryClassifier.assignCategoryToProduct(product);
 
     this.logger.log(
       `[import] step=manual_create_done productId=${product.id} url=${previewUrl(normalized)}`,
@@ -606,6 +609,7 @@ export class ProductImportService {
         importRow,
         scraped,
       );
+      await this.categoryClassifier.assignCategoryToProduct(product);
       await this.redis.setCachedProductId(importRow.sourceUrl, product.id);
       this.logger.log(
         `[import] step=completed importId=${importId} productId=${product.id}`,
