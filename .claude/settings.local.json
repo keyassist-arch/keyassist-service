@@ -53,7 +53,8 @@
       "Bash(node dist/main.js)",
       "Bash(echo \"Started PID: $!\")",
       "Bash(awk '{print $2, $11, $12, $13, $14}')",
-      "Bash(awk '{print $2, $11, $12, $13}')"
+      "Bash(awk '{print $2, $11, $12, $13}')",
+      "Bash(xargs grep -l \"categoryId\\\\|Category\")"
     ]
   }
 }

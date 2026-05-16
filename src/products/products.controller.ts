@@ -7,13 +7,15 @@ import {
   ParseIntPipe,
   Query,
 } from '@nestjs/common';
-import { ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrencyService } from '../currency/currency.service';
 import { ProductsService } from './products.service';
 
 const RECENT_PRODUCTS_DEFAULT = 24;
 const RECENT_PRODUCTS_MAX = 100;
+const RELATED_DEFAULT_LIMIT = 8;
+const RELATED_MAX_LIMIT = 20;
 
 /** Loose ISO 4217 check — 3 uppercase letters */
 function isValidCurrencyCode(code: string): boolean {
@@ -66,6 +68,48 @@ export class ProductsController {
       responses.map((r) =>
         this.currencyService.convertProductResponse(r, target),
       ),
+    );
+  }
+
+  @Public()
+  @Get(':idOrSlug/related')
+  @ApiOperation({ summary: 'Related products for a product detail page' })
+  @ApiParam({
+    name: 'idOrSlug',
+    description: 'Product UUID or slug',
+    example: 'iphone-air-256gb-light-gold',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: `Max related products to return (default ${RELATED_DEFAULT_LIMIT}, max ${RELATED_MAX_LIMIT})`,
+    example: RELATED_DEFAULT_LIMIT,
+  })
+  @ApiQuery({
+    name: 'displayCurrency',
+    required: false,
+    description: 'ISO 4217 currency code to convert prices into (e.g. USD, EUR, NGN).',
+    example: 'USD',
+  })
+  async getRelated(
+    @Param('idOrSlug') idOrSlug: string,
+    @Query('limit', new DefaultValuePipe(RELATED_DEFAULT_LIMIT), ParseIntPipe) limit: number,
+    @Query('displayCurrency') displayCurrency?: string,
+  ) {
+    const capped = Math.min(RELATED_MAX_LIMIT, Math.max(1, limit));
+    const results = await this.productsService.findRelated(idOrSlug, capped);
+
+    if (!displayCurrency) return results;
+
+    const target = displayCurrency.trim().toUpperCase();
+    if (!isValidCurrencyCode(target)) {
+      throw new BadRequestException(
+        `Invalid displayCurrency "${displayCurrency}" — must be a 3-letter ISO 4217 code (e.g. USD, EUR, NGN)`,
+      );
+    }
+
+    return Promise.all(
+      results.map((r) => this.currencyService.convertProductResponse(r, target)),
     );
   }
 

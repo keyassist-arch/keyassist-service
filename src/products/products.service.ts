@@ -260,6 +260,71 @@ export class ProductsService {
   }
 
   /**
+   * Related products for a product detail page.
+   * Returns same-category products first, then title-keyword matches to fill the remainder.
+   * The source product is always excluded from results.
+   */
+  async findRelated(param: string, limit: number): Promise<ReturnType<ProductsService['toResponse']>[]> {
+    const product = await this.findByIdOrSlug(param);
+    const results: Product[] = [];
+    const seen = new Set<string>([product.id]);
+
+    // 1. Same-category products (highest relevance)
+    if (product.categoryId) {
+      const sameCat = await this.products.find({
+        where: { categoryId: product.categoryId },
+        order: { createdAt: 'DESC' },
+        take: limit,
+      });
+      for (const p of sameCat) {
+        if (!seen.has(p.id)) {
+          seen.add(p.id);
+          results.push(p);
+        }
+      }
+    }
+
+    // 2. Title keyword matches to fill any remainder
+    if (results.length < limit) {
+      const keywords = this.extractTitleKeywords(product.title);
+      if (keywords.length > 0) {
+        const kwConditions = keywords.map((_, i) => `p.title ILIKE :kw${i}`);
+        const kwParams: Record<string, string> = {};
+        keywords.forEach((kw, i) => { kwParams[`kw${i}`] = `%${kw}%`; });
+
+        const nameMatches = await this.products
+          .createQueryBuilder('p')
+          .where('p.id != :id', { id: product.id })
+          .andWhere(`(${kwConditions.join(' OR ')})`, kwParams)
+          .orderBy('p.created_at', 'DESC')
+          .take(limit)
+          .getMany();
+
+        for (const p of nameMatches) {
+          if (!seen.has(p.id) && results.length < limit) {
+            seen.add(p.id);
+            results.push(p);
+          }
+        }
+      }
+    }
+
+    return results.slice(0, limit).map((p) => this.toResponse(p));
+  }
+
+  private extractTitleKeywords(title: string): string[] {
+    const stopWords = new Set([
+      'the', 'and', 'for', 'with', 'from', 'this', 'that', 'are', 'was',
+      'has', 'have', 'will', 'can', 'not', 'but', 'its', 'new', 'all',
+    ]);
+    return title
+      .split(/[\s\-_,./|&()\[\]]+/)
+      .map((w) => w.replace(/[^a-z0-9]/gi, '').toLowerCase())
+      .filter((w) => w.length > 3 && !stopWords.has(w))
+      .slice(0, 3);
+  }
+
+  /**
    * Products due for a periodic rescrape: enabled, and never scraped or last scrape before `cutoff`.
    * Use from a cron job with e.g. `cutoff = subHours(new Date(), 24)`.
    */
