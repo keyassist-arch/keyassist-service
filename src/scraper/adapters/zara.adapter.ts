@@ -545,8 +545,8 @@ export class ZaraAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext(
-      {
+    const { page, context } = await this.playwright.loadPage(url, {
+      contextOverrides: {
         userAgent:
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
           '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
@@ -556,10 +556,9 @@ export class ZaraAdapter implements ScraperAdapter {
             'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
       },
-      url,
-    );
+      gotoOptions: { waitUntil: 'domcontentloaded', timeout: 60_000 },
+    });
 
-    let page: Page | undefined;
     let lastResult: ScrapedProduct | undefined;
     let lastNote = '';
     const done = (r: ScrapedProduct, note: string): ScrapedProduct => {
@@ -569,12 +568,6 @@ export class ZaraAdapter implements ScraperAdapter {
     };
 
     try {
-      page = await context.newPage();
-      await page
-        .goto(url, { waitUntil: 'load', timeout: 60_000 })
-        .catch(() =>
-          page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }),
-        );
 
       await page
         .waitForFunction(

@@ -51,6 +51,68 @@ export class Order {
   })
   shippingFee: string;
 
+  @Column({
+    name: 'marketplace_tax',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  marketplaceTax: string;
+
+  /** Shipping cost from the source marketplace to our warehouse (estimated per marketplace rules) */
+  @Column({
+    name: 'marketplace_shipping',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  marketplaceShipping: string;
+
+  @Column({
+    name: 'domestic_handling',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  domesticHandling: string;
+
+  @Column({
+    name: 'customs_total',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  customsTotal: string;
+
+  @Column({
+    name: 'fx_buffer',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  fxBuffer: string;
+
+  @Column({
+    name: 'risk_buffer',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  riskBuffer: string;
+
+  @Column({
+    name: 'pricing_breakdown',
+    type: 'jsonb',
+    default: [],
+  })
+  pricingBreakdown: string[];
+
   @Column({ type: 'decimal', precision: 14, scale: 2 })
   total: string;
 

@@ -1,18 +1,19 @@
 import { Type } from 'class-transformer';
 import {
-  IsBoolean,
   IsEnum,
-  IsNumber,
   IsObject,
   IsOptional,
   IsString,
-  Min,
   ValidateNested,
 } from 'class-validator';
 import type {
   ShippingDestination,
   ShippingService,
 } from '../../shipping/utils/kingz-rates';
+import {
+  PRODUCT_CATEGORIES,
+  type ProductCategory,
+} from '../../landed-cost/rules/category-weights';
 
 class ShippingAddressDto {
   @IsOptional()
@@ -45,39 +46,20 @@ class ShippingAddressDto {
   phone?: string;
 }
 
-class ShippingInputDto {
-  @IsNumber()
-  @Min(0.1)
-  weight: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  length?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  width?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  height?: number;
-
+class LandedCostInputDto {
   @IsEnum(['lagos', 'outside_lagos'] as const)
   destination: ShippingDestination;
 
   @IsEnum(['air', 'ocean_small'] as const)
-  service: ShippingService;
+  shippingService: ShippingService;
 
+  /**
+   * Product category used to estimate package weight and Nigeria customs duty.
+   * Defaults to "generic" when omitted.
+   */
+  @IsEnum(PRODUCT_CATEGORIES)
   @IsOptional()
-  @IsBoolean()
-  bulkCommercial?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  isTV?: boolean;
+  category?: ProductCategory;
 }
 
 export class CreateOrderDto {
@@ -87,9 +69,8 @@ export class CreateOrderDto {
   @Type(() => ShippingAddressDto)
   shippingAddress?: ShippingAddressDto;
 
-  @IsOptional()
   @IsObject()
   @ValidateNested()
-  @Type(() => ShippingInputDto)
-  shipping?: ShippingInputDto;
+  @Type(() => LandedCostInputDto)
+  landedCost: LandedCostInputDto;
 }

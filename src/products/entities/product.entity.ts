@@ -119,6 +119,10 @@ export class Product {
   @Column({ name: 'stock_quantity', type: 'int', nullable: true })
   stockQuantity: number | null;
 
+  /** FK to the `categories` table. Null = uncategorised. */
+  @Column({ type: 'uuid', nullable: true, name: 'category_id' })
+  categoryId: string | null;
+
   @Column({ name: 'last_scraped_at', type: 'timestamptz', nullable: true })
   lastScrapedAt: Date | null;
 

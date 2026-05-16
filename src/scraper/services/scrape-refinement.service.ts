@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { APIError } from 'openai';
 import { LlmGatewayService } from '../../llm/llm-gateway.service';
 import type { ProductConfigurationPrice } from '../../products/entities/product.entity';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
@@ -47,8 +46,8 @@ function saneVsReference(llm: number, adapter: number | null): boolean {
 }
 
 @Injectable()
-export class OpenRouterScrapeRefinementService {
-  private readonly logger = new Logger(OpenRouterScrapeRefinementService.name);
+export class ScrapeRefinementService {
+  private readonly logger = new Logger(ScrapeRefinementService.name);
 
   constructor(
     private readonly config: ConfigService,
@@ -56,18 +55,15 @@ export class OpenRouterScrapeRefinementService {
   ) {}
 
   isEnabled(): boolean {
-    const flag = this.config.get<string>('SCRAPE_OPENROUTER_REFINE')?.trim();
-    const on = flag === '1' || flag?.toLowerCase() === 'true';
-    return Boolean(on && this.llm.llmAvailable);
+    if (!this.llm.llmAvailable) return false;
+    // Opt out with SCRAPE_LLM_REFINE=false (or 0). Any other value — including
+    // unset — leaves refinement on whenever the LLM provider is configured.
+    const flag = this.config.get<string>('SCRAPE_LLM_REFINE')?.trim().toLowerCase();
+    if (flag === 'false' || flag === '0') return false;
+    // Also respect the legacy explicit-opt-in behaviour (true/1 keeps working).
+    return true;
   }
 
-  /**
-   * Optional model override for the refinement pass.
-   * Set SCRAPE_REFINE_MODEL to a better model for descriptions, e.g.:
-   *   google/gemini-2.0-flash-exp:free  (free, great for product copy)
-   *   meta-llama/llama-4-scout:free     (free, good instruction following)
-   *   anthropic/claude-haiku-4-5        (paid, best quality for descriptions)
-   */
   private refineModel(): string | undefined {
     return this.config.get<string>('SCRAPE_REFINE_MODEL')?.trim() || undefined;
   }
@@ -197,8 +193,6 @@ Return ONLY valid JSON, no markdown.`;
       Array.isArray(llm.configurationPrices) &&
       llm.configurationPrices.length > 0
     ) {
-      // Build a lookup from the adapter's rows so we can restore fields the LLM
-      // doesn't know about (variantSelections, sku, metadata, etc.).
       const adapterRowByKey = new Map<string, ProductConfigurationPrice>();
       for (const r of adapter.configurationPrices ?? []) {
         const key = `${r.variantAxis ?? ''}|${r.optionValue ?? ''}`;
@@ -213,7 +207,6 @@ Return ONLY valid JSON, no markdown.`;
         const axis = String(row.variantAxis ?? '').trim();
         const opt = String(row.optionValue ?? '').trim();
         if (!axis || !opt) continue;
-        // Merge back adapter fields that the LLM output doesn't carry.
         const adapterRow = adapterRowByKey.get(`${axis}|${opt}`);
         rows.push({
           label: String(row.label ?? `${axis} ${opt}`).slice(0, 300),
@@ -232,7 +225,7 @@ Return ONLY valid JSON, no markdown.`;
           metadata:
             row.metadata && typeof row.metadata === 'object'
               ? row.metadata
-              : (adapterRow?.metadata ?? { source: 'openrouter-refine' }),
+              : (adapterRow?.metadata ?? { source: 'llm-refine' }),
         });
       }
       if (rows.length) out.configurationPrices = rows;
@@ -255,30 +248,31 @@ Return ONLY valid JSON, no markdown.`;
       });
 
       if (!content) {
-        this.logger.warn('[openrouter] empty response');
+        this.logger.warn('[llm-refine] empty response');
         return scraped;
       }
 
       const parsed = this.parseLlmJson(content);
       if (!parsed) {
-        this.logger.warn('[openrouter] could not parse JSON from response');
+        this.logger.warn('[llm-refine] could not parse JSON from response');
         return scraped;
       }
 
       const merged = this.merge(scraped, parsed);
       this.logger.log(
-        `[openrouter] refined url=${url} variants=${merged.variants?.length ?? 0} configRows=${merged.configurationPrices?.length ?? 0}`,
+        `[llm-refine] provider=${this.llm.defaultModel} url=${url} ` +
+          `variants=${merged.variants?.length ?? 0} configRows=${merged.configurationPrices?.length ?? 0}`,
       );
       return merged;
     } catch (e) {
-      const apiStatus = e instanceof APIError ? e.status : undefined;
-      const retryHint =
-        apiStatus === 429
-          ? 'hint=rate_limited_retry_later'
-          : 'hint=using_adapter_output';
+      const isRateLimit =
+        e instanceof Error && e.message.includes('429');
+      const retryHint = isRateLimit
+        ? 'hint=rate_limited_retry_later'
+        : 'hint=using_adapter_output';
       this.logger.warn(
-        `[openrouter] step=refine_failed url=${url} ` +
-          `status=${apiStatus ?? 'n/a'} ${retryHint}: ` +
+        `[llm-refine] step=refine_failed url=${url} ` +
+          `${retryHint}: ` +
           `${e instanceof Error ? e.message : String(e)}`,
       );
       return scraped;

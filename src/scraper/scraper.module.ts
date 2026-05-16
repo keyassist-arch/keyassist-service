@@ -13,7 +13,7 @@ import { EbayAdapter } from './adapters/ebay.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { ScraperService } from './scraper.service';
-import { OpenRouterScrapeRefinementService } from './services/openrouter-scrape-refinement.service';
+import { ScrapeRefinementService } from './services/scrape-refinement.service';
 
 @Global()
 @Module({
@@ -32,7 +32,7 @@ import { OpenRouterScrapeRefinementService } from './services/openrouter-scrape-
     ZaraAdapter,
     ConverseAdapter,
     ScraperService,
-    OpenRouterScrapeRefinementService,
+    ScrapeRefinementService,
   ],
   exports: [ScraperService, PlaywrightService],
 })

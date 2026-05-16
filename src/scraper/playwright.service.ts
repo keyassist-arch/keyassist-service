@@ -4,9 +4,24 @@ import {
   type Browser,
   type BrowserContext,
   type BrowserContextOptions,
+  type Page,
 } from 'playwright';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import axios from 'axios';
+
+export type LoadPageOptions = {
+  contextOverrides?: BrowserContextOptions;
+  /** ms to wait after page load for JS rendering via scrape.do (default 4000) */
+  scrapeDoWait?: number;
+  gotoOptions?: { waitUntil: 'load' | 'domcontentloaded' | 'networkidle'; timeout: number };
+};
+
+export type LoadedPage = {
+  page: Page;
+  context: BrowserContext;
+  source: 'scrape.do' | 'playwright';
+};
 
 chromium.use(StealthPlugin());
 import { parseScrapeProxy } from './utils/parse-scrape-proxy.util';
@@ -200,6 +215,57 @@ export class PlaywrightService implements OnModuleDestroy {
         ...overrides.extraHTTPHeaders,
       },
     });
+  }
+
+  private async fetchHtmlViaScrapeD0(url: string, wait: number): Promise<string | null> {
+    const token = this.config.get<string>('SCRAPE_DO_TOKEN')?.trim();
+    if (!token) return null;
+    try {
+      const params = new URLSearchParams({ token, url, super: 'true', wait: String(wait) });
+      const { data: html } = await axios.get<string>(
+        `http://api.scrape.do/?${params.toString()}`,
+        {
+          timeout: 60_000,
+          maxContentLength: 10_000_000,
+          headers: { Accept: 'text/html' },
+          validateStatus: (s) => s >= 200 && s < 400,
+        },
+      );
+      if (typeof html !== 'string' || html.length < 500) return null;
+      return html;
+    } catch (e) {
+      this.logger.warn(
+        `[playwright] scrape.do fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Fetch a page via scrape.do first (if SCRAPE_DO_TOKEN is set), falling back to
+   * Playwright's own navigation. The returned page is ready for page.evaluate() — close
+   * the context in a finally block when done.
+   */
+  async loadPage(url: string, options: LoadPageOptions = {}): Promise<LoadedPage> {
+    const {
+      contextOverrides = {},
+      scrapeDoWait = 4000,
+      gotoOptions = { waitUntil: 'domcontentloaded', timeout: 60_000 },
+    } = options;
+
+    const html = await this.fetchHtmlViaScrapeD0(url, scrapeDoWait);
+    const context = await this.newScrapeContext(contextOverrides, url);
+    const page = await context.newPage();
+
+    if (html) {
+      this.logger.log(`[playwright] loadPage source=scrape.do url=${url.slice(0, 80)}`);
+      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      return { page, context, source: 'scrape.do' };
+    }
+
+    this.logger.log(`[playwright] loadPage source=playwright url=${url.slice(0, 80)}`);
+    await page.goto(url, gotoOptions);
+    return { page, context, source: 'playwright' };
   }
 
   async onModuleDestroy(): Promise<void> {

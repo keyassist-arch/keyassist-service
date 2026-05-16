@@ -1,0 +1,443 @@
+Yes — for a $128 product, a ~$356 landed total feels excessive because the stacked percentage-based fees compound aggressively.
+
+The issue is not one single fee. It’s that:
+
+```text id="xv7f0i"
+international shipping
++ customs
++ VAT
++ clearing
++ buffers
++ service fee
+```
+
+are all being applied independently and linearly.
+
+That creates “fee pyramiding.”
+
+---
+
+# What’s Making It Explode
+
+Let’s isolate the offenders.
+
+## Your Base Product
+
+```text id="lvv7w6"
+$128.15
+```
+
+Reasonable.
+
+---
+
+## International Shipping = $75
+
+This is the biggest distortion.
+
+For a 2 lb item:
+
+```text id="v8hfjm"
+$75 shipping
+```
+
+is extremely high unless:
+
+* express air freight
+* premium courier
+* individual shipment
+* no shipment consolidation
+
+This alone already pushes the user psychologically into:
+
+> “I’m paying almost product price again.”
+
+---
+
+# The Real Industry Trick: Consolidation
+
+Cross-border companies survive because they:
+
+```text id="x5z0ry"
+combine many shipments into one bulk freight movement
+```
+
+instead of shipping every order individually.
+
+Example:
+
+Instead of:
+
+```text id="sqyxk8"
+1 package → Lagos via DHL
+```
+
+they do:
+
+```text id="djvccr"
+200 packages → cargo pallet → Lagos
+```
+
+then local dispatch.
+
+That changes shipping economics massively.
+
+---
+
+# Your Current Model Looks Like Courier Pricing
+
+You’re pricing like:
+
+* DHL Express
+* FedEx International Priority
+
+But users expect:
+
+* freight-forwarder economics
+
+Huge difference.
+
+---
+
+# What Nigerian Forwarders Actually Do
+
+Companies importing into Nigeria often use:
+
+* air cargo consolidation
+* sea cargo consolidation
+* freight forwarding lanes
+
+Typical pricing:
+
+```text id="u8m3cq"
+$8–$18/lb
+```
+
+depending on:
+
+* category
+* speed
+* route
+
+NOT:
+
+```text id="w2z7iq"
+$75 for 4 lbs
+```
+
+unless premium express.
+
+---
+
+# Your Duty + VAT Stack Is Also Too Aggressive
+
+You currently have:
+
+```text id="xcrlvg"
+Duty: $42.63
+VAT: $19.18
+```
+
+That implies:
+
+```text id="gjq3ks"
+~48% government charges
+```
+
+on a $128 item.
+
+That’s unrealistic for many categories unless:
+
+* luxury goods
+* heavy electronics
+* misclassified HS code
+* inflated customs valuation
+
+---
+
+# Nigerian Customs Reality
+
+In practice, many freight forwarders:
+
+* batch-clear shipments
+* negotiate rates
+* use category-based clearing
+* use volumetric clearing systems
+
+Meaning:
+
+> actual effective customs burden is often lower than formal textbook rates.
+
+Especially for:
+
+* fashion
+* sneakers
+* accessories
+* consumer items
+
+---
+
+# Your Buffers Are Stacking Incorrectly
+
+You added:
+
+```text id="7v8fy6"
+FX buffer: 2.5%
+Risk buffer: 6%
+Service fee: 20%
+```
+
+The problem:
+
+You’re applying percentages on top of already inflated totals.
+
+So the service fee is charging users for:
+
+* taxes
+* shipping
+* buffers themselves
+
+That feels punitive.
+
+---
+
+# Better Pricing Architecture
+
+Instead of:
+
+```text id="f2n1mx"
+service fee = 20% of everything
+```
+
+do:
+
+```text id="chj7fz"
+service fee = percentage of product subtotal only
+```
+
+Example:
+
+```text id="f3xg1w"
+20% × $128
+= $25.6
+```
+
+NOT:
+
+```text id="k9yq2d"
+20% × $300+
+```
+
+---
+
+# Recommended Pricing Model
+
+For MVP:
+
+---
+
+## Product
+
+```text id="55rq7x"
+Actual marketplace checkout total
+```
+
+Example:
+
+```text id="qund74"
+$128
+```
+
+---
+
+## US Warehouse Fee
+
+Flat:
+
+```text id="6b5llw"
+$5–$10
+```
+
+---
+
+## International Shipping
+
+Use simplified bands.
+
+Example:
+
+| Weight   | Lagos Air Cargo |
+| -------- | --------------- |
+| 0–2 lbs  | $18             |
+| 2–5 lbs  | $35             |
+| 5–10 lbs | $60             |
+
+NOT live courier rates.
+
+---
+
+## Customs
+
+Use category heuristics.
+
+Example:
+
+| Category    | Customs Estimate |
+| ----------- | ---------------- |
+| Fashion     | 8–15%            |
+| Sneakers    | 10–18%           |
+| Electronics | 15–30%           |
+
+Avoid exact “government calculator” modeling early.
+
+---
+
+## Service Charge
+
+Either:
+
+* flat fee
+  OR
+* 5–12% of product subtotal
+
+Example:
+
+```text id="u8b8w0"
+$12 service fee
+```
+
+feels much more acceptable than:
+
+```text id="r0o5ea"
+$25.63
+```
+
+---
+
+# A More Realistic Example
+
+## Product
+
+```text id="t5z04k"
+$128
+```
+
+## Domestic shipping
+
+```text id="k0sv8h"
+$8
+```
+
+## International cargo
+
+```text id="i5mf2g"
+$25
+```
+
+## Customs estimate
+
+```text id="csg0mq"
+$18
+```
+
+## Service fee
+
+```text id="jzqmp4"
+$12
+```
+
+---
+
+# Total
+
+```text id="9ydrjq"
+~$191
+```
+
+That feels believable psychologically.
+
+Still expensive, but understandable for cross-border fulfillment.
+
+---
+
+# Important Insight
+
+Your users are NOT benchmarking against:
+
+* actual logistics economics
+
+They benchmark against:
+
+```text id="kgb8ca"
+“What feels fair?”
+```
+
+That matters enormously.
+
+---
+
+# What Most Successful Import Platforms Actually Do
+
+Many platforms intentionally:
+
+* compress visible fees
+* subsidize logistics
+* earn from FX spreads
+* negotiate freight contracts
+* make money from volume
+
+because:
+
+```text id="vtx2d9"
+high visible shipping kills conversion
+```
+
+---
+
+# What I’d Do If I Were You
+
+## Phase 1
+
+Use:
+
+* estimated pricing bands
+* simplified customs
+* flat handling
+* cargo consolidation assumptions
+
+Do NOT attempt perfect customs realism yet.
+
+---
+
+## Phase 2
+
+After enough orders:
+
+* build actual category-specific landed cost models
+* negotiate cargo rates
+* reduce buffers
+* optimize warehouse locations
+
+---
+
+# Most Important UX Advice
+
+Never show users:
+
+```text id="wb7n5o"
+12 different fees
+```
+
+Show:
+
+```text id="7gg3k7"
+Product: $128
+Import & Delivery: $63
+Service Fee: $12
+
+Total: $203
+```
+
+The backend can remain granular.
+
+But the frontend should feel simple and trustworthy.

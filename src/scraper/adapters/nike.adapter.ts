@@ -71,10 +71,10 @@ export class NikeAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext({}, url);
+    const { page, context } = await this.playwright.loadPage(url, {
+      gotoOptions: { waitUntil: 'load', timeout: 60_000 },
+    });
     try {
-      const page = await context.newPage();
-      await page.goto(url, { waitUntil: 'load', timeout: 60_000 });
 
       // Wait until __NEXT_DATA__ is populated with product price — or give up after 20s.
       await page

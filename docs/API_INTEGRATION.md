@@ -337,7 +337,8 @@ Use `role` to show/hide admin UI; the API still enforces roles server-side.
 | Socket.IO `/realtime` | None for **`import.subscribe`** / **`import.updated`**; optional Bearer JWT in `auth.token` for **`order.updated`** |
 | `GET /products` | None — recent products (`?limit=`, `?displayCurrency=` optional) |
 | `GET /products/:idOrSlug` | None — **`idOrSlug`** is the product **UUID** or the readable **`slug`** from list/detail JSON; optional `?displayCurrency=` |
-| `POST /shipping/quote` | None — shipping cost calculator |
+| `POST /shipping/quote` | None — Kingz-only shipping cost calculator |
+| `POST /landed-cost/quote` | None — full landed cost estimate (tax + domestic shipping + Kingz + customs + buffers + margin) |
 | `GET /me`, `PATCH /me` | Bearer access token |
 | `GET /me/2fa`, `POST /me/2fa/*` (setup, enable, setup/cancel, disable) | Bearer access token |
 | `POST /auth/passkey/login/start`, `POST /auth/passkey/login/finish` | None |
@@ -903,11 +904,137 @@ Not every row includes every field; **`partNumber` / `sku`** are typical for **A
 
 ---
 
-## Shipping
+## Shipping & Landed Cost
 
-### Get a shipping quote (public)
+Two endpoints cover pricing before checkout. Use **`POST /landed-cost/quote`** for all normal checkout flows — it returns the complete price breakdown the user sees before they pay. Use **`POST /shipping/quote`** only when you need a standalone Kingz-only quote (e.g. an admin freight calculator).
 
-`POST /shipping/quote` — no auth required. Use this to preview shipping cost before the user places an order, so they can see the fee before committing.
+### Landed cost quote (public) — use this for checkout
+
+`POST /landed-cost/quote` — no auth required. Returns an itemised breakdown of every cost component: marketplace tax, domestic shipping (marketplace → warehouse), warehouse handling, Kingz international shipping (warehouse → customer), Nigeria customs, FX and risk buffers, and your service charge.
+
+**Mode A — by product ID (price fetched from DB):**
+
+```json
+{
+  "productId": "550e8400-e29b-41d4-a716-446655440000",
+  "quantity": 1,
+  "destination": "lagos",
+  "shippingService": "air",
+  "category": "sneakers",
+  "displayCurrency": "NGN"
+}
+```
+
+**Mode B — raw inputs:**
+
+```json
+{
+  "productPriceUsd": 220.00,
+  "marketplace": "stockx",
+  "category": "sneakers",
+  "quantity": 1,
+  "destination": "lagos",
+  "shippingService": "air",
+  "displayCurrency": "NGN"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `productId` | Mode A | UUID of an already-imported product. Overrides `productPriceUsd` and `marketplace`. |
+| `productPriceUsd` | Mode B | Product price in USD. Required when `productId` is omitted. |
+| `marketplace` | Mode B | Source marketplace enum (see below). Required when `productId` is omitted. |
+| `category` | No | Product category for weight + customs estimation. Defaults to `"generic"`. |
+| `quantity` | Yes | Number of units (min 1). |
+| `weightLbs` | No | Known actual weight in lbs. Overrides the category default. |
+| `dimensions` | No | `{ "lengthIn", "widthIn", "heightIn" }` — overrides the category default. |
+| `destination` | Yes | `"lagos"` or `"outside_lagos"` |
+| `shippingService` | Yes | `"air"` or `"ocean_small"` |
+| `displayCurrency` | No | ISO 4217 code (e.g. `"NGN"`, `"GBP"`). Converts `totalDisplay`. Defaults to `"USD"`. |
+
+**`category` values:** `sneakers` · `clothing` · `phone` · `laptop` · `tablet` · `tv` · `electronics_small` · `electronics_large` · `accessories` · `books` · `generic`
+
+**`marketplace` values:** `amazon` · `apple` · `nike` · `converse` · `zara` · `stockx` · `goat` · `ebay` · `shein` · `jumia` · `generic`
+
+**Response:**
+
+```json
+{
+  "marketplace": "stockx",
+  "category": "sneakers",
+  "quantity": 1,
+  "estimatedWeightLbs": 2.5,
+  "marketplaceConfidence": "high",
+
+  "productSubtotalUsd": 220.00,
+  "marketplaceTaxUsd": 0.00,
+  "marketplaceShippingUsd": 13.95,
+  "domesticHandlingUsd": 10.00,
+  "internationalShippingUsd": 75.00,
+
+  "customsDutyUsd": 63.79,
+  "customsVatUsd": 27.81,
+  "customsClearingFeeUsd": 25.00,
+
+  "fxBufferUsd": 10.89,
+  "riskBufferUsd": 26.13,
+
+  "serviceChargeUsd": 44.00,
+  "discountUsd": 0.00,
+
+  "totalUsd": 516.57,
+  "displayCurrency": "NGN",
+  "totalDisplay": 803407.65,
+
+  "breakdown": [
+    "Product subtotal: $220.00",
+    "Domestic (marketplace → warehouse): $13.95",
+    "Warehouse handling: $10.00",
+    "International shipping (Kingz):",
+    "  2.50 billable lbs × $5.00/lb = $12.50",
+    "  ...",
+    "Nigeria customs duty: $63.79",
+    "Nigeria VAT: $27.81",
+    "Customs clearing fee: $25.00",
+    "FX buffer (2.5%): $10.89",
+    "Risk buffer (6%): $26.13",
+    "Service charge (20%): $44.00",
+    "─────────────────────────────",
+    "Estimated total (USD): $516.57",
+    "Estimated total (NGN): 803407.65"
+  ]
+}
+```
+
+**Field meanings:**
+
+| Field | What it covers |
+|-------|----------------|
+| `marketplaceTaxUsd` | Estimated US sales tax at the source marketplace. `0` for marketplaces that ship to our Delaware warehouse (no sales tax state) or handle tax separately (StockX, GOAT). |
+| `marketplaceShippingUsd` | Shipping cost from the source marketplace/seller **to our warehouse** (e.g. $13.95 for StockX, $0 for Nike/Apple free shipping). |
+| `domesticHandlingUsd` | Our warehouse receiving and processing fee ($10 flat per order). |
+| `internationalShippingUsd` | Kingz International Logistics: **our warehouse → customer** in Nigeria. Calculated using Kingz rates from the DB, dimensional weight, and the category's estimated package size. |
+| `customsDutyUsd` | Nigeria import duty on CIF value (product + tax + domestic shipping + warehouse handling + Kingz). Rates: 5% electronics, 20% clothing/sneakers/TV, 15% accessories, 0% books. |
+| `customsVatUsd` | Nigeria VAT (7.5%) on (CIF + duty). |
+| `customsClearingFeeUsd` | Flat customs agent fee per category ($20–$80). |
+| `fxBufferUsd` | 2.5% buffer on total cost to absorb exchange-rate movement between quote and purchase. |
+| `riskBufferUsd` | 6% operational buffer covering seller price changes, cart expiry, and carrier fluctuations. |
+| `serviceChargeUsd` | Our 20% service charge on the product subtotal. |
+| `discountUsd` | 20% loyalty discount when `productSubtotalUsd > $1000`. Subtracted from total. |
+| `marketplaceConfidence` | How reliable the tax + domestic-shipping estimate is: `high` (we have hard data), `medium` (approximated), `low` (generic fallback). Show a disclaimer in the UI when `low`. |
+
+**UI guidance:**
+
+- Show the `breakdown` array line-by-line on an "Estimated cost" accordion or modal before the user places the order.
+- Label `totalDisplay` in the user's preferred currency. Always label it "Estimated total" — confirmed totals come from the order after checkout.
+- When `marketplaceConfidence` is `"low"`, add a note: "Marketplace estimates are approximate. Final cost may vary slightly."
+- The `landedCost` object you send to `POST /orders` must use the **same** `destination`, `shippingService`, and `category` values shown in this quote.
+
+---
+
+### Kingz-only shipping quote (public)
+
+`POST /shipping/quote` — no auth required. Use for a standalone freight estimate (e.g. admin freight calculator, or when you already know the exact package weight). **Does not include** marketplace tax, customs, or service charge — use `POST /landed-cost/quote` for the full buyer-facing price.
 
 ```json
 {
@@ -935,9 +1062,6 @@ Not every row includes every field; **`partNumber` / `sku`** are typical for **A
 
 ```json
 {
-  "carrier": "Kingz International Logistics",
-  "service": "air",
-  "destination": "lagos",
   "actualWeight": 2.5,
   "dimWeight": 3.47,
   "billableWeight": 3.47,
@@ -952,8 +1076,6 @@ Not every row includes every field; **`partNumber` / `sku`** are typical for **A
   ]
 }
 ```
-
-Pass `total` from this response as context when prompting the user to confirm shipping cost. When calling `POST /orders`, send the same inputs in the `shipping` field to have the calculated fee stored on the order.
 
 ---
 
@@ -1080,16 +1202,16 @@ All routes require Bearer.
 
 `GET /cart`
 
-Response includes server-computed pricing fields so the frontend does not perform checkout math:
+Response includes server-computed pricing fields:
 
 - `subtotal`
 - `serviceCharge` (20% of subtotal)
-- `discount` (20% of subtotal when subtotal is strictly greater than `1000`; `"0.00"` otherwise)
+- `discount` (20% of subtotal when subtotal > `1000`; `"0.00"` otherwise)
 - `fees` (`serviceCharge` — the discount is **not** subtracted from `fees`; it is subtracted in `total`)
 - `total` (`subtotal + fees - discount`)
 - `currency`
 
-> **Note:** `fees` only contains `serviceCharge`. Display `discount` as a separate line item and compute the visible "you save" copy from it directly.
+> **Cart vs order pricing:** The cart total is a **simplified preview** (subtotal + service charge − discount). The **order total** is the full landed cost — it adds marketplace tax, domestic shipping, warehouse handling, Kingz international shipping, customs, and buffers on top. Always show `POST /landed-cost/quote` to the user before they check out so they see the real number before committing.
 
 Plus `id` and `items[]` with `id`, `quantity`, `variantSelection`, and nested `product` (or minimal `{ id }` if relation missing).
 
@@ -1162,35 +1284,27 @@ Bearer required.
     "city": "...",
     "country": "NG"
   },
-  "shipping": {
-    "weight": 2.5,
-    "length": 12,
-    "width": 8,
-    "height": 6,
+  "landedCost": {
     "destination": "lagos",
-    "service": "air",
-    "bulkCommercial": false,
-    "isTV": false
+    "shippingService": "air",
+    "category": "sneakers"
   }
 }
 ```
 
-Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set. `shipping` is **optional** — when omitted, `shippingFee` on the order is `"0.00"`.
+Omit `shippingAddress` only if the user profile has `defaultShippingAddress` set. **`landedCost` is required.**
 
-**`shipping` fields:**
+**`landedCost` fields:**
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `weight` | Yes | Actual weight in **lbs** (minimum 0.1) |
-| `length`, `width`, `height` | No | Dimensions in **inches** for dimensional weight calculation |
 | `destination` | Yes | `"lagos"` or `"outside_lagos"` |
-| `service` | Yes | `"air"` or `"ocean_small"` (ocean small box is a flat-rate service) |
-| `bulkCommercial` | No | `true` adds a bulk/commercial surcharge |
-| `isTV` | No | `true` adds a TV clearing fee |
+| `shippingService` | Yes | `"air"` or `"ocean_small"` |
+| `category` | No | Product category for weight + customs estimation. Defaults to `"generic"`. Use the same value you passed to `POST /landed-cost/quote`. |
 
-Use `POST /shipping/quote` (below) to preview the shipping cost before placing the order.
+**Use `POST /landed-cost/quote` before this call** to show the user an itemised cost breakdown and confirm their `destination`, `shippingService`, and `category` choices before they commit.
 
-**Behavior:** re-scrapes each cart line to refresh price, checks **stock** when `stockQuantity` is set on products, creates the order as `PENDING`, snapshots line items, clears the cart, and may enqueue a confirmation email.
+**Behavior:** re-scrapes each cart line to refresh price, runs the full landed cost calculation (marketplace tax, domestic shipping, Kingz international shipping, customs, buffers, service charge), checks **stock** when `stockQuantity` is set on products, creates the order as `PENDING`, snapshots line items, clears the cart, and may enqueue a confirmation email.
 
 ### List my orders
 
@@ -1215,7 +1329,40 @@ This avoids scanning **`GET /orders`** on the client, though filtering with **`?
 **Order response highlights:**
 
 - `status` — `PENDING` | `PAID` | `PROCESSING` | `ORDERED_FROM_SUPPLIER` | `SHIPPED` | `DELIVERED` | `CANCELLED` | `REFUNDED` | `DISPUTED`
-- `subtotal`, `serviceCharge`, `discount`, `fees`, `shippingFee`, `total`, `currency` — server-computed checkout totals. `fees = serviceCharge`; `discount` is a separate line (20% of subtotal when subtotal > $1000); `shippingFee` is `"0.00"` when no `shipping` was sent. `total = subtotal + fees + shippingFee - discount`.
+- **`displaySummary`** — pre-computed 3-line breakdown for the order summary screen. **Use this for the main UI — do not compute totals yourself from individual fields.**
+
+```json
+{
+  "displaySummary": {
+    "product": "254.02",
+    "importAndDelivery": "81.10",
+    "serviceFee": "25.40",
+    "discount": "0.00",
+    "total": "360.52",
+    "currency": "USD"
+  }
+}
+```
+
+`importAndDelivery` bundles: marketplace tax + marketplace shipping + warehouse handling + international cargo + customs & duties + FX buffer + risk buffer. Show it as a single line. Offer a "View breakdown" toggle that reveals `pricingBreakdown[]` for users who want the detail.
+
+- **Granular pricing fields** — all decimal strings in `currency` (USD). Only needed for the breakdown drawer or admin views:
+
+| Field | What it is |
+|-------|-----------|
+| `subtotal` | Product price × quantity (sum across all cart lines) |
+| `marketplaceTax` | Estimated tax at the source marketplace checkout |
+| `marketplaceShipping` | Estimated shipping from the marketplace/seller to our warehouse |
+| `domesticHandling` | Warehouse receiving fee ($8 flat) |
+| `shippingFee` | Cargo estimate: warehouse → customer (weight-band rate) |
+| `customsTotal` | Nigeria import duties + clearing (combined rate on product subtotal) |
+| `fxBuffer` | 2.5% exchange-rate cushion on product subtotal |
+| `riskBuffer` | 4% operational risk buffer on product subtotal |
+| `fees` / `serviceCharge` | 10% service charge on `subtotal` |
+| `discount` | 20% loyalty discount when `subtotal > $1000` (else `"0.00"`) |
+| `total` | Grand total |
+
+- `pricingBreakdown` — array of human-readable strings. Render line-by-line in a "View breakdown" accordion/drawer.
 - `checkout` — **machine-readable next action** (on every order response):
   - `canInitializePayment` — `true` when `status === "PENDING"` (user may call **`POST /payments/initialize`**)
   - `nextStep` — `initialize_payment` when unpaid, or `none` when not awaiting payment. Use to show a **Pay / Complete checkout** CTA and route to a payment page that uses **`id`**.
@@ -1242,7 +1389,9 @@ This avoids scanning **`GET /orders`** on the client, though filtering with **`?
 | `orderId` for `POST /payments/initialize` | **`id`** |
 | Show “Pay now” CTA? | **`checkout.canInitializePayment`** or **`checkout.nextStep === "initialize_payment"`** (same as `status === "PENDING"`) |
 | Is payment allowed? | **`status === "PENDING"`** — otherwise do not call `initialize` (show a read-only or appropriate state) |
-| Line items, amounts, address for the checkout UI | **`items[]`**, **`total`**, **`subtotal`**, **`fees`**, **`currency`**, **`shippingAddress`** |
+| Order summary UI (3-line totals) | **`displaySummary`** — `product`, `importAndDelivery`, `serviceFee`, `discount`, `total`, `currency` |
+| Breakdown drawer / accordion | **`pricingBreakdown[]`** — render each string as one line |
+| Line items | **`items[]`**, **`shippingAddress`** |
 | Which providers the server will accept right now | **`GET /payments/methods`** — only show `available: true` |
 | Pre-select last chosen provider (optional) | **`payment.provider`** if set (see below) |
 | Correlation / deep links after a *successful* `initialize` | **`payment.methodDetails.checkoutId`**, `paystackReference`, `stripeCheckoutSessionId`, etc. |
@@ -1418,6 +1567,173 @@ On success the API captures PayPal payment and marks order status as `PAID`.
 Render `depositAddress` / `qrCode` for wallet transfer UX (and optionally open `checkoutUrl` if present). Myaza should call `POST /payments/webhooks/myaza` after on-chain confirmation (e.g. `status: "delivered"`); then order status becomes `PAID`. Frontend should poll `GET /orders/:id` while waiting.
 
 **Frontend keys:** You may use **Paystack public key** or **Stripe publishable key** only if you build a custom client-side flow. This API’s default flows are **redirect-based** (Paystack URL / Stripe Checkout URL) after `initialize`.
+
+### Payment confirmation flow
+
+After `POST /payments/initialize` succeeds, the browser leaves your app to complete payment on the provider’s page. What happens next differs by provider — but in every case the final signal you should react to is the **`order.updated` Socket.IO event** (or a poll of `GET /orders/:id` as a fallback).
+
+#### 1. Connect the socket before redirecting
+
+Connect the socket **before** you redirect the user so you don’t miss the confirmation event while they’re away:
+
+```ts
+import { io, Socket } from ‘socket.io-client’;
+
+let socket: Socket | null = null;
+
+function connectPaymentSocket(accessToken: string, orderId: string, onPaid: () => void) {
+  socket = io(`${API_BASE_URL}/realtime`, {
+    path: ‘/socket.io’,
+    auth: { token: accessToken },
+  });
+
+  socket.on(‘connect’, () => {
+    console.log(‘[socket] connected, watching order’, orderId);
+  });
+
+  socket.on(‘order.updated’, (payload: { orderId: string; status: string }) => {
+    if (payload.orderId === orderId && payload.status === ‘PAID’) {
+      onPaid();
+      socket?.disconnect();
+    }
+  });
+
+  socket.on(‘connect_error’, (err) => {
+    console.warn(‘[socket] connection error — falling back to poll’, err.message);
+  });
+}
+```
+
+The socket joins your `user:<userId>` room automatically when the JWT is valid. You do **not** need to emit anything for orders — events are pushed by the server.
+
+#### 2. Stripe
+
+```
+POST /payments/initialize  →  response.url (Stripe Checkout URL)
+     ↓
+Redirect browser to Stripe Checkout
+     ↓
+User pays on Stripe’s page
+     ↓
+Stripe sends checkout.session.completed to POST /payments/webhooks/stripe  (server-to-server)
+     ↓
+Server marks order PAID and emits order.updated via Socket.IO
+     ↓
+Frontend receives order.updated { orderId, status: "PAID" }
+```
+
+**Success URL** (`stripeSuccessUrl`) must contain `{CHECKOUT_SESSION_ID}` — Stripe replaces it on redirect:
+
+```
+https://app.example/checkout/success?session_id={CHECKOUT_SESSION_ID}
+```
+
+On your success page, the socket event is the primary signal. If the socket is not yet connected (e.g. the user was away too long and the token expired), poll:
+
+```ts
+async function pollUntilPaid(orderId: string, accessToken: string, maxAttempts = 12) {
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 3000)); // wait 3 s between polls
+    const res = await fetch(`${API_BASE_URL}/orders/${orderId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const order = await res.json();
+    if (order.status === ‘PAID’) return order;
+  }
+  throw new Error(‘Payment not confirmed after polling — ask user to refresh’);
+}
+```
+
+#### 3. PayPal
+
+PayPal uses a **redirect-and-capture** pattern — the server does not receive a webhook for the initial approval. Your frontend **must** call capture.
+
+```
+POST /payments/initialize  →  response.approvalUrl
+     ↓
+Redirect browser to PayPal approval page
+     ↓
+User approves on PayPal
+     ↓
+PayPal redirects to PAYPAL_RETURN_URL
+  e.g. https://app.example/checkout/paypal/success?token=<paypalOrderId>&PayerID=<id>
+     ↓
+Frontend reads ?token= from query string (this is paypalOrderId)
+     ↓
+POST /payments/paypal/capture  { orderId, paypalOrderId }
+     ↓
+Server captures the PayPal order, marks order PAID, emits order.updated
+     ↓
+Frontend receives order.updated { orderId, status: "PAID" }  (or check capture response)
+```
+
+**Your PayPal return page** should:
+
+```ts
+// /checkout/paypal/success
+const params = new URLSearchParams(window.location.search);
+const paypalOrderId = params.get(‘token’); // PayPal always puts the order id in ?token=
+const orderId = localStorage.getItem(‘pendingOrderId’); // saved before redirect
+
+if (!paypalOrderId || !orderId) {
+  showError(‘Missing PayPal confirmation. Please check your orders.’);
+  return;
+}
+
+const res = await fetch(`${API_BASE_URL}/payments/paypal/capture`, {
+  method: ‘POST’,
+  headers: {
+    ‘Content-Type’: ‘application/json’,
+    Authorization: `Bearer ${accessToken}`,
+  },
+  body: JSON.stringify({ orderId, paypalOrderId }),
+});
+
+if (!res.ok) {
+  showError(‘Capture failed — your payment may already be confirmed. Check your orders.’);
+  return;
+}
+
+const result = await res.json(); // { orderId, paypalOrderId, paypalCaptureId, status: "PAID" }
+showSuccess(result);
+```
+
+**PayPal cancel URL** — set `paypalCancelUrl` to a page that shows a "Payment cancelled — go back to checkout" screen and surfaces the same `orderId` for retry via `POST /payments/initialize` again (same `orderId`, order stays `PENDING`).
+
+#### 4. Myaza (crypto)
+
+```
+POST /payments/initialize  →  response.depositAddress + response.qrCode + response.checkoutUrl
+     ↓
+Show QR code and deposit address for wallet transfer
+     ↓
+User sends crypto on-chain
+     ↓
+Myaza detects on-chain confirmation and calls POST /payments/webhooks/myaza  (server-to-server)
+     ↓
+Server marks order PAID and emits order.updated via Socket.IO
+```
+
+Keep the socket open while the QR screen is visible. Also show an `expiresAt` countdown — if the session expires before payment, the user needs to re-initialize. Poll `GET /orders/:id` every 10 s as a fallback since on-chain confirmation can take minutes.
+
+#### 5. Order status reference
+
+| `status`    | Meaning                                          | Next action                              |
+|-------------|--------------------------------------------------|------------------------------------------|
+| `PENDING`   | Order created, payment not started or failed     | Show payment options, allow retry        |
+| `PAID`      | Payment confirmed by provider webhook / capture  | Show confirmation screen                 |
+| `PROCESSING`| Ops team is fulfilling the order                 | Show tracking info when available        |
+| `SHIPPED`   | Handed to carrier                                | Show `trackingNumber` + `carrier`        |
+| `DELIVERED` | Marked delivered                                 | Prompt review / reconciliation           |
+| `REFUNDED`  | Full refund issued                               | Show refund note                         |
+| `DISPUTED`  | Chargeback / dispute opened                      | Contact support                          |
+
+#### 6. Retry / failure handling
+
+If `POST /payments/initialize` returns an error, or if the user cancels on the provider page:
+- The order stays `PENDING` — no new order needed
+- Show a retry button that calls `POST /payments/initialize` again with the **same `orderId`**
+- Offer a way to get back to this screen from the order list (`GET /orders` or `GET /orders/pending-payment`)
 
 ---
 
@@ -1641,22 +1957,41 @@ For **logged-in** users, you can pass **`auth: { token: accessToken }`** on the 
 
 ### Orders — `order.updated`
 
-With a **valid** JWT (`auth.token` or `?token=`), the server joins the socket to **`user:<userId>`** for order notifications.
+With a **valid** JWT (`auth.token` or `?token=`), the server joins the socket to **`user:<userId>`** for order notifications. The server emits `order.updated` in two situations:
+
+1. **Order created** — right after `POST /orders` succeeds (`status: "PENDING"`)
+2. **Payment confirmed** — after the provider webhook fires or `POST /payments/paypal/capture` succeeds (`status: "PAID"`)
 
 ```ts
 const socket = io(`${API_BASE_URL}/realtime`, {
   path: '/socket.io',
   auth: { token: accessToken },
 });
-```
 
-```ts
 socket.on('order.updated', (payload: { orderId: string; status: string }) => {
-  // refetch GET /orders/:id or merge into store
+  if (payload.status === 'PAID') {
+    // payment confirmed — navigate to success screen or refetch order
+    fetchOrder(payload.orderId).then(showSuccessScreen);
+  } else {
+    // order created or status changed — update local state
+    updateOrderInStore(payload.orderId, payload.status);
+  }
 });
 ```
 
-Invalid or expired JWT does **not** disconnect the socket; you still get import events, but not order pushes until you reconnect with a fresh token.
+**Token refresh on reconnect:** if the access token expires mid-checkout the socket stays connected but loses its user room (order events stop). Reconnect with a fresh token after `POST /auth/refresh`:
+
+```ts
+async function reconnectSocket() {
+  const { accessToken } = await refreshTokens(); // POST /auth/refresh
+  socket.auth = { token: accessToken };
+  socket.disconnect().connect();
+}
+```
+
+**Invalid or expired JWT** does **not** disconnect the socket; you still get import events, but not order pushes until you reconnect with a fresh token.
+
+**Polling fallback:** if the socket cannot connect (network issue, token expired on return from payment provider), poll `GET /orders/:id` every 3 s until `status === "PAID"` (cap at ~12 attempts / ~36 s) then show a "taking longer than expected" message and a manual refresh button.
 
 ---
 
@@ -1683,7 +2018,7 @@ Nest validation errors often look like:
 ## Suggested frontend flows
 
 1. **Browse / import:** `POST /products/import` → open Socket.IO **`import.subscribe`** with `importId` and apply **`import.updated`** when `status === "COMPLETED"` (use **`product`** from the event—no wait for a poll). Optionally keep polling `GET /products/import/:id` as a fallback. After a **re-import**, the next **`import.updated`** with **`COMPLETED`** again carries the refreshed **`product`**.
-2. **Checkout:** `POST /cart/items` … → render cart totals from API (`subtotal`, `serviceCharge`, `discount`, `fees`, `total`) → **`POST /orders`** (this **clears the cart** and returns the order; save **`order.id`**) → from this point, **do not** rely on `GET /cart` for payment UI; use the order or **`GET /orders/:id`** for line items and totals → `GET /payments/methods` (only show `available` providers) → **`POST /payments/initialize`** (body uses **`orderId: <order.id>`** from the step above) → refetch **`GET /orders/:id`** if you need **`payment.methodDetails.checkoutId`** for your UI → redirect to Paystack / Stripe / PayPal approval URL (or show Myaza QR) → on return, for PayPal call `POST /payments/paypal/capture`, then poll `GET /orders/:id` until **`PAID`**. If **`initialize` fails**, keep the user on an **order-based** screen, offer **retry** (same `orderId`), and show a path to **pending orders**; see **Get one order → Retrying payment** and **Cart vs order** above.
+2. **Checkout:** `POST /cart/items` … → render cart totals from API (simple preview: `subtotal`, `serviceCharge`, `discount`, `fees`, `total`) → **before** the user confirms, show a full landed cost estimate: call **`POST /landed-cost/quote`** with their chosen `destination`, `shippingService`, and `category` (use `productId` per cart line for Mode A, or pass the scraped `productPriceUsd` + `marketplace` for Mode B; for multi-item carts you can quote the highest-value product or quote all and sum — the order endpoint calculates the real total) → show the `breakdown` array and `totalDisplay` in an "Estimated total" panel; note `marketplaceConfidence` and show a disclaimer when `"low"` → user confirms → **`POST /orders`** with `landedCost: { destination, shippingService, category }` (this **clears the cart**, re-scrapes prices, recomputes the full landed cost server-side, and returns the order; save **`order.id`**) → from this point, **do not** rely on `GET /cart` for payment UI; use the order or **`GET /orders/:id`** for line items and the full breakdown (`pricingBreakdown`, individual cost fields) → `GET /payments/methods` (only show `available` providers) → **connect Socket.IO** with your JWT before redirecting (so you don't miss the `order.updated` event while the user is on the provider's page) → **`POST /payments/initialize`** → redirect to Stripe / PayPal approval URL (or show Myaza QR) → on return: for **PayPal** call `POST /payments/paypal/capture`; for **Stripe** and **Myaza** wait for the `order.updated { status: "PAID" }` socket event or poll `GET /orders/:id` as a fallback. See **Payments → Payment confirmation flow** for per-provider code. If **`initialize` fails**, keep the user on an **order-based** screen, offer **retry** (same `orderId`), and show a path to **pending orders**.
 3. **Account:** register → verify email (`POST /auth/verify-email` or link from inbox) → login. If login returns **`requiresTwoFactor`**, show TOTP step and **`POST /auth/login/2fa`** (send **`localCart`** here if you need guest cart merge). Handle login **`403`** + **`EMAIL_NOT_VERIFIED`** with resend. **`GET /me` / `PATCH /me`**; optional **`GET/POST /me/2fa/*`** for Settings → 2FA. Keep cart and orders behind auth.
 4. **Admin:** gate routes on `role`; use `/admin/*` (e.g. **`GET /admin/products`** for the full catalog). Storefront home can use public **`GET /products?limit=…`** for recent items. For refund and support ticket workflows, use **`/admin/reconciliation/*`** (see [Reconciliation](#reconciliation-admin-only)).
 5. **Order status display:** handle `REFUNDED` and `DISPUTED` in your status badge/copy alongside the existing values. `REFUNDED` is set automatically by the reconciliation service when a full provider refund succeeds; `DISPUTED` is set manually by admin when a chargeback or payment dispute is opened.
@@ -1727,7 +2062,8 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | GET | `/products/import/:importId` | — |
 | GET | `/products` | — (optional `?displayCurrency=`) |
 | GET | `/products/:idOrSlug` | — (optional `?displayCurrency=`) |
-| POST | `/shipping/quote` | — |
+| POST | `/shipping/quote` | — — Kingz-only freight estimate |
+| POST | `/landed-cost/quote` | — — full landed cost (tax + shipping + customs + buffers + margin) |
 | GET | `/saves` | Bearer |
 | POST | `/saves/:productId` | Bearer |
 | DELETE | `/saves/:productId` | Bearer |
@@ -1737,7 +2073,7 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | POST | `/cart/items` | Bearer |
 | PATCH | `/cart/items/:itemId` | Bearer |
 | DELETE | `/cart/items/:itemId` | Bearer |
-| POST | `/orders` | Bearer (optional `shipping` body field) |
+| POST | `/orders` | Bearer — requires `landedCost: { destination, shippingService, category? }` |
 | GET | `/orders` | Bearer — optional `?status=PENDING` (etc.) |
 | GET | `/orders/pending-payment` | Bearer — most recent unpaid order for banners |
 | GET | `/orders/:id` | Bearer |
@@ -1747,8 +2083,10 @@ Only **public** keys belong in the frontend bundle (e.g. Paystack **public** key
 | GET | `/reconciliation/my-issues/:id` | Bearer |
 | GET | `/payments/methods` | — |
 | POST | `/payments/initialize` | Bearer |
-| POST | `/payments/paypal/capture` | Bearer |
-| POST | `/payments/webhooks/myaza` | Server-to-server |
+| POST | `/payments/paypal/capture` | Bearer — call on return from PayPal approval URL |
+| POST | `/payments/webhooks/stripe` | Server-to-server — Stripe signs with `stripe-signature` |
+| POST | `/payments/webhooks/paystack` | Server-to-server — Paystack signs with `x-paystack-signature` |
+| POST | `/payments/webhooks/myaza` | Server-to-server — optional `x-myaza-signature` |
 | GET | `/admin/orders` | Bearer admin |
 | PATCH | `/admin/orders/:id` | Bearer admin |
 | GET | `/admin/products` | Bearer admin |

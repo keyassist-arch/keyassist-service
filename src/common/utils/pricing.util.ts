@@ -1,4 +1,4 @@
-export const SERVICE_CHARGE_RATE = 0.2;
+export const SERVICE_CHARGE_RATE = 0.1;
 export const DISCOUNT_RATE = 0.2;
 export const DISCOUNT_THRESHOLD_USD = 1000;
 

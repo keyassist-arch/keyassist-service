@@ -376,6 +376,24 @@ export class ProductImportService {
     }
 
     try {
+      // Remove any stale BullMQ job keyed by the same importId (e.g. a previously
+      // exhausted failed job) so that the add() below creates a fresh run.
+      // BullMQ silently ignores add() when a job with the same jobId already exists,
+      // even in failed/completed state, which would leave the import stuck QUEUED forever.
+      const existingBullJob = await this.scrapeQueue.getJob(importRow.id);
+      if (existingBullJob) {
+        const state = await existingBullJob.getState();
+        // Only leave the job alone if it is actively running right now.
+        // For every other state (waiting, delayed backoff, failed, completed)
+        // remove it so queue.add() below can create a genuinely fresh attempt.
+        if (state !== 'active' && state !== 'unknown') {
+          this.logger.warn(
+            `[import] step=remove_stale_bull_job importId=${importRow.id} bullState=${state}`,
+          );
+          await existingBullJob.remove();
+        }
+      }
+
       this.logger.log(
         `[import] step=queued importId=${importRow.id} source=${source} url=${previewUrl(normalized)}`,
       );

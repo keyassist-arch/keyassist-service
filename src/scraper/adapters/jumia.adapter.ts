@@ -16,16 +16,14 @@ export class JumiaAdapter implements ScraperAdapter {
   ) {}
 
   async scrape(url: string): Promise<ScrapedProduct> {
-    const context = await this.playwright.newScrapeContext(
-      {
+    const { page, context } = await this.playwright.loadPage(url, {
+      contextOverrides: {
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/135.0.0.0 Safari/537.36',
       },
-      url,
-    );
+      gotoOptions: { waitUntil: 'domcontentloaded', timeout: 45_000 },
+    });
     try {
-      const page = await context.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
       const data = await page.evaluate(() => {
         const title =
           document.querySelector('h1')?.textContent?.trim() ||

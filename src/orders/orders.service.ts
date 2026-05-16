@@ -24,8 +24,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
-import { computePricing } from '../common/utils/pricing.util';
-import { ShippingService } from '../shipping/shipping.service';
+import { LandedCostService } from '../landed-cost/landed-cost.service';
 
 @Injectable()
 export class OrdersService {
@@ -44,7 +43,7 @@ export class OrdersService {
     @InjectQueue(QUEUE_SEND_NOTIFICATION)
     private readonly notifyQueue: Queue<SendNotificationJob>,
     private readonly orderRealtime: OrderRealtimeService,
-    private readonly shippingService: ShippingService,
+    private readonly landedCostService: LandedCostService,
   ) {}
 
   async createFromCart(userId: string, dto: CreateOrderDto) {
@@ -92,6 +91,7 @@ export class OrdersService {
           title: refreshed.title,
           price: unitPrice,
           currency: refreshed.currency,
+          source: refreshed.source,
           qty: line.quantity,
           images: refreshed.images,
           variant: line.variantSelection,
@@ -105,18 +105,27 @@ export class OrdersService {
       0,
     );
 
-    const shippingFee = dto.shipping
-      ? (await this.shippingService.calculate(dto.shipping)).total
-      : 0;
+    const lc = await this.landedCostService.quoteForCartLines(
+      lines.map((l) => ({
+        priceUsd: parseFloat(l.price),
+        marketplace: l.source,
+        qty: l.qty,
+      })),
+      {
+        destination: dto.landedCost.destination,
+        shippingService: dto.landedCost.shippingService,
+        category: dto.landedCost.category ?? 'generic',
+      },
+    );
 
-    const pricing = computePricing(subtotal, shippingFee);
-    const fees = pricing.fees;
-    const total = pricing.total;
+    const fees = lc.serviceChargeUsd;
+    const total = lc.totalUsd;
 
     this.logger.log(
       `[order] step=transaction_begin userId=${userId} subtotal=${subtotal.toFixed(2)} ` +
-        `serviceCharge=${pricing.serviceCharge.toFixed(2)} discount=${pricing.discount.toFixed(2)} ` +
-        `fees=${fees.toFixed(2)} total=${total.toFixed(2)} currency=${currency}`,
+        `serviceCharge=${lc.serviceChargeUsd.toFixed(2)} discount=${lc.discountUsd.toFixed(2)} ` +
+        `shipping=${lc.internationalShippingUsd.toFixed(2)} customs=${(lc.customsDutyUsd + lc.customsVatUsd + lc.customsClearingFeeUsd).toFixed(2)} ` +
+        `total=${total.toFixed(2)} currency=${currency}`,
     );
 
     const order = await this.dataSource.transaction(async (em) => {
@@ -139,9 +148,16 @@ export class OrdersService {
         userId,
         status: OrderStatus.PENDING,
         subtotal: subtotal.toFixed(2),
-        fees: fees.toFixed(2),
-        discount: pricing.discount.toFixed(2),
-        shippingFee: shippingFee.toFixed(2),
+        fees: lc.serviceChargeUsd.toFixed(2),
+        discount: lc.discountUsd.toFixed(2),
+        shippingFee: lc.internationalShippingUsd.toFixed(2),
+        marketplaceTax: lc.marketplaceTaxUsd.toFixed(2),
+        marketplaceShipping: lc.marketplaceShippingUsd.toFixed(2),
+        domesticHandling: lc.domesticHandlingUsd.toFixed(2),
+        customsTotal: (lc.customsDutyUsd + lc.customsVatUsd + lc.customsClearingFeeUsd).toFixed(2),
+        fxBuffer: lc.fxBufferUsd.toFixed(2),
+        riskBuffer: lc.riskBufferUsd.toFixed(2),
+        pricingBreakdown: lc.breakdown,
         total: total.toFixed(2),
         currency,
         shippingAddress: shipping,
@@ -408,18 +424,48 @@ export class OrdersService {
   }
 
   toResponse(o: Order, admin = false) {
-    const subtotal = parseFloat(o.subtotal);
-    const pricing = computePricing(Number.isFinite(subtotal) ? subtotal : 0);
     const pending = o.status === OrderStatus.PENDING;
+
+    // Collapsed 3-line summary for the checkout/order screen.
+    // "Import & Delivery" bundles all logistics + customs so the user
+    // sees a simple, trustworthy breakdown instead of 6+ individual fees.
+    const importAndDelivery = (
+      parseFloat(o.marketplaceTax    || '0') +
+      parseFloat(o.marketplaceShipping || '0') +
+      parseFloat(o.domesticHandling  || '0') +
+      parseFloat(o.shippingFee       || '0') +
+      parseFloat(o.customsTotal      || '0') +
+      parseFloat(o.fxBuffer          || '0') +
+      parseFloat(o.riskBuffer        || '0')
+    ).toFixed(2);
+
     return {
       id: o.id,
       userId: o.userId,
       ...(admin && o.user ? { userEmail: o.user.email } : {}),
       status: o.status,
+      // ── 3-line UI summary ──────────────────────────────────────────────────
+      displaySummary: {
+        product: o.subtotal,
+        importAndDelivery,
+        serviceFee: o.fees,
+        discount: o.discount,
+        total: o.total,
+        currency: o.currency,
+      },
+      // ── Granular fields (use for "View breakdown" drawer / admin) ──────────
       subtotal: o.subtotal,
-      serviceCharge: pricing.serviceCharge.toFixed(2),
-      discount: pricing.discount.toFixed(2),
+      serviceCharge: o.fees,
+      discount: o.discount,
       fees: o.fees,
+      shippingFee: o.shippingFee,
+      marketplaceTax: o.marketplaceTax,
+      marketplaceShipping: o.marketplaceShipping,
+      domesticHandling: o.domesticHandling,
+      customsTotal: o.customsTotal,
+      fxBuffer: o.fxBuffer,
+      riskBuffer: o.riskBuffer,
+      pricingBreakdown: o.pricingBreakdown ?? [],
       total: o.total,
       currency: o.currency,
       shippingAddress: o.shippingAddress,

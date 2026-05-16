@@ -103,7 +103,21 @@ export class ScrapeProductProcessor extends WorkerHost {
     this.logger.log(
       `[job:scrape] step=start jobId=${job.id} importId=${importId} attemptsMade=${job.attemptsMade}`,
     );
-    await this.productImportService.processScrapeJob(importId);
+
+    // Belt-and-suspenders: reject 10 s before the queue-level timeout so the
+    // error is thrown inside processScrapeJob (which marks the import FAILED)
+    // rather than being silently killed by BullMQ mid-flight.
+    const PROCESS_TIMEOUT_MS = 200_000;
+    await Promise.race([
+      this.productImportService.processScrapeJob(importId),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Scrape job timed out after ${PROCESS_TIMEOUT_MS / 1000}s`)),
+          PROCESS_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+
     this.logger.log(
       `[job:scrape] step=import_handler_finished importId=${importId}`,
     );

@@ -258,6 +258,15 @@ class EnvironmentVariables {
   @IsOptional()
   SCRAPE_PROXY_GEO_CODE?: string;
 
+  /**
+   * Scrape.do API token. When set, StockX (and other heavily-protected sites) use the
+   * scrape.do render API instead of direct Playwright, bypassing Cloudflare bot detection.
+   * Get yours at https://scrape.do — the free tier is sufficient for testing.
+   */
+  @IsString()
+  @IsOptional()
+  SCRAPE_DO_TOKEN?: string;
+
   /** Playwright BCP 47 locale (avoids wrong storefront HTML e.g. ko-KR vs en-US) */
   @IsString()
   @IsOptional()
@@ -282,7 +291,12 @@ class EnvironmentVariables {
   @IsOptional()
   SCRAPE_IGNORE_HTTPS_ERRORS?: string;
 
-  /** `true` / `1` — after adapter scrape, normalize pricing/variants via OpenRouter (requires OPEN_ROUTER_ENABLED + key) */
+  /** `false` / `0` — disable LLM scrape refinement even when a provider is configured. Defaults to ON whenever LLM_PROVIDER is available. */
+  @IsString()
+  @IsOptional()
+  SCRAPE_LLM_REFINE?: string;
+
+  /** @deprecated Renamed to SCRAPE_LLM_REFINE — still accepted for backward compat. */
   @IsString()
   @IsOptional()
   SCRAPE_OPENROUTER_REFINE?: string;

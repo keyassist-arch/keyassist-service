@@ -82,16 +82,6 @@ export class PaymentService {
 
     const methods = [
       {
-        provider: PaymentProvider.PAYSTACK,
-        available:
-          paystackConfigured && !this.isDisabled('PAYMENT_DISABLE_PAYSTACK'),
-        reason: !paystackConfigured
-          ? 'not_configured'
-          : this.isDisabled('PAYMENT_DISABLE_PAYSTACK')
-            ? 'temporarily_disabled'
-            : null,
-      },
-      {
         provider: PaymentProvider.STRIPE,
         available:
           stripeConfigured && !this.isDisabled('PAYMENT_DISABLE_STRIPE'),
@@ -400,8 +390,10 @@ export class PaymentService {
       this.myazaConfig();
     const sessionUrl = this.myazaSessionUrl(baseUrl, sessionsPath);
     void dto;
-    const currency = (order.currency || '').trim().toUpperCase();
     const tokenUpper = token.trim().toUpperCase();
+    // Orders are always priced in USD — send USD as the local currency so Myaza
+    // converts against the correct base amount regardless of the user's locale.
+    const localCurrency = 'USD';
 
     const quoteChain =
       this.config.get<string>('MYAZA_QUOTE_CHAIN')?.trim() || chain;
@@ -412,17 +404,17 @@ export class PaymentService {
       quoteChain,
       token,
       order.total,
-      currency || 'USD',
+      localCurrency,
     );
     this.logger.log(
       `[payment] step=myaza_quote orderId=${order.id} chain=${quoteChain} ` +
-        `token=${token} localAmount=${order.total} localCurrency=${currency || 'USD'} ` +
+        `token=${token} localAmount=${order.total} localCurrency=${localCurrency} ` +
         `quotedAmount=${quotedAmount ?? 'unavailable'}`,
     );
 
     const body: Record<string, unknown> = {
       localAmount: order.total,
-      localCurrency: currency || 'USD',
+      localCurrency,
       ...(quotedAmount ? { amount: quotedAmount } : {}),
       chain,
       token,
@@ -431,7 +423,7 @@ export class PaymentService {
     const headers = this.buildMyazaRequestHeaders(apiKey);
     this.logger.log(
       `[payment] step=myaza_init_request orderId=${order.id} userId=${userId} ` +
-        `url=${sessionUrl} orderCurrency=${currency || 'n/a'} token=${tokenUpper} ` +
+        `url=${sessionUrl} localCurrency=${localCurrency} token=${tokenUpper} ` +
         `body=${this.safeJson(body)}`,
     );
     let data: MyazaSessionResponse;

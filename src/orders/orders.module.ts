@@ -11,6 +11,7 @@ import { UsersModule } from '../users/users.module';
 import { QueuesModule } from '../jobs/queues.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { ShippingModule } from '../shipping/shipping.module';
+import { LandedCostModule } from '../landed-cost/landed-cost.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ShippingModule } from '../shipping/shipping.module';
     QueuesModule,
     RealtimeModule,
     ShippingModule,
+    LandedCostModule,
   ],
   providers: [OrdersService],
   controllers: [OrdersController],
