@@ -1,13 +1,386 @@
-discount calculations at checkout
-price correction
-shipping fee calculations
-Potential concerns worth knowing:
-  - These are mid-market rates — actual rates from Myaza's quote endpoint will differ (they apply their own FX margin, which is even
-  in their response: "fxMargin": "2.5"). This means the USD price stored in the DB may not exactly match what Myaza charges in
-  crypto.
-  - The 1-hour cache means prices can be up to an hour stale.
-  - If Redis is down and the CDN fetch fails, toUsd() catches the error, logs a warning, and falls back to the raw number — so a
-  ₦27,000 product would be stored as 27000.00 USD silently.
+Now I have the full picture. Let me check one more thing — how `sizeFitSections` looks on adult shoes with width options, since this product is kids only.Now I have everything I need. Here's the complete picture:
 
-  The Myaza quote handles the FX correctly on the payment side (it takes localAmount + localCurrency and returns the real crypto
-  equivalent), so the stored USD price is for display — the actual charge comes from the quote.
+---
+
+## What's actually in this Nike page
+
+This Jordan 4 has a **3-group fit structure** — the most important Nike-specific variant pattern:
+
+| Group | `groupLabel` | StyleColor | Price | Sizes |
+|---|---|---|---|---|
+| 0 | **Baby/Toddler** | II1270-001 | **$90** | 2C–10C (9 sizes) |
+| 1 | **Little Kids** | II1269-001 | **$105** | 10.5C–3Y (12 sizes) |
+| 2 | **Big Kids** | II1271-001 | **$165** | 3.5Y–7Y (8 sizes) |
+
+Each group is a **separate `styleColor`** (separate product URL), different price, different size range. `colorwayImages` confirms all 3 — each with `groupLabel`, `pdpUrl`, `squarishImg`. `selectedGroup` is just an index (`0`).
+
+`sizeFitSections` is empty here (kids product — no width). On adult Nike products it contains fit/width options like Regular/Wide/Extra Wide as separate entries with their own size lists. The `sizes[].label` format tells you the sizing system: `2C` (toddler), `10.5C` (little kids), `3.5Y` (big kids/youth), `M 10` (men's), `W 8` (women's).
+
+`prices` has: `currentPrice`, `initialPrice` (was-price when discounted), `discountPercentage`. This product has `discountPercentage: 0` (full price). On sale products `initialPrice > currentPrice`.
+
+---
+
+## Problems in your current adapter
+
+**Problem 1 — `productGroups` is a dict, not an array.**
+
+Your adapter never reads `productGroups` at all — but when it does, it'll crash. `group.products` is `{ "II1270-001": {...}, ... }` — an object keyed by styleColor — not `products[]`. Any loop over it as an array fails silently.
+
+**Problem 2 — The fit/group axis is completely missing.**
+
+Baby/Toddler at $90, Little Kids at $105, Big Kids at $165 are treated as separate unrelated products. A user pasting the Baby/Toddler URL gets `$90` and sizes `2C–10C` with no indication that bigger kids' versions exist at different prices. This is the most important Nike variant type.
+
+**Problem 3 — `findSelectedProduct` takes the wrong path.**
+
+Your fast-path checks `pageProps.initialState.selectedProduct` — but `initialState` is **empty `{}`** on this page. The data is at `pageProps.selectedProduct` directly (your second fast-path `p2`). That one works, but then `getColorwayImages()` reads `pageProps.colorwayImages` correctly. The `initialState` path is dead code for current Nike pages.
+
+**Problem 4 — `sizes[].skuId` is always null.**
+
+You do `configurationPrices[i].sku = s.skuId` but the field in the actual data is `s.merchSkuId`, not `s.skuId`. `skuId` doesn't exist — every configuration price gets `sku: undefined`.
+
+**Problem 5 — Discount not captured.**
+
+`prices.initialPrice` is the was-price (when `discountPercentage > 0`). `prices.discountPercentage` is the % off. Neither is read.
+
+**Problem 6 — `sizeFitSections` is empty here but matters on adult products.**
+
+On adult shoes/apparel with width options, `sizeFitSections` contains entries like:
+```json
+[
+  { "sectionType": "WIDTH", "label": "Regular", "sizes": [...] },
+  { "sectionType": "WIDTH", "label": "Wide", "sizes": [...] }
+]
+```
+Your adapter ignores this entirely. On this kids product it's empty, but it needs handling for adult pages.
+
+---
+
+## The fix
+
+### Step 1 — Extend interfaces
+
+```typescript
+interface NikeSize {
+  label: string;
+  localizedLabel?: string;
+  status?: string;
+  merchSkuId?: string;   // ← correct field name (not skuId)
+  gtins?: { gtin: string }[];
+  sortSequence?: number;
+}
+
+interface NikeSizeFitSection {
+  sectionType?: string;  // "WIDTH", "FIT", etc.
+  label?: string;        // "Regular", "Wide", "Slim", etc.
+  sizes?: NikeSize[];
+}
+
+interface NikeProductGroup {
+  groupLabel: string;    // "Baby/Toddler", "Little Kids", "Big Kids", "Men's", "Women's"
+  groupIndex: number;
+  products: Record<string, NikeSelectedProduct>;  // keyed by styleColor
+}
+
+interface NikePrices {
+  currency?: string;
+  currentPrice?: number;
+  initialPrice?: number;        // was-price when discounted
+  discountPercentage?: number;  // 0–100
+  employeePrice?: number;
+}
+
+// Add to NikeProductInfo:
+interface NikeProductInfo {
+  // ... existing fields ...
+  sizeFitSections?: NikeSizeFitSection[];
+}
+```
+
+### Step 2 — Fix `findSelectedProduct` and add `productGroups` extraction
+
+```typescript
+private findSelectedProduct(root: Record<string, unknown>): NikeSelectedProduct | null {
+  const get = (obj: unknown, ...keys: string[]): unknown => {
+    let cur = obj;
+    for (const k of keys) {
+      if (cur == null || typeof cur !== 'object') return undefined;
+      cur = (cur as Record<string, unknown>)[k];
+    }
+    return cur;
+  };
+
+  // Primary path on current Nike pages — pageProps.selectedProduct
+  const p1 = get(root, 'props', 'pageProps', 'selectedProduct');
+  if (this.looksLikeSelectedProduct(p1)) return p1 as NikeSelectedProduct;
+
+  // Legacy path (older Nike builds)
+  const p2 = get(root, 'props', 'pageProps', 'initialState', 'selectedProduct');
+  if (this.looksLikeSelectedProduct(p2)) return p2 as NikeSelectedProduct;
+
+  // Deep fallback
+  return this.deepFind(root, 0);
+}
+
+private extractProductGroups(root: Record<string, unknown>): NikeProductGroup[] {
+  const raw = (root?.props as any)?.pageProps?.productGroups;
+  if (!Array.isArray(raw)) return [];
+  return raw as NikeProductGroup[];
+}
+```
+
+### Step 3 — Build the group/fit variant axis
+
+```typescript
+private buildGroupVariants(
+  groups: NikeProductGroup[],
+  selectedStyleColor: string,
+): {
+  groupVariant: { name: string; options: string[] } | null;
+  groupConfigPrices: ProductConfigurationPrice[];
+} {
+  if (groups.length <= 1) return { groupVariant: null, groupConfigPrices: [] };
+
+  const options: string[] = [];
+  const groupConfigPrices: ProductConfigurationPrice[] = [];
+
+  for (const group of groups) {
+    const label = group.groupLabel;  // "Baby/Toddler", "Little Kids", "Big Kids"
+    options.push(label);
+
+    // Each group's products is a dict — grab the first (usually one per group)
+    const prods = Object.values(group.products ?? {});
+    if (!prods.length) continue;
+
+    const prod = prods[0] as NikeSelectedProduct;
+    const price = prod.prices?.currentPrice;
+    const styleColor = prod.styleColor ?? '';
+
+    if (price == null) continue;
+
+    groupConfigPrices.push({
+      label,
+      originalPrice: price.toFixed(2),
+      sku: styleColor,
+      variantAxis: 'Fit',
+      optionValue: label,
+      variantSelections: { Fit: label },
+      available: true,
+      currency: prod.prices?.currency ?? 'USD',
+      metadata: {
+        source: 'nike-group',
+        styleColor,
+        pdpUrl: `https://www.nike.com/t/${styleColor}`,
+        isSelectedGroup: styleColor === selectedStyleColor,
+      },
+    });
+  }
+
+  return {
+    groupVariant: options.length > 1 ? { name: 'Fit', options } : null,
+    groupConfigPrices,
+  };
+}
+```
+
+### Step 4 — Build width/fit variants from `sizeFitSections`
+
+```typescript
+private buildFitSectionVariants(
+  sizeFitSections: NikeSizeFitSection[],
+  basePriceStr: string,
+  currency: string,
+): {
+  fitVariant: { name: string; options: string[] } | null;
+  fitConfigPrices: ProductConfigurationPrice[];
+  allSizes: NikeSize[];
+} {
+  if (!sizeFitSections?.length) {
+    return { fitVariant: null, fitConfigPrices: [], allSizes: [] };
+  }
+
+  const options = sizeFitSections.map(s => s.label ?? '').filter(Boolean);
+  const fitConfigPrices: ProductConfigurationPrice[] = [];
+  const allSizes: NikeSize[] = [];
+
+  for (const section of sizeFitSections) {
+    const fitLabel = section.label ?? section.sectionType ?? 'Standard';
+    const sizes = section.sizes ?? [];
+    allSizes.push(...sizes);
+
+    for (const sz of sizes) {
+      fitConfigPrices.push({
+        label: `${fitLabel} / ${sz.label}`,
+        originalPrice: basePriceStr,
+        sku: sz.merchSkuId,
+        variantAxis: 'Size',
+        optionValue: sz.label,
+        variantSelections: { Fit: fitLabel, Size: sz.label },
+        available: sz.status === 'ACTIVE',
+        currency,
+        metadata: {
+          source: 'nike-fit-section',
+          gtin: sz.gtins?.[0]?.gtin,
+          fitType: section.sectionType,
+        },
+      });
+    }
+  }
+
+  return {
+    fitVariant: options.length > 1 ? { name: 'Width', options } : null,
+    fitConfigPrices,
+    allSizes,
+  };
+}
+```
+
+### Step 5 — Rewrite `parseNextData()` to wire everything together
+
+```typescript
+private parseNextData(raw: NikeRawData): ScrapedProduct | null {
+  if (!raw.nextDataJson) return null;
+  let root: Record<string, unknown>;
+  try { root = JSON.parse(raw.nextDataJson) as Record<string, unknown>; }
+  catch { return null; }
+
+  const selected = this.findSelectedProduct(root);
+  if (!selected) return null;
+
+  // ── Price ──────────────────────────────────────────────────────────────
+  const prices = selected.prices;
+  const currency = prices?.currency ?? 'USD';
+  const currentPrice = prices?.currentPrice;
+  if (!currentPrice) return null;
+  const priceStr = currentPrice.toFixed(2);
+
+  // Discount (initialPrice > currentPrice means on sale)
+  const initialPrice = prices?.initialPrice;
+  const originalPrice =
+    initialPrice && initialPrice > currentPrice
+      ? initialPrice.toFixed(2)
+      : undefined;
+  const discountPercent = prices?.discountPercentage
+    ? `${prices.discountPercentage}% off`
+    : undefined;
+
+  // ── Title ──────────────────────────────────────────────────────────────
+  const info = selected.productInfo;
+  const title = info?.fullTitle || info?.title || raw.titleFallback || 'Nike Product';
+
+  // ── Images ─────────────────────────────────────────────────────────────
+  const colorwayImages = this.getColorwayImages(root);
+  const images = this.extractImages(selected.contentImages, colorwayImages, raw.ogImage);
+
+  // ── Description ────────────────────────────────────────────────────────
+  const descParts: string[] = [];
+  if (info?.productDescription?.trim()) descParts.push(info.productDescription.trim());
+  if (info?.featuresAndBenefits?.length) descParts.push(info.featuresAndBenefits.join('\n'));
+  if (selected.fitRecommendationMessage?.trim()) {
+    descParts.push(`Fit: ${selected.fitRecommendationMessage.trim()}`);
+  }
+
+  // ── Groups (Baby/Toddler, Little Kids, Big Kids / Men's, Women's) ──────
+  const groups = this.extractProductGroups(root);
+  const { groupVariant, groupConfigPrices } = this.buildGroupVariants(
+    groups, selected.styleColor ?? '',
+  );
+
+  // ── Width/Fit sections (Regular, Wide, X-Wide — adult products) ─────────
+  const sizeFitSections = info?.sizeFitSections ?? [];
+  const { fitVariant, fitConfigPrices, allSizes: fitSectionSizes } =
+    this.buildFitSectionVariants(sizeFitSections, priceStr, currency);
+
+  // ── Sizes (flat — when no sizeFitSections) ─────────────────────────────
+  const flatSizes = sizeFitSections.length === 0 ? (selected.sizes ?? []) : fitSectionSizes;
+
+  const sizeOptions = flatSizes.map(s => s.label).filter(Boolean);
+
+  // ── Build configurationPrices ──────────────────────────────────────────
+  // Priority: groupConfigPrices (multi-group products) wins;
+  // fitConfigPrices (width sections) comes second;
+  // flat per-size prices are the default.
+  let configurationPrices: ProductConfigurationPrice[];
+
+  if (groupConfigPrices.length > 0) {
+    // Multi-fit product: group-level prices + per-size within selected group
+    const selectedSizeConfigs = flatSizes.map(s => ({
+      label: s.label,
+      originalPrice: priceStr,
+      sku: s.merchSkuId,          // ← fixed: was s.skuId
+      variantAxis: 'Size',
+      optionValue: s.label,
+      variantSelections: { Size: s.label },
+      available: s.status === 'ACTIVE',
+      currency,
+      metadata: {
+        source: 'nike-size',
+        gtin: s.gtins?.[0]?.gtin,
+      },
+    }));
+    configurationPrices = [...groupConfigPrices, ...selectedSizeConfigs];
+  } else if (fitConfigPrices.length > 0) {
+    configurationPrices = fitConfigPrices;
+  } else {
+    configurationPrices = flatSizes.map(s => ({
+      label: s.label,
+      originalPrice: priceStr,
+      sku: s.merchSkuId,
+      variantAxis: 'Size',
+      optionValue: s.label,
+      variantSelections: { Size: s.label },
+      available: s.status === 'ACTIVE',
+      currency,
+      metadata: { source: 'nike-size', gtin: s.gtins?.[0]?.gtin },
+    }));
+  }
+
+  // ── Variants (axes for the UI selectors) ───────────────────────────────
+  const variants: { name: string; options: string[] }[] = [];
+
+  if (groupVariant) variants.push(groupVariant);  // Fit: Baby/Toddler | Little Kids | Big Kids
+  if (fitVariant) variants.push(fitVariant);       // Width: Regular | Wide
+  if (sizeOptions.length) variants.push({ name: 'Size', options: sizeOptions });
+  if (selected.colorDescription) {
+    variants.push({ name: 'Color', options: [selected.colorDescription] });
+  }
+
+  // ── Availability ───────────────────────────────────────────────────────
+  const statusMod = selected.statusModifier ?? '';
+  const availability = statusMod.includes('BUYABLE') ? 'In Stock' : 'Out of Stock';
+
+  return {
+    title,
+    price: priceStr,
+    currency,
+    originalPrice,        // ← discount: was-price
+    discount: discountPercent,
+    images,
+    description: descParts.join('\n\n') || undefined,
+    brand: 'Nike',
+    asin: selected.styleColor,
+    variants,
+    configurationPrices: configurationPrices.length ? configurationPrices : undefined,
+    availability,
+  };
+}
+```
+
+---
+
+## What your UI gets from this product
+
+```
+Fit axis (variant): Baby/Toddler ($90) | Little Kids ($105) | Big Kids ($165)
+  └── configurationPrices with group-level prices + pdpUrl per group
+  └── Size axis (within selected fit): 2C, 3C, 4C, 5C, 6C, 7C, 8C, 9C, 10C
+      └── each with sku (merchSkuId), gtin, availability
+```
+
+For adult products with width options:
+```
+Width axis (variant): Regular | Wide
+  └── Size axis: M 7, M 7.5... (Regular) / M 7, M 7.5... (Wide)
+      └── each with fitSelections: { Width: "Regular", Size: "M 10" }
+```
+
+All 6 adapters done. Want me to now produce the unified `ScrapedProduct` interface that consolidates `originalPrice`, `discount`, `savingsAmount`, `dealType`, and the `configurationPrices` shape across all of them?

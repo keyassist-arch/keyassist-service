@@ -19,6 +19,12 @@ type RawEbayData = {
   ldPriceFallback?: string;
   /** DOM microdata price — least reliable, can be an auction current bid. */
   domPrice?: string;
+  /** Was/list/original price from offer.priceSpecification or DOM strikethrough. */
+  listPrice?: string;
+  /** Savings percentage label, e.g. "60% off". */
+  discountPercent?: string;
+  /** Shipping cost from offer.shippingDetails[0].shippingRate.value. */
+  shippingCost?: string;
   images: string[];
   conditionLabel?: string;
 };
@@ -51,6 +57,19 @@ function findProductNode(node: unknown): Record<string, unknown> | null {
   return null;
 }
 
+/** Convert schema.org condition URLs to human labels, e.g. "https://schema.org/RefurbishedCondition" → "Refurbished". */
+function normaliseEbayCondition(raw: string): string {
+  const map: Record<string, string> = {
+    NewCondition: 'New',
+    UsedCondition: 'Used',
+    RefurbishedCondition: 'Refurbished',
+    DamagedCondition: 'Damaged',
+    OpenBoxCondition: 'Open Box',
+  };
+  const key = raw.split('/').pop() ?? raw;
+  return map[key] ?? key.replace(/Condition$/, '').replace(/([A-Z])/g, ' $1').trim();
+}
+
 /** Parse the JSON-LD `offers` list and populate price/currency/condition fields. */
 function applyOffers(
   offerList: Record<string, unknown>[],
@@ -70,16 +89,38 @@ function applyOffers(
       }) ?? null;
   }
 
+  const activeOffer = matchedOffer ?? (offerList.length > 0 ? offerList[0] : null);
+  if (!activeOffer) return;
+
   if (matchedOffer) {
     if (matchedOffer.price != null) result.ldPriceMatched = String(matchedOffer.price);
     if (matchedOffer.priceCurrency != null) result.currency = String(matchedOffer.priceCurrency);
-    if (matchedOffer.itemCondition != null) result.conditionLabel = String(matchedOffer.itemCondition);
-  } else if (offerList.length > 0) {
+    if (matchedOffer.itemCondition != null)
+      result.conditionLabel = normaliseEbayCondition(String(matchedOffer.itemCondition));
+  } else {
     const first = offerList[0];
     if (first.price != null) result.ldPriceFallback = String(first.price);
     if (!result.currency && first.priceCurrency != null) result.currency = String(first.priceCurrency);
-    if (!result.conditionLabel && first.itemCondition != null) result.conditionLabel = String(first.itemCondition);
+    if (!result.conditionLabel && first.itemCondition != null)
+      result.conditionLabel = normaliseEbayCondition(String(first.itemCondition));
   }
+
+  // priceSpecification holds the was/list price (eBay labels it "List Price").
+  const ps = activeOffer.priceSpecification as Record<string, unknown> | undefined;
+  if (ps && typeof ps === 'object' && ps.price != null) {
+    const psName = String(ps.name ?? '').toLowerCase();
+    if (psName.includes('list') || psName.includes('was') || psName.includes('original')) {
+      result.listPrice = String(ps.price);
+    }
+  }
+
+  // Shipping cost from first shippingDetails entry.
+  const shippingDetails = activeOffer.shippingDetails;
+  const shipping = Array.isArray(shippingDetails)
+    ? (shippingDetails as Record<string, unknown>[])[0]
+    : (shippingDetails as Record<string, unknown> | undefined);
+  const shippingRate = shipping?.shippingRate as Record<string, unknown> | undefined;
+  if (shippingRate?.value != null) result.shippingCost = String(shippingRate.value);
 }
 
 // ─── server-side HTML parser (used by the scrape.do path) ────────────────────
@@ -157,6 +198,20 @@ function parseEbayHtml(html: string, iid: string | null): RawEbayData | null {
     while ((m = imgRe.exec(html)) !== null && result.images.length < 24) {
       result.images.push(m[1]);
     }
+  }
+
+  // List price from strikethrough span (DOM fallback when priceSpecification absent).
+  if (!result.listPrice) {
+    const strikeMatch = html.match(
+      /ux-textspans--STRIKETHROUGH[^>]*>\s*(?:US\s*)?([\$£€][\d,]+(?:\.\d{1,2})?)/,
+    );
+    if (strikeMatch) result.listPrice = strikeMatch[1];
+  }
+
+  // Discount percentage from transparency block.
+  if (!result.discountPercent) {
+    const discountMatch = html.match(/\((\d+%\s*off)\)/i);
+    if (discountMatch) result.discountPercent = discountMatch[1];
   }
 
   // DOM price from [itemprop="price"] content attribute
@@ -337,6 +392,12 @@ export class EbayAdapter implements ScraperAdapter {
               ? [offersRaw as Record<string, unknown>]
               : [];
 
+          const _normaliseCondition = (raw: string): string => {
+            const map: Record<string, string> = { NewCondition: 'New', UsedCondition: 'Used', RefurbishedCondition: 'Refurbished', DamagedCondition: 'Damaged', OpenBoxCondition: 'Open Box' };
+            const key = raw.split('/').pop() ?? raw;
+            return map[key] ?? key.replace(/Condition$/, '').replace(/([A-Z])/g, ' $1').trim();
+          };
+
           let matchedOffer: Record<string, unknown> | null = null;
           if (iid) {
             matchedOffer =
@@ -346,15 +407,31 @@ export class EbayAdapter implements ScraperAdapter {
                 catch { return offerUrl.includes(`iid=${iid}`); }
               }) ?? null;
           }
+          const activeOffer = matchedOffer ?? (offerList.length > 0 ? offerList[0] : null);
           if (matchedOffer) {
             if (matchedOffer.price != null) result.ldPriceMatched = String(matchedOffer.price);
             if (matchedOffer.priceCurrency != null) result.currency = String(matchedOffer.priceCurrency);
-            if (matchedOffer.itemCondition != null) result.conditionLabel = String(matchedOffer.itemCondition);
+            if (matchedOffer.itemCondition != null) result.conditionLabel = _normaliseCondition(String(matchedOffer.itemCondition));
           } else if (offerList.length > 0) {
             const first = offerList[0];
             if (first.price != null) result.ldPriceFallback = String(first.price);
             if (!result.currency && first.priceCurrency != null) result.currency = String(first.priceCurrency);
-            if (!result.conditionLabel && first.itemCondition != null) result.conditionLabel = String(first.itemCondition);
+            if (!result.conditionLabel && first.itemCondition != null) result.conditionLabel = _normaliseCondition(String(first.itemCondition));
+          }
+          if (activeOffer) {
+            const ps = activeOffer.priceSpecification as Record<string, unknown> | undefined;
+            if (ps && typeof ps === 'object' && ps.price != null) {
+              const psName = String(ps.name ?? '').toLowerCase();
+              if (psName.includes('list') || psName.includes('was') || psName.includes('original')) {
+                result.listPrice = String(ps.price);
+              }
+            }
+            const shippingDetails = activeOffer.shippingDetails;
+            const shipping = Array.isArray(shippingDetails)
+              ? (shippingDetails as Record<string, unknown>[])[0]
+              : (shippingDetails as Record<string, unknown> | undefined);
+            const shippingRate = shipping?.shippingRate as Record<string, unknown> | undefined;
+            if (shippingRate?.value != null) result.shippingCost = String(shippingRate.value);
           }
         }
 
@@ -409,6 +486,25 @@ export class EbayAdapter implements ScraperAdapter {
           if (cur) result.currency = cur;
         }
 
+        // List price from strikethrough span.
+        if (!result.listPrice) {
+          const strikeEl = document.querySelector('.ux-textspans--STRIKETHROUGH');
+          if (strikeEl) {
+            const t = strikeEl.textContent?.trim() ?? '';
+            const m = t.match(/([\d,]+(?:\.\d{1,2})?)/);
+            if (m) result.listPrice = m[1].replace(/,/g, '');
+          }
+        }
+
+        // Discount percentage from transparency block.
+        if (!result.discountPercent) {
+          const discountEl = document.querySelector('.x-price-transparency--discount');
+          if (discountEl) {
+            const m = discountEl.textContent?.match(/\((\d+%\s*off)\)/i);
+            if (m) result.discountPercent = m[1];
+          }
+        }
+
         return result;
       }, pageIid);
 
@@ -448,21 +544,37 @@ export class EbayAdapter implements ScraperAdapter {
       return this.generic.scrape(url);
     }
 
-    const description =
-      data.conditionLabel && data.description
-        ? `${data.description}\n\nCondition: ${data.conditionLabel}`
-        : (data.description ?? data.conditionLabel);
+    const listPriceNormalized = data.listPrice
+      ? parsePriceToDecimalString(data.listPrice)
+      : undefined;
+
+    const saleNum = parseFloat(normalizedPrice);
+    const listNum = listPriceNormalized ? parseFloat(listPriceNormalized) : 0;
+    const savingsAmount =
+      listNum > saleNum ? (listNum - saleNum).toFixed(2) : undefined;
+
+    const currency = (data.currency || 'USD').toUpperCase();
+
+    const descParts: string[] = [];
+    if (data.description) descParts.push(data.description);
+    if (data.conditionLabel) descParts.push(`Condition: ${data.conditionLabel}`);
+    if (data.shippingCost) descParts.push(`Shipping: ${currency} ${data.shippingCost}`);
 
     this.logger.log(
-      `[ebay] url=${url} title="${data.title}" price=${normalizedPrice}`,
+      `[ebay] url=${url} title="${data.title}" price=${normalizedPrice}` +
+        `${listPriceNormalized ? ` listPrice=${listPriceNormalized}` : ''}` +
+        `${data.discountPercent ? ` discount=${data.discountPercent}` : ''}`,
     );
 
     return {
       title: data.title,
       price: normalizedPrice,
-      currency: (data.currency || 'USD').toUpperCase(),
+      currency,
+      compareAtPrice: listPriceNormalized ?? undefined,
+      discount: data.discountPercent,
+      savingsAmount,
       images: [...new Set(data.images)].slice(0, 24),
-      description,
+      description: descParts.join('\n\n') || undefined,
       brand: data.brand,
       variants: [],
     };

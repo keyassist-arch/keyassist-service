@@ -22,14 +22,25 @@ import { parsePriceToDecimalString } from '../utils/normalize-price.util';
  *    Alternatively set SCRAPE_PROXY to any residential proxy and Playwright will use it.
  */
 
+interface StockxVariant {
+  id: string;
+  sizeUS: string;
+  sizeEU: string;
+  sizeUK: string;
+  upc: string;
+}
+
 type StockxExtracted = {
   title?: string;
   brand?: string;
   description?: string;
+  styleId?: string;
+  colorway?: string;
+  releaseDate?: string;
   retailPrice?: string;
   lowestAskRaw?: string;
   images: string[];
-  sizes: string[];
+  variants: StockxVariant[];
 };
 
 function parseNextDataFromHtml(html: string): StockxExtracted | null {
@@ -45,9 +56,10 @@ function parseNextDataFromHtml(html: string): StockxExtracted | null {
     const product = productQuery?.state?.data?.product as Record<string, unknown> | undefined;
     if (!product?.title) return null;
 
-    const result: StockxExtracted = { images: [], sizes: [] };
+    const result: StockxExtracted = { images: [], variants: [] };
     result.title = typeof product.title === 'string' ? product.title : undefined;
     result.brand = typeof product.brand === 'string' ? product.brand : undefined;
+    result.styleId = typeof product.styleId === 'string' ? product.styleId : undefined;
     if (typeof product.description === 'string') {
       result.description = product.description
         .replace(/<[^>]+>/g, ' ')
@@ -55,27 +67,51 @@ function parseNextDataFromHtml(html: string): StockxExtracted | null {
         .trim();
     }
 
+    // Images — deduplicate and bump to 1200px wide for hi-res display.
+    const seenImgs = new Set<string>();
+    const addImage = (u: unknown) => {
+      if (typeof u !== 'string' || !u.startsWith('http')) return;
+      const hi = u.replace(/([?&])w=\d+/, '$1w=1200');
+      if (!seenImgs.has(hi)) { seenImgs.add(hi); result.images.push(hi); }
+    };
     const media = product.media as Record<string, unknown> | undefined;
     if (media) {
-      if (typeof media.imageUrl === 'string') result.images.push(media.imageUrl);
-      if (typeof media.smallImageUrl === 'string') result.images.push(media.smallImageUrl);
+      addImage(media.imageUrl);
+      addImage(media.smallImageUrl);
       const gallery = Array.isArray(media.gallery) ? (media.gallery as any[]) : [];
-      for (const g of gallery.slice(0, 6)) {
-        if (typeof g === 'string') result.images.push(g);
-        else if (g?.url && typeof g.url === 'string') result.images.push(g.url as string);
+      for (const g of gallery.slice(0, 8)) {
+        addImage(typeof g === 'string' ? g : g?.url);
       }
     }
 
+    // Traits — retail price, colorway, release date.
     const traits = Array.isArray(product.traits) ? (product.traits as any[]) : [];
-    const retailTrait = traits.find(
-      (t: any) => t?.name === 'Retail Price' && t?.format === 'currency',
-    );
-    if (retailTrait?.value) result.retailPrice = String(retailTrait.value);
+    const getTrait = (name: string) => traits.find((t: any) => t?.name === name)?.value;
+    const retailVal = getTrait('Retail Price');
+    if (retailVal != null) result.retailPrice = String(retailVal);
+    const colorway = getTrait('Colorway');
+    if (colorway != null) result.colorway = String(colorway);
+    const releaseDate = getTrait('Release Date');
+    if (releaseDate != null) result.releaseDate = String(releaseDate);
 
-    const variants = Array.isArray(product.variants) ? (product.variants as any[]) : [];
-    for (const v of variants) {
-      const size = v?.traits?.size;
-      if (size != null) result.sizes.push(`US ${size}`);
+    // Variants — full size conversions (EU, UK) and UPC per variant.
+    const rawVariants = Array.isArray(product.variants) ? (product.variants as any[]) : [];
+    for (const v of rawVariants) {
+      if (v?.hidden) continue;
+      const sizeUS = v?.traits?.size != null ? String(v.traits.size) : null;
+      if (!sizeUS) continue;
+      const displayOptions: any[] = v?.sizeChart?.displayOptions ?? [];
+      const getDisplay = (type: string) =>
+        displayOptions.find((d: any) => d.type === type)?.size ?? '';
+      const upc =
+        (v?.gtins ?? []).find((g: any) => g?.type === 'UPC')?.identifier ?? '';
+      result.variants.push({
+        id: String(v.id ?? ''),
+        sizeUS,
+        sizeEU: getDisplay('eu'),
+        sizeUK: getDisplay('uk'),
+        upc,
+      });
     }
 
     return result;
@@ -188,11 +224,18 @@ export class StockxAdapter implements ScraperAdapter {
         .catch(() => undefined);
 
       const extracted = await page.evaluate((): StockxExtracted => {
-        const result: StockxExtracted = { images: [], sizes: [] };
+        const result: StockxExtracted = { images: [], variants: [] };
 
         const metaContent = (sel: string): string | undefined => {
           const el = document.querySelector(sel) as HTMLMetaElement | null;
           return el?.content?.trim() || undefined;
+        };
+
+        const seenImgs = new Set<string>();
+        const addImage = (u: string | undefined) => {
+          if (!u || !u.startsWith('http')) return;
+          const hi = u.replace(/([?&])w=\d+/, '$1w=1200');
+          if (!seenImgs.has(hi)) { seenImgs.add(hi); result.images.push(hi); }
         };
 
         const nextDataEl = document.getElementById('__NEXT_DATA__');
@@ -211,6 +254,7 @@ export class StockxAdapter implements ScraperAdapter {
             if (product) {
               if (typeof product.title === 'string') result.title = product.title;
               if (typeof product.brand === 'string') result.brand = product.brand;
+              if (typeof product.styleId === 'string') result.styleId = product.styleId;
               if (typeof product.description === 'string') {
                 result.description = (product.description as string)
                   .replace(/<[^>]+>/g, ' ')
@@ -219,25 +263,38 @@ export class StockxAdapter implements ScraperAdapter {
               }
               const media = product.media as Record<string, unknown> | undefined;
               if (media) {
-                if (typeof media.imageUrl === 'string') result.images.push(media.imageUrl);
-                if (typeof media.smallImageUrl === 'string')
-                  result.images.push(media.smallImageUrl);
+                addImage(media.imageUrl as string);
+                addImage(media.smallImageUrl as string);
                 const gallery = Array.isArray(media.gallery) ? (media.gallery as any[]) : [];
-                for (const g of gallery.slice(0, 6)) {
-                  if (typeof g === 'string') result.images.push(g);
-                  else if (g?.url && typeof g.url === 'string')
-                    result.images.push(g.url as string);
+                for (const g of gallery.slice(0, 8)) {
+                  addImage(typeof g === 'string' ? g : g?.url);
                 }
               }
               const traits = Array.isArray(product.traits) ? (product.traits as any[]) : [];
-              const retailTrait = traits.find(
-                (t: any) => t?.name === 'Retail Price' && t?.format === 'currency',
-              );
-              if (retailTrait?.value) result.retailPrice = String(retailTrait.value);
-              const variants = Array.isArray(product.variants) ? (product.variants as any[]) : [];
-              for (const v of variants) {
-                const size = v?.traits?.size;
-                if (size != null) result.sizes.push(`US ${size}`);
+              const getTrait = (name: string) => traits.find((t: any) => t?.name === name)?.value;
+              const retailVal = getTrait('Retail Price');
+              if (retailVal != null) result.retailPrice = String(retailVal);
+              const colorway = getTrait('Colorway');
+              if (colorway != null) result.colorway = String(colorway);
+              const releaseDate = getTrait('Release Date');
+              if (releaseDate != null) result.releaseDate = String(releaseDate);
+              const rawVariants = Array.isArray(product.variants) ? (product.variants as any[]) : [];
+              for (const v of rawVariants) {
+                if (v?.hidden) continue;
+                const sizeUS = v?.traits?.size != null ? String(v.traits.size) : null;
+                if (!sizeUS) continue;
+                const displayOptions: any[] = v?.sizeChart?.displayOptions ?? [];
+                const getDisplay = (type: string) =>
+                  displayOptions.find((d: any) => d.type === type)?.size ?? '';
+                const upc =
+                  (v?.gtins ?? []).find((g: any) => g?.type === 'UPC')?.identifier ?? '';
+                result.variants.push({
+                  id: String(v.id ?? ''),
+                  sizeUS,
+                  sizeEU: getDisplay('eu'),
+                  sizeUK: getDisplay('uk'),
+                  upc,
+                });
               }
             }
           } catch {
@@ -253,11 +310,11 @@ export class StockxAdapter implements ScraperAdapter {
         }
         if (!result.description) {
           result.description =
-            metaContent('meta[name="description"]') || metaContent('meta[property="og:description"]');
+            metaContent('meta[name="description"]') ||
+            metaContent('meta[property="og:description"]');
         }
         if (!result.images.length) {
-          const ogImage = metaContent('meta[property="og:image"]');
-          if (ogImage) result.images.push(ogImage);
+          addImage(metaContent('meta[property="og:image"]'));
         }
         return result;
       });
@@ -323,33 +380,85 @@ export class StockxAdapter implements ScraperAdapter {
       return this.generic.scrape(url);
     }
 
-    const priceSource = extracted.lowestAskRaw ? 'lowestAsk' : 'retailPrice';
-    const priceRaw = extracted.lowestAskRaw ?? (extracted.retailPrice ? `$${extracted.retailPrice}` : '');
-    const normalizedPrice = parsePriceToDecimalString(priceRaw);
+    const retailPriceStr = extracted.retailPrice
+      ? parsePriceToDecimalString(`$${extracted.retailPrice}`)
+      : null;
+    const livePrice = extracted.lowestAskRaw
+      ? parsePriceToDecimalString(extracted.lowestAskRaw)
+      : null;
 
-    if (!normalizedPrice) {
+    // Live lowest ask when available; retail price as reference-only fallback.
+    const displayPrice = livePrice ?? retailPriceStr;
+    if (!displayPrice) {
       this.logger.warn(`[stockx] no price — falling back to generic url=${url}`);
       return this.generic.scrape(url);
     }
 
-    const uniqueImages = [
-      ...new Set(extracted.images.filter((u) => /^https?:\/\//i.test(u))),
-    ].slice(0, 24);
+    const priceSource = livePrice ? 'lowest-ask' : 'retail-reference';
+
+    const images = extracted.images
+      .filter((u) => /^https?:\/\//i.test(u))
+      .slice(0, 24);
 
     this.logger.log(
-      `[stockx] url=${url} title="${extracted.title}" price=${normalizedPrice} ` +
-        `source=${priceSource} sizes=${extracted.sizes.length}`,
+      `[stockx] url=${url} title="${extracted.title}" price=${displayPrice} ` +
+        `source=${priceSource} variants=${extracted.variants.length}`,
     );
+
+    // One configurationPrices row per size variant.
+    // Per-size lowest asks are not in SSR HTML — mark priceNeedsLookup so
+    // the checkout layer knows to fetch live prices before presenting the buy flow.
+    const configurationPrices = extracted.variants.map((v) => {
+      const label = `US ${v.sizeUS}${v.sizeEU ? ` / ${v.sizeEU}` : ''}`;
+      return {
+        label,
+        originalPrice: displayPrice,
+        sku: v.upc || v.id,
+        variantAxis: 'Size',
+        optionValue: `US ${v.sizeUS}`,
+        available: true,
+        metadata: {
+          source: 'stockx',
+          variantId: v.id,
+          sizeUS: v.sizeUS,
+          sizeEU: v.sizeEU,
+          sizeUK: v.sizeUK,
+          upc: v.upc,
+          priceNeedsLookup: !livePrice,
+          priceSource,
+        },
+      };
+    });
+
+    const descParts: string[] = [];
+    if (extracted.description) descParts.push(extracted.description);
+    if (extracted.colorway) descParts.push(`Colorway: ${extracted.colorway}`);
+    if (extracted.styleId) descParts.push(`Style: ${extracted.styleId}`);
+    if (extracted.releaseDate) descParts.push(`Released: ${extracted.releaseDate}`);
+    if (retailPriceStr) descParts.push(`Retail Price: $${extracted.retailPrice}`);
+    if (priceSource === 'retail-reference') {
+      descParts.push(
+        'Note: Displayed price is retail/reference only. Live resale price requires real-time lookup.',
+      );
+    }
 
     return {
       title: extracted.title,
-      price: normalizedPrice,
+      price: displayPrice,
       currency: 'USD',
       brand: extracted.brand,
-      description: extracted.description,
-      images: uniqueImages,
+      description: descParts.join('\n\n') || undefined,
+      images,
       availability: 'in_stock',
-      variants: extracted.sizes.length ? [{ name: 'Size', options: extracted.sizes }] : [],
+      variants: extracted.variants.length
+        ? [{ name: 'Size', options: extracted.variants.map((v) => `US ${v.sizeUS}`) }]
+        : [],
+      configurationPrices: configurationPrices.length ? configurationPrices : undefined,
+      metadata: {
+        styleId: extracted.styleId,
+        retailPrice: retailPriceStr,
+        priceSource,
+      },
     };
   }
 }

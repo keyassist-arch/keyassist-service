@@ -98,6 +98,13 @@ export class ProductsService {
       variants: scraped.variants ?? [],
       configurationPrices,
       availability: scraped.availability ?? null,
+      compareAtPrice: scraped.compareAtPrice
+        ? (parsePriceToDecimalString(scraped.compareAtPrice) ?? null)
+        : null,
+      discount: scraped.discount ?? null,
+      savingsAmount: scraped.savingsAmount ?? null,
+      dealType: scraped.dealType ?? null,
+      metadata: scraped.metadata ?? null,
       lastScrapedAt: new Date(),
       lastVerifiedAt: new Date(),
     };
@@ -489,6 +496,11 @@ export class ProductsService {
         };
       }),
       availability: p.availability,
+      compareAtPrice: p.compareAtPrice ?? null,
+      discount: p.discount ?? null,
+      savingsAmount: p.savingsAmount ?? null,
+      dealType: p.dealType ?? null,
+      metadata: p.metadata ?? null,
       stockQuantity: p.stockQuantity,
       lastScrapedAt: p.lastScrapedAt,
       lastVerifiedAt: p.lastVerifiedAt,

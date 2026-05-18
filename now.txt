@@ -1,3 +1,4 @@
 1. how do we handle discounted products on the platforms
 2. what's your relationship with kingz logistics, is there a way to move to a more robust shipping company so we accurately calculate shipping before checkout
 3. what's the average shipping fee from marketplace to warehouse you've paid for before (lowest and highest)
+4. mark shien as manual import

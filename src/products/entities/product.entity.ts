@@ -109,6 +109,26 @@ export class Product {
   @Column({ name: 'configuration_prices', type: 'jsonb', default: [] })
   configurationPrices: ProductConfigurationPrice[];
 
+  /** Retailer "was" / list price when the PDP shows a markdown (e.g. eBay strike price). */
+  @Column({ name: 'compare_at_price', type: 'decimal', precision: 14, scale: 2, nullable: true })
+  compareAtPrice: string | null;
+
+  /** Savings percentage badge text, e.g. "-40%" or "60% off". */
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  discount: string | null;
+
+  /** Absolute savings amount as a decimal string, e.g. "1020.00". */
+  @Column({ name: 'savings_amount', type: 'decimal', precision: 14, scale: 2, nullable: true })
+  savingsAmount: string | null;
+
+  /** Promotional label, e.g. "Limited-time deal" or "Lightning Deal". */
+  @Column({ name: 'deal_type', type: 'varchar', length: 100, nullable: true })
+  dealType: string | null;
+
+  /** Adapter-specific extra data (e.g. Apple carrier→URL routing map). */
+  @Column({ type: 'jsonb', nullable: true })
+  metadata: Record<string, unknown> | null;
+
   @Column({ type: 'varchar', nullable: true })
   availability: string | null;
 

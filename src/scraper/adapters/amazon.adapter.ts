@@ -42,11 +42,20 @@ interface AmazonRawData {
   productSpecsJson: string;
   /** Seller/ship-from name from the buybox merchant block. */
   sellerName: string;
+  /** More reliable list price: reads .basisPrice .a-offscreen directly. */
+  listPriceClean: string;
+  /** Savings percentage badge text, e.g. "-40%". */
+  savingsPercent: string;
+  /** Promotional deal badge text, e.g. "Limited-time deal". */
+  dealBadge: string;
 }
 
 interface ParsedPrice {
   current: string;
   list: string | null;
+  savingsAmount: string | null;
+  savingsPercent: string | null;
+  dealType: string | null;
   isOnSale: boolean;
   currency: string;
 }
@@ -346,6 +355,30 @@ export class AmazonAdapter implements ScraperAdapter {
             ?.textContent?.trim() ||
           '';
 
+        // More reliable list price: reads the basisPrice offscreen span directly.
+        const listPriceClean =
+          document
+            .querySelector(
+              '.basisPrice .a-offscreen, .apex-basisprice-value .a-offscreen',
+            )
+            ?.textContent?.trim() ?? '';
+
+        // Savings percentage badge (e.g. "-40%").
+        const savingsPercent =
+          document
+            .querySelector('.savingsPercentage, .apex-savings-percentage')
+            ?.textContent?.trim() ?? '';
+
+        // Promotional deal badge (e.g. "Limited-time deal", "Lightning Deal").
+        const dealBadge =
+          document
+            .querySelector(
+              '.maple-banner__text, #deal-badge, .dealBadge, [data-csa-c-content-id="deal-badge"] span',
+            )
+            ?.textContent?.trim() ??
+          document.querySelector('.a-badge-text')?.textContent?.trim() ??
+          '';
+
         return {
           title,
           payPrice,
@@ -369,6 +402,9 @@ export class AmazonAdapter implements ScraperAdapter {
           reviewCount,
           productSpecsJson,
           sellerName,
+          listPriceClean,
+          savingsPercent,
+          dealBadge,
         };
       });
 
@@ -406,6 +442,9 @@ export class AmazonAdapter implements ScraperAdapter {
         title: raw.title,
         price: price.current,
         currency: price.currency,
+        compareAtPrice: price.list ?? undefined,
+        discount: price.savingsPercent ?? undefined,
+        dealType: price.dealType ?? undefined,
         images,
         description: description || undefined,
         brand,
@@ -480,19 +519,30 @@ export class AmazonAdapter implements ScraperAdapter {
       parsePriceToDecimalString(raw.ldPrice) ||
       parsePriceToDecimalString(raw.metaPrice);
 
-    const listStr = raw.listPrice
-      ? parsePriceToDecimalString(raw.listPrice)
-      : null;
+    // listPriceClean reads .a-offscreen directly and is more reliable on deal layouts.
+    const listStr =
+      parsePriceToDecimalString(raw.listPriceClean) ||
+      (raw.listPrice ? parsePriceToDecimalString(raw.listPrice) : null);
 
     const payNum = parseFloat(payStr ?? '0');
     const listNum = parseFloat(listStr ?? '0');
+
+    const savingsAmount =
+      listNum > 0 && payNum > 0 && listNum > payNum
+        ? (listNum - payNum).toFixed(2)
+        : null;
+
     const isOnSale =
       (!!listStr && listNum > payNum) ||
+      !!raw.savingsPercent ||
       (!!raw.savingsLabel && raw.savingsLabel.length > 0);
 
     return {
       current: payStr ?? '',
       list: isOnSale && listStr ? listStr : null,
+      savingsAmount,
+      savingsPercent: raw.savingsPercent || null,
+      dealType: raw.dealBadge || null,
       isOnSale,
       currency,
     };

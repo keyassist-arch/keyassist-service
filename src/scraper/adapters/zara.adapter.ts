@@ -61,6 +61,45 @@ interface ZaraNextData {
   };
 }
 
+// ─── Zara v2 (window.zara.appConfig) shapes ───────────────────────────────────
+
+interface ZaraV2Size {
+  id?: number;
+  name: string;
+  sku?: number;
+  price?: number;        // integer cents
+  availability?: string; // "in_stock" | "out_of_stock"
+}
+
+interface ZaraV2ColorXMedia {
+  kind?: string;
+  url?: string;
+  extraInfo?: { deliveryUrl?: string };
+}
+
+interface ZaraV2ColorPricing {
+  price?: { value?: number };
+  originalPrice?: { value?: number }; // present on sale items
+  salePrice?: { value?: number };
+}
+
+interface ZaraV2Color {
+  id?: string;
+  name?: string;
+  hexCode?: string;
+  price?: number;
+  priceUnavailable?: boolean;
+  sizes?: ZaraV2Size[];
+  xmedia?: ZaraV2ColorXMedia[];
+  pricing?: ZaraV2ColorPricing;
+}
+
+interface ZaraV2ProductDetail {
+  id?: number;
+  name?: string;
+  detail?: { colors?: ZaraV2Color[] };
+}
+
 const ZARA_CDN_BASE = 'https://static.zara.net';
 
 /**
@@ -515,6 +554,32 @@ async function writeZaraHtmlDebugFile(opts: {
   await writeFile(join(process.cwd(), 'zara.html'), doc, 'utf-8');
 }
 
+/**
+ * Extract product data from Zara v2 pages where product lives at
+ * `window.zara.appConfig` → `"product":{...}` instead of __NEXT_DATA__.
+ */
+function extractZaraV2Product(scripts: string[]): ZaraV2ProductDetail | null {
+  const needle = '"product":{"id":';
+  for (const script of scripts) {
+    const idx = script.indexOf(needle);
+    if (idx === -1) continue;
+    const braceStart = idx + '"product":'.length;
+    const parsed = parseJsonObjectAt(script, braceStart);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const p = parsed as ZaraV2ProductDetail;
+    if (p.name && p.detail?.colors?.length) return p;
+  }
+  return null;
+}
+
+function extractZaraV2Currency(scripts: string[]): string {
+  for (const script of scripts) {
+    const m = script.match(/"currency"\s*:\s*"([A-Z]{3})"/);
+    if (m) return m[1];
+  }
+  return 'EUR';
+}
+
 function resolveSelectedColor(colors: ZaraColor[], url: string): ZaraColor {
   const flagged = colors.find((c) => c.selected);
   if (flagged) return flagged;
@@ -624,6 +689,18 @@ export class ZaraAdapter implements ScraperAdapter {
 
       const scriptSources: string[] = [];
       if (bundle.nextText) scriptSources.push(bundle.nextText);
+
+      // Zara v2 pages (appConfig architecture) have no __NEXT_DATA__ at all.
+      // Product lives at window.zara.appConfig → "product":{"id":...} in a
+      // large data-compress inline script. Try this before the Next.js paths.
+      const v2Product = extractZaraV2Product(bundle.inlineScripts);
+      if (v2Product) {
+        const v2Currency = extractZaraV2Currency(bundle.inlineScripts);
+        return done(
+          this.buildFromZaraV2(v2Product, v2Currency, url),
+          'zara-v2-appconfig',
+        );
+      }
 
       let product = tryParseZaraJsonSources(scriptSources);
       if (!product) {
@@ -805,5 +882,117 @@ export class ZaraAdapter implements ScraperAdapter {
       }
       await context.close();
     }
+  }
+
+  /**
+   * Build a ScrapedProduct from Zara v2 appConfig data.
+   * v2 differs from Next.js pages: prices are integer cents on color.pricing,
+   * images come from xmedia[].extraInfo.deliveryUrl, and sizes carry per-size SKUs.
+   */
+  private buildFromZaraV2(
+    product: ZaraV2ProductDetail,
+    currency: string,
+    url: string,
+  ): ScrapedProduct {
+    const colors = product.detail?.colors ?? [];
+
+    // Pick selected color by URL v1 param (SKU prefix) or fall back to first.
+    let selectedColor = colors[0];
+    try {
+      const v1 = new URL(url).searchParams.get('v1');
+      if (v1) {
+        const matched = colors.find((c) =>
+          c.sizes?.some(
+            (s) => s.sku != null && String(s.sku).startsWith(v1),
+          ),
+        );
+        if (matched) selectedColor = matched;
+      }
+    } catch {
+      /* bad URL */
+    }
+
+    const priceCents =
+      selectedColor?.pricing?.price?.value ?? selectedColor?.price ?? null;
+    const originalCents =
+      selectedColor?.pricing?.originalPrice?.value ?? null;
+
+    const priceStr = priceCents != null ? zaraCentsToDecimal(priceCents) : null;
+    const comparePriceStr =
+      originalCents != null ? zaraCentsToDecimal(originalCents) : undefined;
+
+    if (!priceStr || !product.name) {
+      // Caller catches the generic fallback at the call site; shouldn't reach here.
+      return {
+        title: product.name ?? 'Unknown',
+        price: '0.00',
+        currency,
+        images: [],
+        brand: 'Zara',
+        variants: [],
+      };
+    }
+
+    // Images: xmedia deliveryUrl (v2 CDN path) — append ?w=1920 for hi-res.
+    const images: string[] = [];
+    const seenImgs = new Set<string>();
+    for (const media of selectedColor?.xmedia ?? []) {
+      if (media.kind === 'video') continue;
+      const raw = media.extraInfo?.deliveryUrl ?? media.url ?? '';
+      if (!raw) continue;
+      const imgUrl = raw.includes('?')
+        ? raw.replace(/([?&])w=\d+/, '$1w=1920')
+        : `${raw}?w=1920`;
+      if (!seenImgs.has(imgUrl)) {
+        seenImgs.add(imgUrl);
+        images.push(imgUrl);
+      }
+    }
+
+    const sizes = selectedColor?.sizes ?? [];
+
+    const configurationPrices = sizes.length
+      ? sizes.map((sz) => ({
+          label: sz.name,
+          originalPrice: zaraCentsToDecimal(sz.price ?? priceCents!),
+          sku: sz.sku != null ? String(sz.sku) : undefined,
+          variantAxis: 'Size',
+          optionValue: sz.name,
+          available: sz.availability === 'in_stock',
+          metadata: { source: 'zara-v2', sizeId: sz.id },
+        }))
+      : undefined;
+
+    const variants: ScrapedProduct['variants'] = [];
+    if (colors.length > 1) {
+      variants.push({
+        name: 'Color',
+        options: colors.map((c) => c.name ?? '').filter(Boolean),
+      });
+    }
+    if (sizes.length > 0) {
+      variants.push({
+        name: 'Size',
+        options: sizes.map((s) => s.name).filter(Boolean),
+      });
+    }
+
+    const availability = sizes.some((s) => s.availability === 'in_stock')
+      ? 'in_stock'
+      : sizes.length === 0
+        ? 'in_stock'
+        : 'out_of_stock';
+
+    return {
+      title: product.name.trim(),
+      price: priceStr,
+      currency: currency.toUpperCase().slice(0, 8),
+      compareAtPrice: comparePriceStr,
+      images: images.slice(0, 20),
+      brand: 'Zara',
+      variants,
+      configurationPrices,
+      availability,
+    };
   }
 }

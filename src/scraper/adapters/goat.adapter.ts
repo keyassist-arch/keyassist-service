@@ -225,6 +225,79 @@ function mergeGoatSizes(pt: GoatProductData): MergedGoatSize[] {
   });
 }
 
+/** Shape of GOAT's /product_variants/buy_bar_data XHR response */
+interface GoatBuyBarVariant {
+  size?: string | number;
+  sizeOption?: string | number;
+  lowestPriceCents?: number | { amount: number; currency?: string };
+  lowestAskCents?: number;
+  instantShipLowestPriceCents?: number;
+  available?: boolean;
+  inStock?: boolean;
+  currency?: string;
+}
+
+interface GoatBuyBarData {
+  productVariants?: GoatBuyBarVariant[];
+  variants?: GoatBuyBarVariant[];
+}
+
+/**
+ * After the XHR resolves, overlay per-size prices onto the merged size array.
+ * Matches by presentation string first, then by numeric sizeOption value.
+ */
+function mergeXhrPricesIntoSizes(
+  merged: MergedGoatSize[],
+  xhrData: GoatBuyBarData,
+): MergedGoatSize[] {
+  const variants = xhrData.productVariants ?? xhrData.variants ?? [];
+  if (!variants.length) return merged;
+
+  const byPresentation = new Map<string, GoatBuyBarVariant>();
+  const byNumeric = new Map<number, GoatBuyBarVariant>();
+
+  for (const v of variants) {
+    const sz = v.size ?? v.sizeOption;
+    if (sz != null) {
+      byPresentation.set(String(sz), v);
+      const n = Number(sz);
+      if (!Number.isNaN(n)) byNumeric.set(n, v);
+    }
+  }
+
+  return merged.map((m) => {
+    const variant =
+      byPresentation.get(m.presentation) ??
+      (m.value != null ? byNumeric.get(m.value) : undefined);
+    if (!variant) return m;
+
+    const raw =
+      variant.lowestPriceCents ??
+      variant.lowestAskCents ??
+      variant.instantShipLowestPriceCents;
+    let cents = m.cents;
+    let currency = m.currency;
+
+    if (typeof raw === 'number' && raw > 0) {
+      cents = raw;
+      if (variant.currency) currency = variant.currency.toUpperCase();
+    } else if (raw != null && typeof raw === 'object' && 'amount' in raw) {
+      const o = raw as { amount: number; currency?: string };
+      if (o.amount > 0) {
+        cents = o.amount;
+        if (o.currency) currency = o.currency.toUpperCase();
+      }
+    }
+
+    return {
+      ...m,
+      cents,
+      currency,
+      available: variant.available ?? variant.inStock ?? m.available,
+    };
+  });
+}
+
 /**
  * Template-level “from” price when per-size asks are missing.
  */
@@ -343,6 +416,18 @@ export class GoatAdapter implements ScraperAdapter {
     });
 
     try {
+      // Intercept GOAT's per-size pricing XHR before React fires it post-hydration.
+      // __NEXT_DATA__ only carries size labels; actual lowest asks come from this endpoint.
+      let goatBuyBarData: GoatBuyBarData | null = null;
+      await page.route('**/product_variants/buy_bar_data**', async (route) => {
+        try {
+          const response = await route.fetch();
+          goatBuyBarData = (await response.json()) as GoatBuyBarData;
+          await route.fulfill({ response });
+        } catch {
+          await route.continue();
+        }
+      });
 
       await page
         .waitForSelector('script#__NEXT_DATA__', { timeout: 15_000 })
@@ -390,6 +475,11 @@ export class GoatAdapter implements ScraperAdapter {
           `GoatAdapter: could not extract product from __NEXT_DATA__ at ${url}`,
         );
         return this.generic.scrape(url);
+      }
+
+      // If __NEXT_DATA__ had no per-size prices, overlay them from the XHR response.
+      if (!merged.some((m) => m.cents != null && m.cents > 0) && goatBuyBarData) {
+        merged = mergeXhrPricesIntoSizes(merged, goatBuyBarData);
       }
 
       const pricedSizes = merged.filter((m) => m.cents != null && m.cents > 0);

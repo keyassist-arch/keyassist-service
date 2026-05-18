@@ -54,7 +54,10 @@
       "Bash(echo \"Started PID: $!\")",
       "Bash(awk '{print $2, $11, $12, $13, $14}')",
       "Bash(awk '{print $2, $11, $12, $13}')",
-      "Bash(xargs grep -l \"categoryId\\\\|Category\")"
+      "Bash(xargs grep -l \"categoryId\\\\|Category\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\code\\\\unified-commerce\" -Recurse -Depth 2)",
+      "Bash(Select-Object Name, FullName)",
+      "Bash(Head -50)"
     ]
   }
 }

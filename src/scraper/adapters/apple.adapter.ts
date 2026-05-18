@@ -69,9 +69,12 @@ function parseSkuVariants(name: string): Record<string, string> {
       .slice(name.indexOf(storageM[0]) + storageM[0].length)
       .replace(/\s+/g, ' ')
       .trim();
-    if (afterStorage && !APPLE_PRODUCT_NOUNS.has(afterStorage.toLowerCase())) {
-      selections['Color'] = afterStorage;
-    }
+    const colorCandidate = afterStorage
+      .split(' ')
+      .filter((w) => w && !APPLE_PRODUCT_NOUNS.has(w.toLowerCase()))
+      .join(' ')
+      .trim();
+    if (colorCandidate) selections['Color'] = colorCandidate;
   }
   return selections;
 }
@@ -203,6 +206,8 @@ function buildConfigurationPricesFromSkus(
         partNumber: s.partNumber,
         sku: s.sku,
         ...(Object.keys(variantSelections).length ? { variantSelections } : {}),
+        available: true,
+        metadata: { source: 'apple-metrics' },
       };
     })
     .sort((a, b) => parseFloat(a.originalPrice) - parseFloat(b.originalPrice));
@@ -240,11 +245,9 @@ function buildVariantsFromRows(
 ): { name: string; options: string[] }[] {
   const storages = new Set<string>();
   const colors = new Set<string>();
-  const carriers = new Set<string>();
   for (const row of rows) {
     if (row.storage) storages.add(row.storage);
     if (row.color) colors.add(row.color);
-    if (row.carrier) carriers.add(row.carrier);
   }
   const out: { name: string; options: string[] }[] = [];
   if (storages.size) {
@@ -256,9 +259,18 @@ function buildVariantsFromRows(
     });
   }
   if (colors.size) out.push({ name: 'Color', options: [...colors].sort() });
-  if (carriers.size)
-    out.push({ name: 'Carrier', options: [...carriers].sort() });
   return out;
+}
+
+/** Carrier is a routing axis (doesn't change price) — kept separate from pricing variants. */
+function buildCarrierVariant(
+  rows: ConfigRow[],
+): { name: string; options: string[] } | null {
+  const carriers = [
+    ...new Set(rows.map((r) => r.carrier).filter(Boolean)),
+  ].sort();
+  if (carriers.length <= 1) return null;
+  return { name: 'Carrier', options: carriers };
 }
 
 @Injectable()
@@ -519,9 +531,21 @@ export class AppleAdapter implements ScraperAdapter {
       }
 
       const images = this.resolveImages(raw);
-      const variants = skus.length
+      const storageColorVariants = skus.length
         ? buildVariantsFromSkus(skus)
         : buildVariantsFromRows(raw.configRows);
+      const carrierVariant = buildCarrierVariant(raw.configRows);
+      const variants = carrierVariant
+        ? [...storageColorVariants, carrierVariant]
+        : storageColorVariants;
+
+      // "Storage|Color|Carrier" → Apple product URL, for checkout routing.
+      const carrierLinkMap: Record<string, string> = {};
+      for (const row of raw.configRows) {
+        if (row.storage && row.color && row.carrier && row.href) {
+          carrierLinkMap[`${row.storage}|${row.color}|${row.carrier}`] = row.href;
+        }
+      }
 
       const descParts: string[] = [];
       if (raw.ldDescription)
@@ -578,6 +602,7 @@ export class AppleAdapter implements ScraperAdapter {
         variants,
         configurationSummaries: raw.configRows.map((r) => r.summary),
         ...(configurationPrices.length ? { configurationPrices } : {}),
+        ...(Object.keys(carrierLinkMap).length ? { metadata: { carrierLinkMap } } : {}),
       };
     } catch (err) {
       this.logger.error(

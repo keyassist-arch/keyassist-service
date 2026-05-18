@@ -15,6 +15,14 @@ export interface ScrapedProduct {
    * Stored in catalog description for transparency; `price` remains the current selling price.
    */
   compareAtPrice?: string;
+  /** Savings percentage badge text, e.g. “-40%” or “60% off”. */
+  discount?: string;
+  /** Absolute savings amount as a decimal string, e.g. “1020.00”. */
+  savingsAmount?: string;
+  /** Promotional label, e.g. “Limited-time deal” or “Lightning Deal”. */
+  dealType?: string;
+  /** Adapter-specific extra data (e.g. Apple carrier→URL routing map). */
+  metadata?: Record<string, unknown>;
   availability?: string;
   /**
    * Full configuration lines from matrix-style PDPs (e.g. Apple: storage + color + carrier + price).
