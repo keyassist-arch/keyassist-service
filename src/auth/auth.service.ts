@@ -15,7 +15,7 @@ import { UsersService } from '../users/users.service';
 import { UserRole } from '../common/enums/role.enum';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { NotificationsService } from '../notifications/notifications.service';
-import { authEmailTemplates } from './auth-email-templates';
+import { EmailTemplateService } from '../notifications/email-templates.service';
 import { TotpService } from '../totp/totp.service';
 
 /** Claim set on password-reset JWTs (verified with `JWT_PASSWORD_RESET_SECRET`). */
@@ -67,6 +67,7 @@ export class AuthService implements OnModuleInit {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly emailTemplates: EmailTemplateService,
     private readonly totp: TotpService,
   ) {}
 
@@ -276,7 +277,7 @@ export class AuthService implements OnModuleInit {
       );
       const baseUrl = this.frontendBaseUrl();
       const resetUrl = `${baseUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
-      const tpl = authEmailTemplates.passwordReset({
+      const tpl = this.emailTemplates.passwordReset({
         resetUrl,
         ttlLabel: ttl,
       });
@@ -319,7 +320,7 @@ export class AuthService implements OnModuleInit {
     const user = await this.usersService.findById(payload.sub);
     await this.usersService.updatePassword(payload.sub, newPassword);
     this.logger.log(`[auth] step=password_reset_ok userId=${payload.sub}`);
-    const pwdTpl = authEmailTemplates.passwordChanged();
+    const pwdTpl = this.emailTemplates.passwordChanged();
     try {
       await this.notifications.sendEmail({
         to: user.email,
@@ -365,12 +366,12 @@ export class AuthService implements OnModuleInit {
       [user.firstName, user.lastName].filter(Boolean).join(' ') || null;
     const tpl =
       kind === 'resend'
-        ? authEmailTemplates.resendVerification({
+        ? this.emailTemplates.resendVerification({
             verifyUrl,
             ttlLabel: ttl,
             displayName,
           })
-        : authEmailTemplates.verifyEmail({
+        : this.emailTemplates.verifyEmail({
             verifyUrl,
             ttlLabel: ttl,
             displayName,

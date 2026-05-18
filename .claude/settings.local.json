@@ -57,7 +57,9 @@
       "Bash(xargs grep -l \"categoryId\\\\|Category\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\code\\\\unified-commerce\" -Recurse -Depth 2)",
       "Bash(Select-Object Name, FullName)",
-      "Bash(Head -50)"
+      "Bash(Head -50)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\code\\\\unified-commerce\\\\src\" -Directory)",
+      "Bash(Select-Object Name)"
     ]
   }
 }

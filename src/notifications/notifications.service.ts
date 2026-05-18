@@ -98,12 +98,12 @@ export class NotificationsService {
     }
 
     if (useOnboarding) {
-      return 'Unified Commerce <onboarding@resend.dev>';
+      return 'KeyAssist <onboarding@resend.dev>';
     }
     return (
       this.config.get<string>('RESEND_FROM')?.trim() ||
       this.config.get<string>('MAIL_FROM')?.trim() ||
-      'Unified Commerce <onboarding@resend.dev>'
+      'KeyAssist <onboarding@resend.dev>'
     );
   }
 }

@@ -1,6 +1,6 @@
 # Adapter → Frontend Contract
 
-Compiled from the GOAT, Amazon, Apple, Zara, StockX, eBay, and Nike adapter changes.  
+Compiled from the GOAT, Amazon, Apple, Zara, StockX, eBay, Nike, and Etsy adapter changes.  
 This document describes every new API field and the UI behaviour each one requires.
 
 ---
@@ -11,11 +11,11 @@ These fields are now returned by the `/products/:id` (and import) API alongside 
 
 | Field | Type | Source | Meaning |
 |---|---|---|---|
-| `compareAtPrice` | `string \| null` | Amazon, Zara, eBay, Nike | Crossed-out "was" / list price. `price` is always the current selling price. |
-| `discount` | `string \| null` | Amazon, eBay, Nike | Raw savings badge text scraped from the PDP, e.g. `"-40%"` or `"60% off"`. |
-| `savingsAmount` | `string \| null` | Amazon, eBay | Absolute saving as a decimal string, e.g. `"1020.00"`. Computed from `compareAtPrice − price`. |
+| `compareAtPrice` | `string \| null` | Amazon, Zara, eBay, Nike, Etsy | Crossed-out "was" / list price. `price` is always the current selling price. |
+| `discount` | `string \| null` | Amazon, eBay, Nike, Etsy | Raw savings badge text scraped from the PDP, e.g. `"-40%"` or `"60% off"`. |
+| `savingsAmount` | `string \| null` | Amazon, eBay, Etsy | Absolute saving as a decimal string, e.g. `"1020.00"`. Computed from `compareAtPrice − price`. |
 | `dealType` | `string \| null` | Amazon | Promotional label, e.g. `"Limited-time deal"` or `"Lightning Deal"`. |
-| `metadata` | `Record<string, unknown> \| null` | Apple, StockX, Nike | Adapter-specific extra data. Carries `carrierLinkMap` for Apple (see §4), `styleId`/`priceSource` for StockX (see §6), and nothing at the product level for Nike (group routing is in `configurationPrices[].metadata`). |
+| `metadata` | `Record<string, unknown> \| null` | Apple, StockX, Nike, Etsy | Adapter-specific extra data. Carries `carrierLinkMap` for Apple (see §4), `styleId`/`priceSource` for StockX (see §6), and shop/listing info for Etsy (see §10). |
 
 > All discount fields are optional — treat `null`/`undefined` as "no promotion". When `savingsAmount` is present, prefer it over computing the difference client-side to avoid floating-point drift.
 
@@ -51,6 +51,7 @@ type ProductConfigurationPrice = {
 | StockX | Match `optionValue === selectedSize` (e.g. `"US 10"`); all rows share one price — check `metadata.priceNeedsLookup` before showing a buy button |
 | Zara | Match `optionValue === selectedSize` (single-axis via `variantAxis: "Size"`); `available: false` means OOS |
 | Nike | For **multi-group** products (kids fit / men's+women's): rows with `variantAxis: "Fit"` give group-level prices; rows with `variantAxis: "Size"` are sizes within the selected group. For **width** products: match `variantSelections: { Width: selectedWidth, Size: selectedSize }`. For **single-group** products: match `optionValue === selectedSize` (same as GOAT). |
+| Etsy | Rows only present when at least one variation has a price delta. Match `variantAxis === variation.name && optionValue === selectedOption`. When no rows: all options share the base `price`. |
 
 > The API applies `markupPercent` to produce a `salePrice` per product. The `configurationPrices` rows carry the **supplier** `originalPrice` — the frontend is responsible for displaying the markup-adjusted price when needed. If the API exposes `salePrice` per row, use that; otherwise apply the markup yourself.
 
@@ -580,7 +581,155 @@ const hasWidthAxis = product.variants.some(v => v.name === 'Width');
 
 ---
 
-## 10. `available` flag on `configurationPrices` rows
+## 10. Etsy — handmade/vintage listings with variation price deltas
+
+### What the adapter now returns
+
+**Standard listing (no sale, no variations):**
+
+```jsonc
+{
+  "price": "34.99",
+  "currency": "USD",
+  "brand": "CedarwoodStudio",     // shop name from ld+json brand or Etsy.Context.data
+  "asin": "1234567890",           // Etsy listing ID (mapped to asin — the marketplace ID field)
+  "variants": [],
+  "description": "Hand-poured soy wax candle...\n\nMaterial: Soy wax\n\nCategory: Home & Living › Candles\n\nFree shipping included.\n\nRating: 4.8 · 312 reviews",
+  "availability": "in_stock",
+  "metadata": {
+    "source": "etsy",
+    "listingId": "1234567890",
+    "shopName": "CedarwoodStudio",
+    "freeShipping": true,
+    "scarcity": "Only 3 left",
+    "rating": { "value": "4.8", "count": 312 }
+  }
+}
+```
+
+**Sale listing (list price via `offer.priceSpecification` or DOM strikethrough):**
+
+```jsonc
+{
+  "price": "24.99",
+  "currency": "USD",
+  "compareAtPrice": "39.99",    // offer.priceSpecification or .wt-text-strikethrough
+  "discount": "38% off",        // computed: round((1 − salePrice/listPrice) × 100)
+  "savingsAmount": "15.00",     // computed: listPrice − salePrice
+  ...
+}
+```
+
+**Listing with variation price deltas (e.g. "Size" select with `+$5.00` options):**
+
+```jsonc
+{
+  "price": "29.99",              // base price (smallest option)
+  "currency": "USD",
+  "variants": [
+    { "name": "Size", "options": ["Small", "Medium", "Large"] },
+    { "name": "Color", "options": ["Natural", "Sage", "Blush"] }
+  ],
+  "configurationPrices": [
+    // Only variations that carry a non-zero price delta get rows:
+    {
+      "label": "Size: Medium",
+      "originalPrice": "32.99",   // base + delta
+      "variantAxis": "Size",
+      "optionValue": "Medium",
+      "available": true,
+      "metadata": { "source": "etsy-variation", "priceModifier": 3.00 }
+    },
+    {
+      "label": "Size: Large",
+      "originalPrice": "34.99",
+      "variantAxis": "Size",
+      "optionValue": "Large",
+      "available": true,
+      "metadata": { "source": "etsy-variation", "priceModifier": 5.00 }
+    }
+    // "Small" has no row because its delta is 0 — use base price
+    // Color has no rows because it has no price delta at all
+  ],
+  "metadata": {
+    "source": "etsy",
+    "freeShipping": false,
+    "scarcity": null,
+    "rating": { "value": "4.6", "count": 88 }
+  }
+}
+```
+
+**Data sources (priority order):**
+
+| Field | Primary | Fallback |
+|---|---|---|
+| `price` | `offer.price` (JSON-LD) | `Etsy.Context.data.listing_price` → DOM buy-box |
+| `currency` | `offer.priceCurrency` (JSON-LD) | `"USD"` |
+| `compareAtPrice` | `offer.priceSpecification.price` (labelled "Original"/"Was") | `.wt-text-strikethrough` DOM |
+| `discount` | Computed from both prices | — |
+| `savingsAmount` | Computed from both prices | — |
+| `images` | `[data-src-zoom-image]` carousel (full-res) | JSON-LD `image[]` |
+| `brand` | JSON-LD `brand.name` | `Etsy.Context.data.shop_name` |
+| `variants` | Hydrated `<select>` elements in `[data-selector="listing-page-variations"]` | — |
+
+### Required UI behaviour
+
+**Ratings and social proof:**
+
+```
+★ 4.8  (312 reviews)       ← metadata.rating.value + metadata.rating.count
+```
+
+Render as a star row below the product title when `metadata.rating` is present.
+
+**Free shipping badge:**
+
+```
+✓ Free shipping            ← metadata.freeShipping === true
+```
+
+Show near the price block. `freeShipping` is `true` when `offer.shippingDetails[0].shippingRate.value === 0`.
+
+**Scarcity / urgency:**
+
+```
+Only 3 left                ← metadata.scarcity (raw text from page)
+```
+
+Show as an urgency badge near the buy button when `metadata.scarcity` is non-null.
+
+**Variation selector:**
+
+Etsy variations are rendered from `variants[]` exactly like other adapters. The difference is the price:
+
+```ts
+// For a selected option, check if a configurationPrices row exists:
+const priceRow = product.configurationPrices?.find(
+  r => r.variantAxis === variationName && r.optionValue === selectedOption
+);
+// If found → use priceRow.originalPrice
+// If not  → use product.price (base price, delta = 0)
+```
+
+When multiple variation axes exist (e.g. Size + Color) and only Size has deltas, the Color axis has no `configurationPrices` rows. Look up by the axis that has rows; for others, assume no price change.
+
+**Sale display:**
+
+Same as Amazon §5 and eBay §8 — `compareAtPrice` strikethrough, `discount` badge, `savingsAmount` line.
+
+```
+~~$39.99~~   $24.99   38% off
+You save: $15.00
+```
+
+**Shop attribution:**
+
+Etsy products are sold by independent shops. Display `brand` (= shop name) as a "Sold by {brand}" line, not as a manufacturer brand.
+
+---
+
+## 12. `available` flag on `configurationPrices` rows
 
 All adapters that emit `configurationPrices` rows now set `available: boolean`:
 
@@ -592,28 +741,34 @@ All adapters that emit `configurationPrices` rows now set `available: boolean`:
 
 ---
 
-## 11. Field availability by source
+## 13. Field availability by source
 
-| Field | GOAT | Amazon | Apple | Zara | StockX | eBay | Nike |
-|---|---|---|---|---|---|---|---|
-| `variants` | Size | (from twister) | Storage, Color, Carrier | Color, Size | Size | — (single item) | Fit¹, Width², Size, Color |
-| `configurationPrices` | per-size ask | per-ASIN (price lookup needed) | per-Storage×Color SKU | per-size (OOS flag) | per-size (price lookup needed) | — | per-Fit-group + per-size within group |
-| `compareAtPrice` | — | list price | — | was-price on sale | — | list price | `initialPrice` when > `currentPrice` |
-| `discount` | — | savings % | — | — | — | "60% off" text | `discountPercentage`% off |
-| `savingsAmount` | — | computed | — | — | — | computed | — |
-| `dealType` | — | deal badge | — | — | — | — | — |
-| `metadata.carrierLinkMap` | — | — | Storage×Color×Carrier → URL | — | — | — | — |
-| `metadata.priceSource` | — | — | — | — | `"lowest-ask"` \| `"retail-reference"` | — | — |
-| `metadata.styleId` | — | — | — | — | style ID string | — | — |
-| `configurationPrices[].available` | yes | yes | yes | yes | yes (always `true`) | — | yes |
-| `configurationPrices[].displayLabel` | yes | — | — | — | — | — | — |
-| `configurationPrices[].variantAxis` + `optionValue` | yes (Size) | — | — | yes (Size) | yes (Size) | — | yes (Fit or Size) |
-| `configurationPrices[].variantSelections` | — | yes (multi-dim) | yes (Storage×Color) | — | — | — | yes (Fit or Width×Size) |
-| `configurationPrices[].metadata.priceNeedsLookup` | — | yes (non-current ASIN) | — | — | yes (when no live ask) | — | — |
-| `configurationPrices[].metadata.sizeEU` / `sizeUK` | — | — | — | — | yes | — | — |
-| `configurationPrices[].metadata.pdpUrl` | — | — | — | — | — | — | yes (Fit rows only) |
-| `configurationPrices[].metadata.isSelectedGroup` | — | — | — | — | — | — | yes (Fit rows only) |
-| `configurationPrices[].metadata.gtin` | — | — | — | — | — | — | yes (Size rows) |
+| Field | GOAT | Amazon | Apple | Zara | StockX | eBay | Nike | Etsy |
+|---|---|---|---|---|---|---|---|---|
+| `variants` | Size | (from twister) | Storage, Color, Carrier | Color, Size | Size | — (single item) | Fit¹, Width², Size, Color | per `<select>` variation axes |
+| `configurationPrices` | per-size ask | per-ASIN (price lookup needed) | per-Storage×Color SKU | per-size (OOS flag) | per-size (price lookup needed) | — | per-Fit-group + per-size within group | per-option when delta ≠ 0 |
+| `compareAtPrice` | — | list price | — | was-price on sale | — | list price | `initialPrice` when > `currentPrice` | `priceSpecification` or DOM strikethrough |
+| `discount` | — | savings % | — | — | — | "60% off" text | `discountPercentage`% off | computed % off |
+| `savingsAmount` | — | computed | — | — | — | computed | — | computed |
+| `dealType` | — | deal badge | — | — | — | — | — | — |
+| `asin` | — | ASIN | — | — | — | item ID | styleColor | listing ID |
+| `metadata.carrierLinkMap` | — | — | Storage×Color×Carrier → URL | — | — | — | — | — |
+| `metadata.priceSource` | — | — | — | — | `"lowest-ask"` \| `"retail-reference"` | — | — | — |
+| `metadata.styleId` | — | — | — | — | style ID string | — | — | — |
+| `metadata.freeShipping` | — | — | — | — | — | — | — | yes (boolean) |
+| `metadata.scarcity` | — | — | — | — | — | — | — | "Only N left" text \| null |
+| `metadata.rating` | — | — | — | — | — | — | — | `{ value, count }` \| undefined |
+| `metadata.shopName` | — | — | — | — | — | — | — | shop name string |
+| `configurationPrices[].available` | yes | yes | yes | yes | yes (always `true`) | — | yes | yes (always `true`) |
+| `configurationPrices[].displayLabel` | yes | — | — | — | — | — | — | — |
+| `configurationPrices[].variantAxis` + `optionValue` | yes (Size) | — | — | yes (Size) | yes (Size) | — | yes (Fit or Size) | yes (variation name) |
+| `configurationPrices[].variantSelections` | — | yes (multi-dim) | yes (Storage×Color) | — | — | — | yes (Fit or Width×Size) | — |
+| `configurationPrices[].metadata.priceNeedsLookup` | — | yes (non-current ASIN) | — | — | yes (when no live ask) | — | — | — |
+| `configurationPrices[].metadata.sizeEU` / `sizeUK` | — | — | — | — | yes | — | — | — |
+| `configurationPrices[].metadata.pdpUrl` | — | — | — | — | — | — | yes (Fit rows only) | — |
+| `configurationPrices[].metadata.isSelectedGroup` | — | — | — | — | — | — | yes (Fit rows only) | — |
+| `configurationPrices[].metadata.gtin` | — | — | — | — | — | — | yes (Size rows) | — |
+| `configurationPrices[].metadata.priceModifier` | — | — | — | — | — | — | — | yes (delta in currency units) |
 
 ¹ `Fit` axis only present on multi-group products (kids sizing tiers, men's+women's split).  
 ² `Width` axis only present on adult products with `sizeFitSections` (Regular/Wide/X-Wide).
