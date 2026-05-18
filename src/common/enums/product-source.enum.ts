@@ -9,5 +9,6 @@ export enum ProductSource {
   EBAY = 'ebay',
   ZARA = 'zara',
   CONVERSE = 'converse',
+  ETSY = 'etsy',
   GENERIC = 'generic',
 }

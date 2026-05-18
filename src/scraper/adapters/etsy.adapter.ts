@@ -16,7 +16,6 @@ import type { ProductConfigurationPrice } from '../../products/entities/product.
 //      Contains: title, description, price, currency, images (ImageObject[]),
 //      brand (shop name), sku (listing ID), material, category, aggregateRating,
 //      availability, free-shipping flag, offer.shippingDetails.
-//      This is the most reliable source; present on every listing page.
 //
 //   2. Etsy.Context.data — inline JS object assigned via
 //      `Etsy.Context.data = assign(Etsy.Context.data || {}, {...})`.
@@ -25,19 +24,16 @@ import type { ProductConfigurationPrice } from '../../products/entities/product.
 //
 //   3. DOM — live elements rendered by Playwright.
 //      - [data-buy-box-region="price"] → current price text.
-//      - .ux-textspans--STRIKETHROUGH (or .wt-text-strikethrough) → list/was price.
+//      - .wt-text-strikethrough (or .ux-textspans--STRIKETHROUGH) → list/was price.
 //      - data-src-zoom-image attributes on carousel items → full-size images.
 //      - "Only N available" text → scarcity label.
 //      - data-selector="listing-page-variations" container → variation selects
 //        (rendered client-side by React; present only after hydration).
 //
 // Variations:
-//   Etsy variations are rendered entirely client-side. In SSR HTML the container
-//   `[data-selector="listing-page-variations"]` is empty. After hydration,
-//   Playwright can read <select> elements with option labels and (optionally)
-//   per-variation price changes loaded via XHR.
-//   Strategy: intercept `GET /api/v3/ajax/member/listings/{id}/variations`
-//   if available; otherwise read hydrated <select> elements after a short wait.
+//   Etsy variations are rendered entirely client-side. After hydration,
+//   Playwright reads <select> elements. Etsy sometimes encodes per-option
+//   price deltas in option text: "Red (+$5.00)".
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,10 +47,9 @@ interface EtsyLdOffer {
     priceCurrency?: string;
     name?: string;
   };
-  shippingDetails?: {
-    shippingRate?: { value?: string | number; currency?: string };
-    shippingOrigin?: { addressCountry?: string; addressRegion?: string };
-  } | Array<{ shippingRate?: { value?: string | number } }>;
+  shippingDetails?:
+    | { shippingRate?: { value?: string | number; currency?: string } }
+    | Array<{ shippingRate?: { value?: string | number } }>;
 }
 
 interface EtsyLdImage {
@@ -80,60 +75,27 @@ interface EtsyLdProduct {
 
 interface EtsyVariationOption {
   label: string;
-  priceModifier?: number; // delta in currency units if Etsy exposes it
+  priceModifier?: number;
 }
 
 interface EtsyVariation {
-  name: string;      // e.g. "Size", "Color", "Material"
+  name: string;
   options: EtsyVariationOption[];
 }
 
 interface EtsyRawBundle {
-  /** Serialised ld+json Product node text */
   ldProductJson: string | null;
-  /** Title from <h1> / og:title fallback */
   titleFallback: string | null;
-  /** Price text from buy-box DOM element */
   domPrice: string | null;
-  /** Strikethrough (was/list) price text */
   domListPrice: string | null;
-  /** All zoom-image URLs from carousel */
   carouselImages: string[];
-  /** Free-form scarcity text e.g. "Only 2 available" */
   scarcityText: string | null;
-  /** Variations parsed from hydrated DOM <select> elements */
   variations: EtsyVariation[];
-  /** Raw Etsy.Context.data.listing_price (float, authoritative server-side price) */
   contextPrice: number | null;
-  /** Raw Etsy.Context.data.shop_name */
   shopName: string | null;
 }
 
-// ─── Pure helpers (no Playwright dependency) ─────────────────────────────────
-
-function extractLdProduct(html: string): EtsyLdProduct | null {
-  // Etsy may have multiple ld+json blocks; find the Product one.
-  const re = /<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    try {
-      const parsed = JSON.parse(m[1].trim()) as unknown;
-      const nodes = Array.isArray(parsed) ? parsed : [parsed];
-      for (const node of nodes) {
-        if (
-          node &&
-          typeof node === 'object' &&
-          (node as EtsyLdProduct)['@type'] === 'Product'
-        ) {
-          return node as EtsyLdProduct;
-        }
-      }
-    } catch {
-      /* skip malformed block */
-    }
-  }
-  return null;
-}
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 
 function ldImageUrl(img: string | EtsyLdImage): string {
   if (typeof img === 'string') return img;
@@ -163,55 +125,6 @@ function normaliseAvailability(
   return 'in_stock';
 }
 
-/**
- * Extract Etsy.Context.data from the inline script block.
- * Returns the full object or an empty record on failure.
- */
-function extractEtsyContextData(html: string): Record<string, unknown> {
-  const scriptRe =
-    /<script[^>]*nonce="[^"]*"[^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = scriptRe.exec(html)) !== null) {
-    const text = m[1];
-    if (!text.includes('Etsy.Context.data')) continue;
-
-    // Find `Etsy.Context.data=assign(..., { ... })`
-    const assignRe = /Etsy\.Context\.data=assign\([^,]+,\s*(\{)/g;
-    let am: RegExpExecArray | null;
-    while ((am = assignRe.exec(text)) !== null) {
-      const start = am.index + am[0].length - 1; // position of '{'
-      let depth = 0;
-      let inStr = false;
-      let esc = false;
-      let end = start;
-      for (let i = start; i < Math.min(start + 60_000, text.length); i++) {
-        const c = text[i];
-        if (inStr) {
-          if (esc) esc = false;
-          else if (c === '\\') esc = true;
-          else if (c === '"') inStr = false;
-        } else {
-          if (c === '"') inStr = true;
-          else if (c === '{') depth++;
-          else if (c === '}') {
-            depth--;
-            if (depth === 0) {
-              end = i + 1;
-              break;
-            }
-          }
-        }
-      }
-      try {
-        return JSON.parse(text.slice(start, end)) as Record<string, unknown>;
-      } catch {
-        /* try next assign call */
-      }
-    }
-  }
-  return {};
-}
-
 // ─── Adapter ──────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -236,7 +149,6 @@ export class EtsyAdapter implements ScraperAdapter {
     });
 
     try {
-      // Wait for the buy-box price to appear (confirms listing page is loaded).
       await page
         .waitForSelector(
           '[data-buy-box-region="price"], script[type="application/ld+json"]',
@@ -296,12 +208,10 @@ export class EtsyAdapter implements ScraperAdapter {
 
         // ── Strikethrough (list/was) price ───────────────────────────────
         const strikeEl = document.querySelector(
-          '.wt-text-strikethrough .currency-value, ' +
-            '.ux-textspans--STRIKETHROUGH',
+          '.wt-text-strikethrough .currency-value, .ux-textspans--STRIKETHROUGH',
         );
         const domListPrice = strikeEl
           ? (() => {
-              // Try to get symbol + value
               const parent = strikeEl.closest('p, span') ?? strikeEl;
               return parent.textContent?.replace(/\s+/g, ' ').trim() ?? null;
             })()
@@ -323,11 +233,12 @@ export class EtsyAdapter implements ScraperAdapter {
         // ── Scarcity text ────────────────────────────────────────────────
         let scarcityText: string | null = null;
         const bodyText = document.body.innerText;
-        const scarcityMatch = bodyText.match(/Only\s+\d+\s+(?:left|available)[^.!]*/i);
+        const scarcityMatch = bodyText.match(
+          /Only\s+\d+\s+(?:left|available)[^.!]*/i,
+        );
         if (scarcityMatch) scarcityText = scarcityMatch[0].trim();
 
         // ── Variations (hydrated client-side) ────────────────────────────
-        // Etsy renders variation dropdowns inside [data-selector="listing-page-variations"].
         const variations: EtsyRawBundle['variations'] = [];
         const varContainer = document.querySelector(
           '[data-selector="listing-page-variations"]',
@@ -336,7 +247,6 @@ export class EtsyAdapter implements ScraperAdapter {
           for (const select of Array.from(
             varContainer.querySelectorAll('select'),
           )) {
-            // The label is in a sibling/parent <label> element.
             const labelEl =
               select.closest('div')?.querySelector('label') ??
               document.querySelector(`label[for="${select.id}"]`);
@@ -350,7 +260,6 @@ export class EtsyAdapter implements ScraperAdapter {
             for (const opt of Array.from(select.options)) {
               const label = opt.text.trim();
               if (!label || label.toLowerCase().startsWith('select')) continue;
-              // Etsy sometimes encodes price delta in the option text: "Red (+$5.00)"
               const deltaMatch = label.match(/\(\s*[+\-]?\s*\$?([\d.]+)\s*\)/);
               options.push({
                 label: label.replace(/\s*\([^)]*\)\s*$/, '').trim(),
@@ -366,14 +275,14 @@ export class EtsyAdapter implements ScraperAdapter {
         }
 
         // ── Etsy.Context.data price (server-authoritative) ────────────────
-        // We read the listing_price from the inline script via window object.
-        // Etsy assigns it as: Etsy.Context.data = assign(..., { listing_price: 124.95 })
-        // After execution, window.Etsy.Context.data.listing_price is available.
         let contextPrice: number | null = null;
         let shopName: string | null = null;
         try {
-          const ctx = (window as unknown as { Etsy?: { Context?: { data?: Record<string, unknown> } } })
-            ?.Etsy?.Context?.data;
+          const ctx = (
+            window as unknown as {
+              Etsy?: { Context?: { data?: Record<string, unknown> } };
+            }
+          )?.Etsy?.Context?.data;
           if (ctx) {
             const lp = ctx['listing_price'];
             if (typeof lp === 'number' && lp > 0) contextPrice = lp;
@@ -409,9 +318,10 @@ export class EtsyAdapter implements ScraperAdapter {
     }
   }
 
-  // ── Build ScrapedProduct from collected bundle ──────────────────────────────
-
-  private buildProduct(bundle: EtsyRawBundle, url: string): ScrapedProduct {
+  private async buildProduct(
+    bundle: EtsyRawBundle,
+    url: string,
+  ): Promise<ScrapedProduct> {
     // ── Parse ld+json ───────────────────────────────────────────────────────
     let ld: EtsyLdProduct | null = null;
     if (bundle.ldProductJson) {
@@ -441,13 +351,12 @@ export class EtsyAdapter implements ScraperAdapter {
 
     if (!title) {
       this.logger.warn(`EtsyAdapter: no title at ${url} — falling back`);
-      return this.generic.scrapeSync?.(url) ?? { title: '', price: '0', currency: 'USD', images: [] };
+      return this.generic.scrape(url);
     }
 
     // ── Price ───────────────────────────────────────────────────────────────
     const offer = ld ? resolveOffer(ld) : null;
 
-    // Priority: ld+json offer.price → Etsy.Context.data.listing_price → DOM price
     const ldPriceRaw = offer?.price != null ? String(offer.price) : null;
     const contextPriceStr =
       bundle.contextPrice != null ? bundle.contextPrice.toFixed(2) : null;
@@ -459,43 +368,44 @@ export class EtsyAdapter implements ScraperAdapter {
 
     if (!priceStr) {
       this.logger.warn(`EtsyAdapter: no price at ${url} — falling back`);
-      return this.generic.scrapeSync?.(url) ?? { title, price: '0', currency: 'USD', images: [] };
+      return this.generic.scrape(url);
     }
 
     // ── Currency ────────────────────────────────────────────────────────────
     const currency = (offer?.priceCurrency ?? 'USD').toUpperCase().slice(0, 8);
 
-    // ── List/was price (priceSpecification) ─────────────────────────────────
-    // Etsy encodes the "original" (pre-sale) price in offer.priceSpecification.
-    // The offer.price is then the sale/current price.
+    // ── List/was price (priceSpecification or DOM strikethrough) ────────────
     const ps = offer?.priceSpecification;
-    let originalPrice: string | undefined;
+    let compareAtPrice: string | undefined;
     if (ps && typeof ps === 'object' && !Array.isArray(ps)) {
       const psPrice = ps.price != null ? String(ps.price) : null;
       const psName = String(ps.name ?? '').toLowerCase();
-      // Only use if it's labelled as a list/original price AND is higher than current
       if (
         psPrice &&
-        (psName.includes('original') || psName.includes('list') || psName.includes('was'))
+        (psName.includes('original') ||
+          psName.includes('list') ||
+          psName.includes('was'))
       ) {
         const parsed = parsePriceToDecimalString(psPrice);
         if (parsed && parseFloat(parsed) > parseFloat(priceStr)) {
-          originalPrice = parsed;
+          compareAtPrice = parsed;
         }
       }
     }
-    // DOM strikethrough fallback for list price
-    if (!originalPrice && bundle.domListPrice) {
+    if (!compareAtPrice && bundle.domListPrice) {
       const parsed = parsePriceToDecimalString(bundle.domListPrice);
       if (parsed && parseFloat(parsed) > parseFloat(priceStr)) {
-        originalPrice = parsed;
+        compareAtPrice = parsed;
       }
     }
 
-    // Compute discount % when both prices are known
-    const discount =
-      originalPrice
-        ? `${Math.round((1 - parseFloat(priceStr) / parseFloat(originalPrice)) * 100)}% off`
+    const discount = compareAtPrice
+      ? `${Math.round((1 - parseFloat(priceStr) / parseFloat(compareAtPrice)) * 100)}% off`
+      : undefined;
+
+    const savingsAmount =
+      compareAtPrice
+        ? (parseFloat(compareAtPrice) - parseFloat(priceStr)).toFixed(2)
         : undefined;
 
     // ── Availability ────────────────────────────────────────────────────────
@@ -505,17 +415,19 @@ export class EtsyAdapter implements ScraperAdapter {
     let freeShipping = false;
     const shippingDetails = offer?.shippingDetails;
     if (shippingDetails) {
-      const firstDetail = Array.isArray(shippingDetails)
+      const first = Array.isArray(shippingDetails)
         ? shippingDetails[0]
         : shippingDetails;
-      const rateVal = firstDetail?.shippingRate?.value;
-      if (rateVal != null && (rateVal === '0' || rateVal === 0 || rateVal === '0.00')) {
+      const rateVal = first?.shippingRate?.value;
+      if (
+        rateVal != null &&
+        (rateVal === '0' || rateVal === 0 || rateVal === '0.00')
+      ) {
         freeShipping = true;
       }
     }
 
     // ── Images ──────────────────────────────────────────────────────────────
-    // Priority: DOM carousel zoom URLs (highest res) → ld+json ImageObjects
     const seen = new Set<string>();
     const images: string[] = [];
     const addImage = (u: string) => {
@@ -527,22 +439,19 @@ export class EtsyAdapter implements ScraperAdapter {
     };
 
     for (const u of bundle.carouselImages) addImage(u);
-
     if (ld?.image) {
       const imgs = Array.isArray(ld.image) ? ld.image : [ld.image];
       for (const img of imgs) addImage(ldImageUrl(img));
     }
 
     // ── Brand / shop ────────────────────────────────────────────────────────
-    const brand =
-      brandName(ld ?? {}) || bundle.shopName || undefined;
+    const brand = brandName(ld ?? {}) || bundle.shopName || undefined;
 
     // ── Description ─────────────────────────────────────────────────────────
     const descParts: string[] = [];
     if (ld?.description) descParts.push(ld.description.trim());
     if (ld?.material) descParts.push(`Material: ${ld.material}`);
     if (ld?.category) {
-      // "Home & Living < Home Decor < Seasonal Decor" → readable
       const cat = ld.category.replace(/\s*<\s*/g, ' › ');
       descParts.push(`Category: ${cat}`);
     }
@@ -560,14 +469,12 @@ export class EtsyAdapter implements ScraperAdapter {
       }
     }
 
-    // ── Variants from DOM (client-side hydration) ───────────────────────────
-    // Etsy variations are name+option lists; prices may have per-option deltas.
+    // ── Variants ────────────────────────────────────────────────────────────
     const variants: ScrapedProduct['variants'] = bundle.variations.map((v) => ({
       name: v.name,
       options: v.options.map((o) => o.label),
     }));
 
-    // Build configurationPrices only when variations have price deltas
     const configurationPrices: ProductConfigurationPrice[] = [];
     for (const variation of bundle.variations) {
       const hasDeltas = variation.options.some(
@@ -584,15 +491,11 @@ export class EtsyAdapter implements ScraperAdapter {
           variantAxis: variation.name,
           optionValue: opt.label,
           available: true,
-          metadata: {
-            source: 'etsy-variation',
-            priceModifier: delta,
-          },
+          metadata: { source: 'etsy-variation', priceModifier: delta },
         });
       }
     }
 
-    // ── Listing metadata ────────────────────────────────────────────────────
     const listingId = ld?.sku ?? undefined;
 
     this.logger.log(
@@ -605,15 +508,16 @@ export class EtsyAdapter implements ScraperAdapter {
       title,
       price: priceStr,
       currency,
-      originalPrice,          // list/was price when on sale
-      discount,               // "X% off" when computed
+      compareAtPrice,
+      discount,
+      savingsAmount,
       images: images.slice(0, 20),
       brand,
       description: descParts.join('\n\n') || undefined,
+      asin: listingId,
       variants,
       ...(configurationPrices.length ? { configurationPrices } : {}),
       availability,
-      sku: listingId,
       metadata: {
         source: 'etsy',
         listingId,

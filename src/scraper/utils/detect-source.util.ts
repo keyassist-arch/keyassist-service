@@ -17,5 +17,6 @@ export function detectProductSource(url: string): ProductSource {
   if (h.includes('ebay.')) return ProductSource.EBAY;
   if (h.includes('zara.com')) return ProductSource.ZARA;
   if (h.includes('converse.com')) return ProductSource.CONVERSE;
+  if (h.includes('etsy.com')) return ProductSource.ETSY;
   return ProductSource.GENERIC;
 }
