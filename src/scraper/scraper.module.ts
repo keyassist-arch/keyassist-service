@@ -12,6 +12,7 @@ import { StockxAdapter } from './adapters/stockx.adapter';
 import { EbayAdapter } from './adapters/ebay.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
+import { EtsyAdapter } from './adapters/etsy.adapter';
 import { ScraperService } from './scraper.service';
 import { ScrapeRefinementService } from './services/scrape-refinement.service';
 
@@ -31,6 +32,7 @@ import { ScrapeRefinementService } from './services/scrape-refinement.service';
     EbayAdapter,
     ZaraAdapter,
     ConverseAdapter,
+    EtsyAdapter,
     ScraperService,
     ScrapeRefinementService,
   ],

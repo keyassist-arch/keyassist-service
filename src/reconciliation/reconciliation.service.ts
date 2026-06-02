@@ -14,6 +14,7 @@ import Stripe from 'stripe';
 import { Order } from '../orders/entities/order.entity';
 import { OrdersService } from '../orders/orders.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailTemplateService } from '../notifications/email-templates.service';
 import { PaymentProvider } from '../common/enums/payment-provider.enum';
 import { OrderStatus } from '../common/enums/order-status.enum';
 import { amountToMinorUnits } from '../payment/utils/amount-minor-units.util';
@@ -46,6 +47,7 @@ export class ReconciliationService {
     private readonly verifyPriceQueue: Queue<{ productId: string }>,
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
+    private readonly emailTemplates: EmailTemplateService,
     private readonly config: ConfigService,
   ) {}
 
@@ -169,14 +171,20 @@ export class ReconciliationService {
     // Notify customer.
     const customerEmail = order.user?.email;
     if (customerEmail) {
+      const refundTpl = this.emailTemplates.refundInitiated({
+        orderId: order.id,
+        currency: order.currency,
+        amount: refundAmount,
+        reason: dto.reason ?? null,
+        displayName:
+          [order.user?.firstName, order.user?.lastName].filter(Boolean).join(' ') || null,
+      });
       this.notifications
         .sendEmail({
           to: customerEmail,
-          subject: `Refund initiated for order ${order.id}`,
-          text:
-            `A refund of ${order.currency} ${refundAmount.toFixed(2)} has been initiated for your order.` +
-            (dto.reason ? ` Reason: ${dto.reason}` : '') +
-            ' Please allow 3–10 business days for the funds to appear.',
+          subject: refundTpl.subject,
+          text: refundTpl.text,
+          html: refundTpl.html,
         })
         .catch((e: unknown) =>
           this.logger.error(

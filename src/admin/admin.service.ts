@@ -17,6 +17,7 @@ import type { SendNotificationJob } from '../jobs/processors/send-notification.p
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { ShippingRatesService } from '../shipping/shipping-rates.service';
 import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
+import { EmailTemplateService } from '../notifications/email-templates.service';
 
 @Injectable()
 export class AdminService {
@@ -36,6 +37,7 @@ export class AdminService {
     private readonly notifyQueue: Queue<SendNotificationJob>,
     private readonly orderRealtime: OrderRealtimeService,
     private readonly shippingRatesService: ShippingRatesService,
+    private readonly emailTemplates: EmailTemplateService,
   ) {}
 
   async listOrders() {
@@ -119,12 +121,19 @@ export class AdminService {
         );
       }
       // Fire-and-forget — notification failure must not roll back the patch.
+      const shipTpl = this.emailTemplates.shipmentUpdate({
+        orderId: order.id,
+        status: dto.status ?? null,
+        trackingNumber: dto.trackingNumber ?? null,
+        carrier: dto.carrier ?? null,
+        displayName:
+          [order.user?.firstName, order.user?.lastName].filter(Boolean).join(' ') || null,
+      });
       this.notifyQueue
         .add('shipment', {
           type: 'shipment_update',
           toEmail: userEmail,
-          subject: `Order ${order.id} update`,
-          text: lines.join(' '),
+          ...shipTpl,
         })
         .then(() =>
           this.logger.log(

@@ -25,6 +25,7 @@ import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { LandedCostService } from '../landed-cost/landed-cost.service';
+import { EmailTemplateService } from '../notifications/email-templates.service';
 
 @Injectable()
 export class OrdersService {
@@ -44,6 +45,7 @@ export class OrdersService {
     private readonly notifyQueue: Queue<SendNotificationJob>,
     private readonly orderRealtime: OrderRealtimeService,
     private readonly landedCostService: LandedCostService,
+    private readonly emailTemplates: EmailTemplateService,
   ) {}
 
   async createFromCart(userId: string, dto: CreateOrderDto) {
@@ -194,11 +196,16 @@ export class OrdersService {
       `[order] step=created orderId=${order.id} userId=${userId} total=${order.total} ${order.currency}`,
     );
 
+    const confirmTpl = this.emailTemplates.orderConfirmation({
+      orderId: order.id,
+      currency,
+      total: order.total,
+      displayName: [user.firstName, user.lastName].filter(Boolean).join(' ') || null,
+    });
     await this.notifyQueue.add('order_confirmation', {
       type: 'order_confirmation',
       toEmail: user.email,
-      subject: `Order ${order.id} received`,
-      text: `We received your order ${order.id}. Total ${currency} ${order.total}. Complete payment to proceed.`,
+      ...confirmTpl,
     });
     this.logger.log(
       `[order] step=confirmation_email_queued orderId=${order.id}`,
@@ -403,14 +410,18 @@ export class OrdersService {
       this.logger.log(`[order] step=paid_realtime_emitted orderId=${orderId}`);
 
       if (updated.user?.email) {
+        const paidTpl = this.emailTemplates.paymentConfirmed({
+          orderId: updated.id,
+          currency: updated.currency,
+          total: updated.total,
+          displayName:
+            [updated.user.firstName, updated.user.lastName].filter(Boolean).join(' ') || null,
+        });
         this.notifyQueue
           .add('payment_confirmed', {
             type: 'payment_confirmed',
             toEmail: updated.user.email,
-            subject: `Payment confirmed — order ${updated.id}`,
-            text:
-              `Your payment of ${updated.currency} ${updated.total} has been confirmed. ` +
-              `We are now processing your order ${updated.id}.`,
+            ...paidTpl,
           })
           .catch((err: unknown) =>
             this.logger.error(

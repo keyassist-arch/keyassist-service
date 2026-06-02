@@ -72,6 +72,12 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       domesticShippingUsd: 0,
       confidence: 'low',
     },
+    [ProductSource.ETSY]: {
+      // Etsy collects US sales tax on behalf of sellers in most states
+      taxRate: 0.08,
+      domesticShippingUsd: 6.5,
+      confidence: 'medium',
+    },
     [ProductSource.GENERIC]: {
       taxRate: 0.08,
       domesticShippingUsd: 9.99,
