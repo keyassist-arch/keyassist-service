@@ -125,6 +125,13 @@ export class Product {
   @Column({ name: 'deal_type', type: 'varchar', length: 100, nullable: true })
   dealType: string | null;
 
+  /**
+   * Marketplace-specific product identifier (e.g. Amazon ASIN, Nike styleColor).
+   * Populated from `ScrapedProduct.asin`; null when the adapter does not set it.
+   */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  asin: string | null;
+
   /** Adapter-specific extra data (e.g. Apple carrier→URL routing map). */
   @Column({ type: 'jsonb', nullable: true })
   metadata: Record<string, unknown> | null;

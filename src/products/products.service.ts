@@ -104,6 +104,7 @@ export class ProductsService {
       discount: scraped.discount ?? null,
       savingsAmount: scraped.savingsAmount ?? null,
       dealType: scraped.dealType ?? null,
+      asin: scraped.asin ?? null,
       metadata: scraped.metadata ?? null,
       lastScrapedAt: new Date(),
       lastVerifiedAt: new Date(),
@@ -463,11 +464,17 @@ export class ProductsService {
       title: p.title,
       description: p.description,
       brand: p.brand,
+      asin: p.asin ?? null,
       originalPrice: p.originalPrice,
       salePrice: p.salePrice,
       currency: p.currency,
       markupPercent: p.markupPercent,
       images: p.images,
+      /**
+       * Ordered variant axes — use this array to preserve axis display order (e.g. Storage before Color on Apple,
+       * Size before Width on Nike). Keys match `configurationPrices[].variantSelections`.
+       */
+      variants: p.variants ?? [],
       /**
        * Variant axes and their options as a map, e.g. `{ Color: ["Black", "White"], Storage: ["128 GB", "256 GB"] }`.
        * Use `configurationPrices[].variantSelections` to look up the price for the active combination.
