@@ -15,6 +15,7 @@ import { EbayAdapter } from './adapters/ebay.adapter';
 import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { EtsyAdapter } from './adapters/etsy.adapter';
+import { BackMarketAdapter } from './adapters/backmarket.adapter';
 import { GenericAdapter } from './adapters/generic.adapter';
 import { ScrapeRefinementService } from './services/scrape-refinement.service';
 
@@ -55,6 +56,7 @@ export class ScraperService {
     private readonly zara: ZaraAdapter,
     private readonly converse: ConverseAdapter,
     private readonly etsy: EtsyAdapter,
+    private readonly backMarket: BackMarketAdapter,
     private readonly generic: GenericAdapter,
   ) {
     const entries: [ProductSource, ScraperAdapter][] = [
@@ -69,6 +71,7 @@ export class ScraperService {
       [ProductSource.ZARA, zara],
       [ProductSource.CONVERSE, converse],
       [ProductSource.ETSY, etsy],
+      [ProductSource.BACK_MARKET, backMarket],
       [ProductSource.GENERIC, generic],
     ];
     this.adapters = new Map(entries);

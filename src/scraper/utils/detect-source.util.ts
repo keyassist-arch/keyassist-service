@@ -18,5 +18,6 @@ export function detectProductSource(url: string): ProductSource {
   if (h.includes('zara.com')) return ProductSource.ZARA;
   if (h.includes('converse.com')) return ProductSource.CONVERSE;
   if (h.includes('etsy.com')) return ProductSource.ETSY;
+  if (h.includes('backmarket.com') || h.includes('backmarket.co')) return ProductSource.BACK_MARKET;
   return ProductSource.GENERIC;
 }

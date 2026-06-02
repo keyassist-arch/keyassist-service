@@ -28,6 +28,9 @@ import { ImportRealtimeService } from '../realtime/import-realtime.service';
 import { ManualProductImportDto } from './dto/manual-product-import.dto';
 import { CategoryClassifierService } from '../categories/category-classifier.service';
 
+/** Sources that cannot be scraped automatically and require manual product entry. */
+const MANUAL_IMPORT_SOURCES = new Set<ProductSource>([ProductSource.SHEIN]);
+
 const SCRAPE_JOB_OPTS = {
   removeOnComplete: true,
   attempts: 2,
@@ -245,8 +248,8 @@ export class ProductImportService {
           existing.product = p;
         }
       }
-      // Manual (GENERIC) products are not re-scraped; return the existing product directly.
-      if (existing.source === ProductSource.GENERIC) {
+      // Manual products (GENERIC or MANUAL_IMPORT_SOURCES) are not re-scraped; return directly.
+      if (existing.source === ProductSource.GENERIC || MANUAL_IMPORT_SOURCES.has(existing.source)) {
         return existing.product
           ? {
               status: 'completed' as const,
@@ -299,7 +302,7 @@ export class ProductImportService {
 
     const source = this.scraper.detectSource(normalized);
 
-    if (source === ProductSource.GENERIC) {
+    if (source === ProductSource.GENERIC || MANUAL_IMPORT_SOURCES.has(source)) {
       await this.redis.releaseScrapeLock(normalized);
       this.logger.log(
         `[import] step=manual_entry_required url=${previewUrl(normalized)}`,

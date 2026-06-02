@@ -78,6 +78,12 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       domesticShippingUsd: 6.5,
       confidence: 'medium',
     },
+    [ProductSource.BACK_MARKET]: {
+      // Back Market ships refurbished electronics from US sellers; free shipping common
+      taxRate: 0.0,
+      domesticShippingUsd: 0,
+      confidence: 'high',
+    },
     [ProductSource.GENERIC]: {
       taxRate: 0.08,
       domesticShippingUsd: 9.99,

@@ -10,5 +10,6 @@ export enum ProductSource {
   ZARA = 'zara',
   CONVERSE = 'converse',
   ETSY = 'etsy',
+  BACK_MARKET = 'backmarket',
   GENERIC = 'generic',
 }
