@@ -101,10 +101,20 @@ function parseBackMarketHtml(html: string): RawBackMarketData | null {
 
   // Price fallback from data-qa="productpage-product-price"
   if (!result.price) {
-    const priceDom = html.match(
-      /data-qa="productpage-product-price"[^>]*>\s*\$([\d,]+\.?\d*)/,
-    );
-    if (priceDom) result.price = priceDom[1].replace(/,/g, '');
+    // Match the element and look for a price in the next ~300 chars of markup
+    const priceDomRe = /data-qa="productpage-product-price"[^>]*>([\s\S]{0,300})/;
+    const priceDomM = priceDomRe.exec(html);
+    if (priceDomM) {
+      const chunk = priceDomM[1].replace(/<[^>]+>/g, ' ');
+      const pm = chunk.match(/\$([\d,]+\.?\d{2})/);
+      if (pm) result.price = pm[1].replace(/,/g, '');
+    }
+  }
+
+  // Generic price-in-body fallback (any $ amount on the page)
+  if (!result.price) {
+    const m = html.match(/\$([\d,]+\.?\d{2})/);
+    if (m) result.price = m[1].replace(/,/g, '');
   }
 
   // Description fallback
@@ -493,7 +503,43 @@ export class BackMarketAdapter implements ScraperAdapter {
       await new Promise((r) => setTimeout(r, 1500));
 
       const html = await page.content();
+      // Reject Cloudflare / bot-detection interstitials
+      if (html.length < 50_000 || /just a moment|enable javascript|cf-browser-verification/i.test(html)) {
+        this.logger.warn('[backmarket] playwright returned a bot-challenge page — discarding');
+        return null;
+      }
       const data = parseBackMarketHtml(html);
+
+      // If HTML parsing found a title but no price, query the live DOM directly.
+      if (data && !data.price) {
+        const domPrice = await page.evaluate(() => {
+          const selectors = [
+            '[data-qa="productpage-product-price"]',
+            '[data-qa*="price"]',
+            '[data-testid*="price"]',
+            '[class*="price"]',
+          ];
+          for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
+            const text = (el as HTMLElement).innerText?.trim();
+            if (text) {
+              const m = text.match(/[\d,]+\.?\d*/);
+              if (m) return m[0].replace(/,/g, '');
+            }
+          }
+          // Last-resort: scan body text for a price pattern near a $ sign
+          const body = document.body?.innerText ?? '';
+          const m = body.match(/\$\s*([\d,]+\.?\d{2})/);
+          return m ? m[1].replace(/,/g, '') : null;
+        }).catch(() => null);
+
+        if (domPrice) {
+          data.price = domPrice;
+          data.currency = data.currency ?? 'USD';
+        }
+      }
+
       return data;
     } catch (e) {
       this.logger.warn(
