@@ -84,6 +84,18 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       domesticShippingUsd: 0,
       confidence: 'high',
     },
+    [ProductSource.WALMART]: {
+      // Walmart.com ships from US fulfillment centers; free shipping on most orders
+      taxRate: 0.0,
+      domesticShippingUsd: 0,
+      confidence: 'high',
+    },
+    [ProductSource.REEBELO]: {
+      // Reebelo ships refurbished goods from US-based vendors; free shipping typical
+      taxRate: 0.0,
+      domesticShippingUsd: 0,
+      confidence: 'high',
+    },
     [ProductSource.GENERIC]: {
       taxRate: 0.08,
       domesticShippingUsd: 9.99,

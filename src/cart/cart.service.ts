@@ -163,7 +163,12 @@ export class CartService {
     return this.getCart(userId);
   }
 
-  async updateQuantity(userId: string, itemId: string, quantity: number) {
+  async updateItem(
+    userId: string,
+    itemId: string,
+    quantity: number,
+    variantSelection?: Record<string, string>,
+  ) {
     // Load the cart relation to verify ownership without creating a new cart.
     const item = await this.items.findOne({
       where: { id: itemId },
@@ -176,6 +181,9 @@ export class CartService {
       await this.items.remove(item);
     } else {
       item.quantity = quantity;
+      if (variantSelection !== undefined) {
+        item.variantSelection = variantSelection;
+      }
       await this.items.save(item);
     }
     return this.getCart(userId);

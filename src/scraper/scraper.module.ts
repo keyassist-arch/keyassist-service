@@ -14,6 +14,8 @@ import { ZaraAdapter } from './adapters/zara.adapter';
 import { ConverseAdapter } from './adapters/converse.adapter';
 import { EtsyAdapter } from './adapters/etsy.adapter';
 import { BackMarketAdapter } from './adapters/backmarket.adapter';
+import { WalmartAdapter } from './adapters/walmart.adapter';
+import { ReebeloAdapter } from './adapters/reebelo.adapter';
 import { ScraperService } from './scraper.service';
 import { ScrapeRefinementService } from './services/scrape-refinement.service';
 
@@ -35,6 +37,8 @@ import { ScrapeRefinementService } from './services/scrape-refinement.service';
     ConverseAdapter,
     EtsyAdapter,
     BackMarketAdapter,
+    WalmartAdapter,
+    ReebeloAdapter,
     ScraperService,
     ScrapeRefinementService,
   ],

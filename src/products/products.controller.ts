@@ -113,6 +113,67 @@ export class ProductsController {
     );
   }
 
+  /**
+   * Resolve the sale price for a specific variant selection without fetching the full product.
+   * Pass each variant axis as a query param, e.g. `?Size=10&Color=Black`.
+   * Reserved params (`displayCurrency`) are stripped before treating the rest as the selection.
+   * Returns the base `salePrice` when no matching `configurationPrices` row exists.
+   */
+  @Public()
+  @Get(':idOrSlug/variant-price')
+  @ApiOperation({ summary: 'Resolve price for a variant selection (size dropdown)' })
+  @ApiParam({
+    name: 'idOrSlug',
+    description: 'Product UUID or slug',
+    example: 'nike-air-max-90',
+  })
+  @ApiQuery({
+    name: 'displayCurrency',
+    required: false,
+    description: 'ISO 4217 currency code to convert the resolved price into.',
+    example: 'NGN',
+  })
+  async getVariantPrice(
+    @Param('idOrSlug') idOrSlug: string,
+    @Query() query: Record<string, string>,
+  ) {
+    const RESERVED = new Set(['displayCurrency']);
+    const variantSelection: Record<string, string> = {};
+    for (const [key, value] of Object.entries(query)) {
+      if (!RESERVED.has(key) && typeof value === 'string' && value.trim()) {
+        variantSelection[key] = value.trim();
+      }
+    }
+
+    const product = await this.productsService.findByIdOrSlug(idOrSlug);
+    const resolvedPrice = this.productsService.resolveVariantPrice(
+      product,
+      Object.keys(variantSelection).length ? variantSelection : null,
+    );
+
+    let displayPrice = resolvedPrice;
+    const displayCurrency = query['displayCurrency']?.trim().toUpperCase();
+    if (displayCurrency) {
+      if (!isValidCurrencyCode(displayCurrency)) {
+        throw new BadRequestException(
+          `Invalid displayCurrency "${displayCurrency}" — must be a 3-letter ISO 4217 code`,
+        );
+      }
+      const converted = await this.currencyService.convert(
+        parseFloat(resolvedPrice),
+        product.currency,
+        displayCurrency,
+      );
+      displayPrice = converted.toFixed(2);
+    }
+
+    return {
+      price: displayPrice,
+      currency: displayCurrency || product.currency,
+      variantSelection: Object.keys(variantSelection).length ? variantSelection : null,
+    };
+  }
+
   @Public()
   @Get(':idOrSlug')
   @ApiParam({
