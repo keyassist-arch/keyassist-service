@@ -438,6 +438,11 @@ export class AmazonAdapter implements ScraperAdapter {
       const availability = this.resolveAvailability(raw);
       const description = this.buildDescription(raw, productSpecs);
 
+      const ratingValue = raw.rating ? parseFloat(raw.rating) : undefined;
+      const reviewCount = raw.reviewCount
+        ? parseInt(raw.reviewCount.replace(/\D/g, ''), 10) || undefined
+        : undefined;
+
       return {
         title: raw.title,
         price: price.current,
@@ -449,6 +454,9 @@ export class AmazonAdapter implements ScraperAdapter {
         description: description || undefined,
         brand,
         asin,
+        ...(ratingValue != null ? { rating: { value: ratingValue, reviewCount } } : {}),
+        ...(raw.sellerName ? { seller: { name: raw.sellerName } } : {}),
+        ...(productSpecs.length ? { specifications: Object.fromEntries(productSpecs) } : {}),
         variants,
         ...(configurationPrices.length ? { configurationPrices } : {}),
         availability,

@@ -80,6 +80,9 @@ interface WalmartProduct {
   variantProductIdMap?: Record<string, string>;
   numberOfReviews?: number | null;
   averageRating?: number | null;
+  sellerDisplayName?: string | null;
+  sellerName?: string | null;
+  sellerStoreFrontURL?: string | null;
 }
 
 interface WalmartIdml {
@@ -348,6 +351,17 @@ export class WalmartAdapter implements ScraperAdapter {
       });
     }
 
+    const sellerName = product.sellerDisplayName?.trim() || product.sellerName?.trim();
+    const specsRaw = idml?.specifications ?? [];
+    const specifications: Record<string, string> | undefined =
+      specsRaw.length
+        ? Object.fromEntries(
+            specsRaw
+              .filter((s) => s.name && s.value)
+              .map((s) => [s.name!, s.value!]),
+          )
+        : undefined;
+
     return {
       title,
       price,
@@ -355,7 +369,24 @@ export class WalmartAdapter implements ScraperAdapter {
       images,
       description,
       brand: product.brand?.trim() || undefined,
-      asin: product.usItemId ?? undefined,
+      sku: product.usItemId ?? undefined,
+      ...(sellerName
+        ? {
+            seller: {
+              name: sellerName,
+              url: product.sellerStoreFrontURL ?? undefined,
+            },
+          }
+        : {}),
+      ...(reviews?.averageOverallRating != null
+        ? {
+            rating: {
+              value: reviews.averageOverallRating,
+              reviewCount: reviews.totalReviewCount ?? undefined,
+            },
+          }
+        : {}),
+      ...(specifications ? { specifications } : {}),
       compareAtPrice: compareAtPrice ?? undefined,
       savingsAmount: savingsAmount ?? undefined,
       discount: discount ?? undefined,

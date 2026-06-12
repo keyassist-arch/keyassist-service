@@ -18,6 +18,8 @@ interface LlmRefinedShape {
   configurationPrices?: ProductConfigurationPrice[] | null;
 }
 
+const LLM_REFINE_TIMEOUT_MS = 30_000;
+
 /** System message for JSON-only scrape refinement (user prompt has full task). */
 const REFINE_SYSTEM_PROMPT =
   'You are a strict e-commerce scrape normalizer and product copywriter. Reply with a single JSON object only — no markdown, no code fences, no commentary.';
@@ -241,11 +243,19 @@ Return ONLY valid JSON, no markdown.`;
     const prompt = this.buildPrompt(url, scraped, pageText);
 
     try {
-      const content = await this.llm.generate(prompt, {
-        jsonMode: true,
-        systemPrompt: REFINE_SYSTEM_PROMPT,
-        model: this.refineModel(),
-      });
+      const content = await Promise.race([
+        this.llm.generate(prompt, {
+          jsonMode: true,
+          systemPrompt: REFINE_SYSTEM_PROMPT,
+          model: this.refineModel(),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`LLM refine timed out after ${LLM_REFINE_TIMEOUT_MS}ms`)),
+            LLM_REFINE_TIMEOUT_MS,
+          ),
+        ),
+      ]);
 
       if (!content) {
         this.logger.warn('[llm-refine] empty response');

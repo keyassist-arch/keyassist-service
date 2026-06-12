@@ -308,7 +308,7 @@ export class NikeAdapter implements ScraperAdapter {
       images,
       description,
       brand: 'Nike',
-      asin: selected.styleColor,
+      sku: selected.styleColor,
       variants,
       configurationPrices: configurationPrices.length
         ? configurationPrices

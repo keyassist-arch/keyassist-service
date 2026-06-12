@@ -528,7 +528,7 @@ export class ProductImportService {
 
     const scraped = {
       title: dto.title,
-      price: dto.price,
+      price: dto.price.toFixed(2),
       currency: dto.currency,
       images: dto.imageUrls ?? [],
       description: dto.description,

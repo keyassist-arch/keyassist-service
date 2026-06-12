@@ -1,30 +1,52 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { previewText, previewUrl } from '../common/utils/log-preview.util';
 import { ScrapedProduct } from './interfaces/scraped-product.interface';
-import type { ScraperAdapter } from './interfaces/scraper-adapter.interface';
+import {
+  SCRAPER_ADAPTER_TOKEN,
+  type ScraperAdapter,
+} from './interfaces/scraper-adapter.interface';
 import { detectProductSource } from './utils/detect-source.util';
-import { JumiaAdapter } from './adapters/jumia.adapter';
-import { AmazonAdapter } from './adapters/amazon.adapter';
-import { NikeAdapter } from './adapters/nike.adapter';
-import { AppleAdapter } from './adapters/apple.adapter';
-import { SheinAdapter } from './adapters/shein.adapter';
-import { GoatAdapter } from './adapters/goat.adapter';
-import { StockxAdapter } from './adapters/stockx.adapter';
-import { EbayAdapter } from './adapters/ebay.adapter';
-import { ZaraAdapter } from './adapters/zara.adapter';
-import { ConverseAdapter } from './adapters/converse.adapter';
-import { EtsyAdapter } from './adapters/etsy.adapter';
-import { BackMarketAdapter } from './adapters/backmarket.adapter';
-import { WalmartAdapter } from './adapters/walmart.adapter';
-import { ReebeloAdapter } from './adapters/reebelo.adapter';
 import { GenericAdapter } from './adapters/generic.adapter';
 import { ScrapeRefinementService } from './services/scrape-refinement.service';
+
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 2_000;
+
+/**
+ * Transient errors worth retrying: network failures, timeouts, proxy errors,
+ * rate limits (429), and upstream 5xx. Permanent errors (404, bad URL, adapter
+ * logic failures) are not retried — they will not succeed on a second attempt.
+ */
+function isTransientError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('socket hang up') ||
+    msg.includes('network') ||
+    msg.includes('429') ||
+    msg.includes('rate limit') ||
+    msg.includes('503') ||
+    msg.includes('502') ||
+    msg.includes('504')
+  );
+}
 
 @Injectable()
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
   private readonly adapters: Map<ProductSource, ScraperAdapter>;
+
+  constructor(
+    private readonly llmRefine: ScrapeRefinementService,
+    @Inject(SCRAPER_ADAPTER_TOKEN) adapterList: ScraperAdapter[],
+    private readonly generic: GenericAdapter,
+  ) {
+    this.adapters = new Map(adapterList.map((a) => [a.source, a]));
+  }
 
   private logScrapeSummary(
     source: ProductSource,
@@ -45,44 +67,6 @@ export class ScraperService {
     );
   }
 
-  constructor(
-    private readonly llmRefine: ScrapeRefinementService,
-    private readonly jumia: JumiaAdapter,
-    private readonly amazon: AmazonAdapter,
-    private readonly nike: NikeAdapter,
-    private readonly apple: AppleAdapter,
-    private readonly shein: SheinAdapter,
-    private readonly goat: GoatAdapter,
-    private readonly stockx: StockxAdapter,
-    private readonly ebay: EbayAdapter,
-    private readonly zara: ZaraAdapter,
-    private readonly converse: ConverseAdapter,
-    private readonly etsy: EtsyAdapter,
-    private readonly backMarket: BackMarketAdapter,
-    private readonly walmart: WalmartAdapter,
-    private readonly reebelo: ReebeloAdapter,
-    private readonly generic: GenericAdapter,
-  ) {
-    const entries: [ProductSource, ScraperAdapter][] = [
-      [ProductSource.JUMIA, jumia],
-      [ProductSource.AMAZON, amazon],
-      [ProductSource.NIKE, nike],
-      [ProductSource.APPLE, apple],
-      [ProductSource.SHEIN, shein],
-      [ProductSource.GOAT, goat],
-      [ProductSource.STOCKX, stockx],
-      [ProductSource.EBAY, ebay],
-      [ProductSource.ZARA, zara],
-      [ProductSource.CONVERSE, converse],
-      [ProductSource.ETSY, etsy],
-      [ProductSource.BACK_MARKET, backMarket],
-      [ProductSource.WALMART, walmart],
-      [ProductSource.REEBELO, reebelo],
-      [ProductSource.GENERIC, generic],
-    ];
-    this.adapters = new Map(entries);
-  }
-
   detectSource(url: string): ProductSource {
     return detectProductSource(url);
   }
@@ -91,23 +75,46 @@ export class ScraperService {
     const s = source ?? this.detectSource(url);
     const adapter = this.adapters.get(s) ?? this.generic;
     this.logger.log(`[scrape] step=adapter source=${s} url=${previewUrl(url)}`);
-    try {
-      let result = await adapter.scrape(url);
-      if (this.llmRefine.isEnabled()) {
-        result = await this.llmRefine.refine(url, result);
+
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        let result = await adapter.scrape(url);
+        if (this.llmRefine.isEnabled()) {
+          result = await this.llmRefine.refine(url, result);
+        }
+        if (attempt > 1) {
+          this.logger.log(
+            `[scrape] step=recovered source=${s} attempt=${attempt} url=${previewUrl(url)}`,
+          );
+        }
+        this.logger.log(
+          `[scrape] step=ok source=${s} title=${previewText(result.title, 60)}`,
+        );
+        this.logScrapeSummary(s, url, result);
+        return result;
+      } catch (e) {
+        lastError = e;
+        const msg = e instanceof Error ? e.message : String(e);
+
+        if (!isTransientError(e) || attempt === MAX_ATTEMPTS) {
+          this.logger.error(
+            `[scrape] step=fail source=${s} attempt=${attempt}/${MAX_ATTEMPTS} url=${previewUrl(url)}: ${msg}`,
+            e instanceof Error ? e.stack : undefined,
+          );
+          throw e;
+        }
+
+        const delayMs = RETRY_BASE_MS * 2 ** (attempt - 1);
+        this.logger.warn(
+          `[scrape] step=retry source=${s} attempt=${attempt}/${MAX_ATTEMPTS} delayMs=${delayMs} reason=${msg}`,
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
       }
-      this.logger.log(
-        `[scrape] step=ok source=${s} title=${previewText(result.title, 60)}`,
-      );
-      this.logScrapeSummary(s, url, result);
-      return result;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.logger.error(
-        `[scrape] step=fail source=${s} url=${previewUrl(url)}: ${msg}`,
-        e instanceof Error ? e.stack : undefined,
-      );
-      throw e;
     }
+
+    // Unreachable — loop always returns or throws — but satisfies TypeScript.
+    throw lastError;
   }
 }

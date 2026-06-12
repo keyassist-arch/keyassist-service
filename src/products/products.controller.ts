@@ -146,10 +146,14 @@ export class ProductsController {
     }
 
     const product = await this.productsService.findByIdOrSlug(idOrSlug);
+    const hasSelection = Object.keys(variantSelection).length > 0;
     const resolvedPrice = this.productsService.resolveVariantPrice(
       product,
-      Object.keys(variantSelection).length ? variantSelection : null,
+      hasSelection ? variantSelection : null,
     );
+    const matchedRow = hasSelection
+      ? this.productsService.resolveVariantRow(product, variantSelection)
+      : null;
 
     let displayPrice = resolvedPrice;
     const displayCurrency = query['displayCurrency']?.trim().toUpperCase();
@@ -170,7 +174,12 @@ export class ProductsController {
     return {
       price: displayPrice,
       currency: displayCurrency || product.currency,
-      variantSelection: Object.keys(variantSelection).length ? variantSelection : null,
+      variantSelection: hasSelection ? variantSelection : null,
+      // Row-level metadata — lets the frontend disable OOS options and handle re-scrape flows.
+      available: matchedRow?.available ?? true,
+      sku: matchedRow?.sku ?? null,
+      label: matchedRow?.label ?? null,
+      priceNeedsLookup: matchedRow?.metadata?.['priceNeedsLookup'] ?? false,
     };
   }
 

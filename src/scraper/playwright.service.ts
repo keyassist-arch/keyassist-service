@@ -87,6 +87,13 @@ const GEO_PROFILES: Record<string, Omit<GeoProfile, 'geoCode'>> = {
   },
 };
 
+/**
+ * Warn when open context count reaches this level. Each scrape job opens one
+ * context and closes it in a finally block — under normal operation the count
+ * stays at 1–3. A rising count means adapters are not closing their contexts.
+ */
+const CONTEXT_LEAK_WARN_THRESHOLD = 10;
+
 @Injectable()
 export class PlaywrightService implements OnModuleDestroy {
   private readonly logger = new Logger(PlaywrightService.name);
@@ -241,6 +248,18 @@ export class PlaywrightService implements OnModuleDestroy {
     }
   }
 
+  private checkContextLeak(): void {
+    if (!this.browser) return;
+    const open = this.browser.contexts().length;
+    this.logger.debug(`[playwright] openContexts=${open}`);
+    if (open >= CONTEXT_LEAK_WARN_THRESHOLD) {
+      this.logger.warn(
+        `[playwright] openContexts=${open} exceeds threshold=${CONTEXT_LEAK_WARN_THRESHOLD}` +
+          ` — adapters must close their context in a finally block`,
+      );
+    }
+  }
+
   /**
    * Fetch a page via scrape.do first (if SCRAPE_DO_TOKEN is set), falling back to
    * Playwright's own navigation. The returned page is ready for page.evaluate() — close
@@ -255,6 +274,7 @@ export class PlaywrightService implements OnModuleDestroy {
 
     const html = await this.fetchHtmlViaScrapeD0(url, scrapeDoWait);
     const context = await this.newScrapeContext(contextOverrides, url);
+    this.checkContextLeak();
     const page = await context.newPage();
 
     if (html) {

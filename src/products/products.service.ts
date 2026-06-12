@@ -62,9 +62,7 @@ export class ProductsService {
     markupPercent?: string,
   ): Promise<Partial<Product>> {
     const sourceCurrency = (scraped.currency || 'USD').toUpperCase();
-    const rawOrig =
-      parsePriceToDecimalString(scraped.price) ??
-      (typeof scraped.price === 'number' ? scraped.price.toFixed(2) : '0');
+    const rawOrig = parsePriceToDecimalString(scraped.price) ?? '0';
 
     const orig = await this.toUsd(parseFloat(rawOrig), sourceCurrency);
 
@@ -407,45 +405,49 @@ export class ProductsService {
   }
 
   /**
-   * Returns the correct unit price for a product given the buyer's variant selection.
-   * Looks up `configurationPrices` by `variantSelections` (multi-axis) then by
-   * `variantAxis`+`optionValue` (single-axis). Falls back to `salePrice` when there
-   * is no match or no selection.
+   * Finds the `configurationPrices` row that matches the given variant selection.
+   * Multi-axis (variantSelections) takes priority; single-axis (variantAxis+optionValue) is fallback.
+   */
+  resolveVariantRow(
+    product: Product,
+    variantSelection: Record<string, string>,
+  ): ProductConfigurationPrice | null {
+    const rows = product.configurationPrices ?? [];
+    const entries = Object.entries(variantSelection);
+    if (!entries.length || !rows.length) return null;
+
+    for (const row of rows) {
+      if (row.variantSelections) {
+        if (entries.every(([axis, value]) => row.variantSelections![axis] === value)) {
+          return row;
+        }
+      }
+    }
+
+    if (entries.length === 1) {
+      const [axis, value] = entries[0];
+      for (const row of rows) {
+        if (row.variantAxis === axis && row.optionValue === value) return row;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Returns the correct unit sale price (markup applied) for a product given the buyer's
+   * variant selection. Falls back to `salePrice` when there is no match or no selection.
    */
   resolveVariantPrice(
     product: Product,
     variantSelection?: Record<string, string> | null,
   ): string {
-    const rows = product.configurationPrices ?? [];
-    if (!variantSelection || !rows.length) return product.salePrice;
-
-    const entries = Object.entries(variantSelection);
-    if (!entries.length) return product.salePrice;
-
-    // Multi-axis: variantSelections must match ALL selected axes.
-    for (const row of rows) {
-      if (row.variantSelections) {
-        if (
-          entries.every(
-            ([axis, value]) => row.variantSelections![axis] === value,
-          )
-        ) {
-          return row.originalPrice;
-        }
-      }
+    if (!variantSelection || !Object.keys(variantSelection).length) {
+      return product.salePrice;
     }
-
-    // Single-axis fallback: variantAxis + optionValue.
-    if (entries.length === 1) {
-      const [axis, value] = entries[0];
-      for (const row of rows) {
-        if (row.variantAxis === axis && row.optionValue === value) {
-          return row.originalPrice;
-        }
-      }
-    }
-
-    return product.salePrice;
+    const row = this.resolveVariantRow(product, variantSelection);
+    if (!row) return product.salePrice;
+    return this.salePrice(row.originalPrice, product.markupPercent);
   }
 
   toResponse(p: Product) {
@@ -490,13 +492,14 @@ export class ProductsService {
         return {
           label: row.label,
           originalPrice: row.originalPrice,
-          salePrice: row.originalPrice,
+          // Apply the same markup as the main product so per-variant prices stay consistent.
+          salePrice: this.salePrice(row.originalPrice, p.markupPercent),
           partNumber: row.partNumber,
           sku: row.sku,
           variantAxis: row.variantAxis,
           optionValue: row.optionValue,
           variantSelections,
-          currency: row.currency,
+          currency: row.currency ?? p.currency,
           available: row.available,
           displayLabel: row.displayLabel,
           metadata: row.metadata,
