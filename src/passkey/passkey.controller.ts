@@ -15,7 +15,7 @@ import type {
   AuthenticationResponseJSON,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -30,6 +30,8 @@ class RenameCredentialDto {
 }
 
 class FinishRegistrationDto {
+  // The WebAuthn credential response is an opaque object validated by simplewebauthn internally.
+  @IsObject()
   response: RegistrationResponseJSON;
 
   @IsOptional()
