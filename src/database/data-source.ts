@@ -25,6 +25,11 @@ import { AddReconciliationTables1743800000000 } from './migrations/1743800000000
 import { AddOrderDiscount1746720000000 } from './migrations/1746720000000-AddOrderDiscount';
 import { AddOrderShippingFee1746720001000 } from './migrations/1746720001000-AddOrderShippingFee';
 import { CreateShippingRates1746720002000 } from './migrations/1746720002000-CreateShippingRates';
+import { CreateSavedProducts1746720003000 } from './migrations/1746720003000-CreateSavedProducts';
+import { CreatePasskeyCredentials1746720004000 } from './migrations/1746720004000-CreatePasskeyCredentials';
+import { AddOrderLandedCostColumns1746720005000 } from './migrations/1746720005000-AddOrderLandedCostColumns';
+import { CreateCategories1746720006000 } from './migrations/1746720006000-CreateCategories';
+import { AddProductAsin1780272000000 } from './migrations/1780272000000-AddProductAsin';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -60,6 +65,11 @@ export default new DataSource({
     AddOrderDiscount1746720000000,
     AddOrderShippingFee1746720001000,
     CreateShippingRates1746720002000,
+    CreateSavedProducts1746720003000,
+    CreatePasskeyCredentials1746720004000,
+    AddOrderLandedCostColumns1746720005000,
+    CreateCategories1746720006000,
+    AddProductAsin1780272000000,
   ],
   synchronize: false,
 });

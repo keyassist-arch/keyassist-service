@@ -33,6 +33,8 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/dist ./dist
+COPY docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
 
 EXPOSE 3000
 ENV PORT=3000
@@ -40,4 +42,4 @@ ENV PORT=3000
 # Image ships as non-root user `pwuser` (Playwright default)
 USER pwuser
 
-CMD ["node", "dist/main.js"]
+CMD ["./docker-entrypoint.sh"]
