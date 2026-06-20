@@ -74,6 +74,9 @@ export class User {
   })
   totpSetupSecret: string | null;
 
+  @Column({ name: 'stripe_customer_id', type: 'varchar', nullable: true })
+  stripeCustomerId: string | null;
+
   @OneToOne(() => Cart, (c) => c.user)
   cart: Cart | null;
 

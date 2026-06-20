@@ -91,6 +91,10 @@ export class UsersService {
     await this.users.update(userId, { refreshTokenHash: hash });
   }
 
+  async setStripeCustomerId(userId: string, customerId: string): Promise<void> {
+    await this.users.update(userId, { stripeCustomerId: customerId });
+  }
+
   async updatePassword(userId: string, plainPassword: string): Promise<void> {
     const passwordHash = await bcrypt.hash(plainPassword, 10);
     await this.users.update(userId, {

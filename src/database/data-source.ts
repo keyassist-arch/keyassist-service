@@ -12,6 +12,7 @@ import { User } from '../users/entities/user.entity';
 import { Refund } from '../reconciliation/entities/refund.entity';
 import { CustomerIssue } from '../reconciliation/entities/customer-issue.entity';
 import { ShippingRates } from '../shipping/entities/shipping-rates.entity';
+import { SavedPaymentMethod } from '../payment/entities/saved-payment-method.entity';
 import { AddProductRescrapeEnabled1743130800000 } from './migrations/1743130800000-AddProductRescrapeEnabled';
 import { ClearProductFkOnFailedImports1743200000000 } from './migrations/1743200000000-ClearProductFkOnFailedImports';
 import { AddProductSourceShein1743280000000 } from './migrations/1743280000000-AddProductSourceShein';
@@ -30,6 +31,7 @@ import { CreatePasskeyCredentials1746720004000 } from './migrations/174672000400
 import { AddOrderLandedCostColumns1746720005000 } from './migrations/1746720005000-AddOrderLandedCostColumns';
 import { CreateCategories1746720006000 } from './migrations/1746720006000-CreateCategories';
 import { AddProductAsin1780272000000 } from './migrations/1780272000000-AddProductAsin';
+import { AddSavedPaymentMethods1780800000000 } from './migrations/1780800000000-AddSavedPaymentMethods';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -50,6 +52,7 @@ export default new DataSource({
     Refund,
     CustomerIssue,
     ShippingRates,
+    SavedPaymentMethod,
   ],
   migrations: [
     AddProductRescrapeEnabled1743130800000,
@@ -70,6 +73,7 @@ export default new DataSource({
     AddOrderLandedCostColumns1746720005000,
     CreateCategories1746720006000,
     AddProductAsin1780272000000,
+    AddSavedPaymentMethods1780800000000,
   ],
   synchronize: false,
 });

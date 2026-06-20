@@ -112,6 +112,15 @@ export class InitializePaymentDto {
     description: 'Optional Myaza cancel URL override',
   })
   myazaCancelUrl?: string;
+
+  @IsOptional()
+  @IsUUID()
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Saved payment method ID — skips hosted checkout and charges the saved card/PayPal wallet directly',
+  })
+  savedMethodId?: string;
 }
 
 export function normalizePaystackChannels(
