@@ -126,7 +126,7 @@ export class OrdersService {
     this.logger.log(
       `[order] step=transaction_begin userId=${userId} subtotal=${subtotal.toFixed(2)} ` +
         `serviceCharge=${lc.serviceChargeUsd.toFixed(2)} discount=${lc.discountUsd.toFixed(2)} ` +
-        `shipping=${lc.internationalShippingUsd.toFixed(2)} customs=${(lc.customsDutyUsd + lc.customsVatUsd + lc.customsClearingFeeUsd).toFixed(2)} ` +
+        `shipping=${lc.internationalShippingUsd.toFixed(2)} ` +
         `total=${total.toFixed(2)} currency=${currency}`,
     );
 
@@ -156,7 +156,7 @@ export class OrdersService {
         marketplaceTax: lc.marketplaceTaxUsd.toFixed(2),
         marketplaceShipping: lc.marketplaceShippingUsd.toFixed(2),
         domesticHandling: lc.domesticHandlingUsd.toFixed(2),
-        customsTotal: (lc.customsDutyUsd + lc.customsVatUsd + lc.customsClearingFeeUsd).toFixed(2),
+        customsTotal: '0.00',
         fxBuffer: lc.fxBufferUsd.toFixed(2),
         riskBuffer: lc.riskBufferUsd.toFixed(2),
         pricingBreakdown: lc.breakdown,

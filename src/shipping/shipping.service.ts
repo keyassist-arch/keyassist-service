@@ -57,25 +57,13 @@ export class ShippingService {
       destination === 'lagos'
         ? rates.airRateLagosPerLb
         : rates.airRateOutsideLagosPerLb;
-    const minimum =
-      destination === 'lagos'
-        ? rates.airMinimumLagos
-        : rates.airMinimumOutsideLagos;
 
     const breakdown: string[] = [];
 
-    let baseRate: number;
-    if (billableWeight < rates.minWeightLbs) {
-      baseRate = minimum;
-      breakdown.push(
-        `Minimum flat rate (< ${rates.minWeightLbs} lbs, ${destination}): $${minimum.toFixed(2)}`,
-      );
-    } else {
-      baseRate = billableWeight * ratePerLb;
-      breakdown.push(
-        `${billableWeight.toFixed(2)} billable lbs × $${ratePerLb.toFixed(2)}/lb = $${baseRate.toFixed(2)}`,
-      );
-    }
+    const baseRate = billableWeight * ratePerLb;
+    breakdown.push(
+      `${billableWeight.toFixed(2)} billable lbs × $${ratePerLb.toFixed(2)}/lb = $${baseRate.toFixed(2)}`,
+    );
 
     if (dimWeight > weight && length > 0) {
       breakdown.push(

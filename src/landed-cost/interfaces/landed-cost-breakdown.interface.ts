@@ -16,14 +16,10 @@ export interface LandedCostBreakdown {
 
   // ── Logistics costs (USD) ───────────────────────────────────────────────────
   domesticHandlingUsd: number;
+  /** Kingz all-inclusive rate (customs & clearing included in their price) */
   internationalShippingUsd: number;
 
-  // ── Customs (USD) ───────────────────────────────────────────────────────────
-  customsDutyUsd: number;
-  customsVatUsd: number;
-  customsClearingFeeUsd: number;
-
-  // ── Buffers (USD) ────────────────────────────────────────────────────────────
+  // ── Buffers (USD) ───────────────────────────────────────────────────────────
   fxBufferUsd: number;
   riskBufferUsd: number;
 

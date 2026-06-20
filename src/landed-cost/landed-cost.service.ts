@@ -4,10 +4,10 @@ import { Repository } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { CurrencyService } from '../currency/currency.service';
+import { ShippingService } from '../shipping/shipping.service';
 import { SERVICE_CHARGE_RATE, DISCOUNT_RATE, DISCOUNT_THRESHOLD_USD } from '../common/utils/pricing.util';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
-import { NIGERIA_CUSTOMS_RATES } from './rules/customs-rates';
 import type { LandedCostBreakdown } from './interfaces/landed-cost-breakdown.interface';
 import type { LandedCostQuoteDto } from './dto/landed-cost-quote.dto';
 import type { ShippingDestination, ShippingService as ShippingServiceType } from '../shipping/utils/kingz-rates';
@@ -16,6 +16,10 @@ export type CartLineInput = {
   priceUsd: number;
   marketplace: ProductSource;
   qty: number;
+  weightLbs?: number;
+  dimensions?: { lengthIn: number; widthIn: number; heightIn: number };
+  category?: ProductCategory;
+  isTV?: boolean;
 };
 
 export type CartLandedCostOpts = {
@@ -27,33 +31,8 @@ export type CartLandedCostOpts = {
 /** Flat warehouse receiving/processing fee per shipment (USD) */
 const DOMESTIC_HANDLING_FEE_USD = 8;
 
-// Buffers removed — the 10% service charge provides sufficient gross margin
-// to absorb minor price drift and FX movement without charging users twice.
 const FX_BUFFER_RATE = 0;
 const RISK_BUFFER_RATE = 0;
-
-/**
- * Simplified air cargo weight bands (USA → Nigeria).
- * Assumes freight-forwarder consolidation economics, not express courier pricing.
- * Outside-Lagos adds a flat premium for last-mile delivery.
- */
-const CARGO_BANDS_LAGOS: Array<{ maxLbs: number; rateUsd: number }> = [
-  { maxLbs: 2,   rateUsd: 18 },
-  { maxLbs: 5,   rateUsd: 35 },
-  { maxLbs: 10,  rateUsd: 60 },
-  { maxLbs: 20,  rateUsd: 100 },
-  { maxLbs: Infinity, rateUsd: 0 }, // per-lb fallback below
-];
-const CARGO_RATE_PER_LB_HEAVY_LAGOS = 5.5;      // > 20 lbs
-const CARGO_OUTSIDE_LAGOS_PREMIUM = 15;
-
-function cargoRate(weightLbs: number, destination: ShippingDestination): number {
-  const band = CARGO_BANDS_LAGOS.find((b) => weightLbs <= b.maxLbs);
-  const base = band && band.rateUsd > 0
-    ? band.rateUsd
-    : Math.round(weightLbs * CARGO_RATE_PER_LB_HEAVY_LAGOS * 100) / 100;
-  return destination === 'outside_lagos' ? base + CARGO_OUTSIDE_LAGOS_PREMIUM : base;
-}
 
 @Injectable()
 export class LandedCostService {
@@ -63,6 +42,7 @@ export class LandedCostService {
     @InjectRepository(Product)
     private readonly products: Repository<Product>,
     private readonly currencyService: CurrencyService,
+    private readonly shippingService: ShippingService,
   ) {}
 
   async quote(dto: LandedCostQuoteDto): Promise<LandedCostBreakdown> {
@@ -71,25 +51,35 @@ export class LandedCostService {
 
     const estimate = MARKETPLACE_ESTIMATES[marketplace];
     const weightRule = CATEGORY_WEIGHT_RULES[category];
-    const customsRule = NIGERIA_CUSTOMS_RATES[category];
 
     const weight = dto.weightLbs ?? weightRule.weightLbs;
+    const dims = dto.dimensions ?? {
+      lengthIn: weightRule.lengthIn,
+      widthIn: weightRule.widthIn,
+      heightIn: weightRule.heightIn,
+    };
 
     // ── 1. Source marketplace costs ──────────────────────────────────────────
     const productSubtotal = round(productPriceUsd * dto.quantity);
     const marketplaceTax = round(productSubtotal * estimate.taxRate);
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
-    // ── 2. Logistics ─────────────────────────────────────────────────────────
+    // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
     const domesticHandling = DOMESTIC_HANDLING_FEE_USD;
-    const internationalShipping = cargoRate(weight * dto.quantity, destination as ShippingDestination);
+    const isTV = category === 'tv';
+    const kQuote = await this.shippingService.calculate({
+      weight: weight * dto.quantity,
+      length: dims.lengthIn,
+      width: dims.widthIn,
+      height: dims.heightIn * dto.quantity, // stack height for qty > 1
+      destination: destination as ShippingDestination,
+      service: shippingService === 'air' ? 'air' : 'ocean_small',
+      isTV,
+      bulkCommercial: false,
+    });
+    const internationalShipping = kQuote.total;
 
-    // ── 3. Customs (product subtotal basis — no CIF pyramiding) ─────────────
-    const customsDuty = round(productSubtotal * customsRule.combinedRate);
-    const customsVat = 0;
-    const customsClearingFee = 0;
-
-    // ── 4. Buffers (product subtotal basis only) ─────────────────────────────
+    // ── 3. Buffers (product subtotal basis only) ─────────────────────────────
     const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
 
@@ -102,7 +92,7 @@ export class LandedCostService {
     // ── 6. Grand total ───────────────────────────────────────────────────────
     const logisticsCost =
       marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + customsDuty;
+      internationalShipping;
     const totalUsd = round(
       productSubtotal + logisticsCost + fxBuffer + riskBuffer + serviceCharge - discount,
     );
@@ -123,7 +113,7 @@ export class LandedCostService {
 
     // ── 8. Breakdown lines ───────────────────────────────────────────────────
     const importAndDelivery =
-      marketplaceTax + marketplaceShipping + domesticHandling + internationalShipping + customsDuty;
+      marketplaceTax + marketplaceShipping + domesticHandling + internationalShipping;
     const breakdown = buildBreakdown({
       productSubtotal, importAndDelivery,
       shippingService: shippingService as ShippingServiceType,
@@ -148,9 +138,6 @@ export class LandedCostService {
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
       internationalShippingUsd: internationalShipping,
-      customsDutyUsd: customsDuty,
-      customsVatUsd: customsVat,
-      customsClearingFeeUsd: customsClearingFee,
       fxBufferUsd: fxBuffer,
       riskBufferUsd: riskBuffer,
       serviceChargeUsd: serviceCharge,
@@ -177,7 +164,6 @@ export class LandedCostService {
 
     const { destination, shippingService, category } = opts;
     const weightRule = CATEGORY_WEIGHT_RULES[category];
-    const customsRule = NIGERIA_CUSTOMS_RATES[category];
 
     // ── 1. Source marketplace costs ──────────────────────────────────────────
     const productSubtotal = round(lines.reduce((s, l) => s + l.priceUsd * l.qty, 0));
@@ -202,18 +188,29 @@ export class LandedCostService {
     marketplaceTax = round(marketplaceTax);
     marketplaceShipping = round(marketplaceShipping);
 
-    // ── 2. Logistics ─────────────────────────────────────────────────────────
+    // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
+    // Aggregate all lines into a single billable weight for Kingz.
+    // Each line contributes its own actual weight; dimensions use category defaults
+    // unless the caller provides per-line dimensions.
     const domesticHandling = DOMESTIC_HANDLING_FEE_USD;
+    let totalWeight = 0;
+    let hasTV = false;
+    for (const line of lines) {
+      const lineWeightRule = CATEGORY_WEIGHT_RULES[line.category ?? category];
+      totalWeight += (line.weightLbs ?? lineWeightRule.weightLbs) * line.qty;
+      if (line.category === 'tv' || (!line.category && category === 'tv')) hasTV = true;
+    }
+    const kQuote = await this.shippingService.calculate({
+      weight: totalWeight,
+      destination,
+      service: shippingService === 'air' ? 'air' : 'ocean_small',
+      isTV: hasTV,
+      bulkCommercial: false,
+    });
+    const internationalShipping = kQuote.total;
     const totalQty = lines.reduce((s, l) => s + l.qty, 0);
-    const totalWeight = weightRule.weightLbs * totalQty;
-    const internationalShipping = cargoRate(totalWeight, destination);
 
-    // ── 3. Customs (product subtotal basis — no CIF pyramiding) ─────────────
-    const customsDuty = round(productSubtotal * customsRule.combinedRate);
-    const customsVat = 0;
-    const customsClearingFee = 0;
-
-    // ── 4. Buffers (product subtotal basis only) ─────────────────────────────
+    // ── 3. Buffers (product subtotal basis only) ─────────────────────────────
     const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
 
@@ -227,7 +224,7 @@ export class LandedCostService {
     // ── 6. Grand total ───────────────────────────────────────────────────────
     const logisticsCost =
       marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + customsDuty;
+      internationalShipping;
     const totalUsd = round(
       productSubtotal + logisticsCost + fxBuffer + riskBuffer + serviceCharge - discount,
     );
@@ -238,7 +235,7 @@ export class LandedCostService {
     ).marketplace;
 
     const importAndDelivery =
-      marketplaceTax + marketplaceShipping + domesticHandling + internationalShipping + customsDuty;
+      marketplaceTax + marketplaceShipping + domesticHandling + internationalShipping;
     const breakdown = buildBreakdown({
       productSubtotal, importAndDelivery,
       shippingService,
@@ -250,7 +247,8 @@ export class LandedCostService {
 
     this.logger.log(
       `[landed-cost] cart lines=${lines.length} category=${category} ` +
-      `destination=${destination} totalUsd=${totalUsd}`,
+      `destination=${destination} actualWeightLbs=${totalWeight.toFixed(2)} ` +
+      `billableWeightLbs=${kQuote.billableWeight} intlShipping=${internationalShipping} totalUsd=${totalUsd}`,
     );
 
     return {
@@ -264,9 +262,6 @@ export class LandedCostService {
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
       internationalShippingUsd: internationalShipping,
-      customsDutyUsd: customsDuty,
-      customsVatUsd: customsVat,
-      customsClearingFeeUsd: customsClearingFee,
       fxBufferUsd: fxBuffer,
       riskBufferUsd: riskBuffer,
       serviceChargeUsd: serviceCharge,

@@ -6,8 +6,7 @@ import { UpdateShippingRatesDto } from './dto/update-shipping-rates.dto';
 import {
   AIR_MINIMUM_LAGOS,
   AIR_MINIMUM_OUTSIDE_LAGOS,
-  AIR_RATE_LAGOS_PER_LB,
-  AIR_RATE_OUTSIDE_LAGOS_PER_LB,
+  AIR_RATE_PER_LB,
   BULK_COMMERCIAL_SURCHARGE,
   DIM_DIVISOR,
   MIN_WEIGHT_LBS,
@@ -28,8 +27,8 @@ export type ResolvedRates = {
 };
 
 const DEFAULTS: ResolvedRates = {
-  airRateLagosPerLb: AIR_RATE_LAGOS_PER_LB,
-  airRateOutsideLagosPerLb: AIR_RATE_OUTSIDE_LAGOS_PER_LB,
+  airRateLagosPerLb: AIR_RATE_PER_LB,
+  airRateOutsideLagosPerLb: AIR_RATE_PER_LB,
   dimDivisor: DIM_DIVISOR,
   airMinimumLagos: AIR_MINIMUM_LAGOS,
   airMinimumOutsideLagos: AIR_MINIMUM_OUTSIDE_LAGOS,
