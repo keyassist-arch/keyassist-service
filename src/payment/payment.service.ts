@@ -386,38 +386,20 @@ export class PaymentService {
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not payable in current state');
     }
-    const { baseUrl, sessionsPath, apiKey, chain, token, webhookUrl } =
+    const { baseUrl, sessionsPath, apiKey, chain, token, expiresInMinutes, webhookUrl } =
       this.myazaConfig();
     const sessionUrl = this.myazaSessionUrl(baseUrl, sessionsPath);
     void dto;
     const tokenUpper = token.trim().toUpperCase();
-    // Orders are always priced in USD — send USD as the local currency so Myaza
-    // converts against the correct base amount regardless of the user's locale.
-    const localCurrency = 'USD';
-
-    const quoteChain =
-      this.config.get<string>('MYAZA_QUOTE_CHAIN')?.trim() || chain;
-
-    const quotedAmount = await this.fetchMyazaQuote(
-      apiKey,
-      baseUrl,
-      quoteChain,
-      token,
-      order.total,
-      localCurrency,
-    );
-    this.logger.log(
-      `[payment] step=myaza_quote orderId=${order.id} chain=${quoteChain} ` +
-        `token=${token} localAmount=${order.total} localCurrency=${localCurrency} ` +
-        `quotedAmount=${quotedAmount ?? 'unavailable'}`,
-    );
+    const localCurrency = order.currency.toUpperCase();
 
     const body: Record<string, unknown> = {
       localAmount: order.total,
       localCurrency,
-      ...(quotedAmount ? { amount: quotedAmount } : {}),
       chain,
       token,
+      expirySeconds: expiresInMinutes * 60,
+      label: `Order ${order.id}`,
       ...(webhookUrl ? { webhookUrl } : {}),
     };
     const headers = this.buildMyazaRequestHeaders(apiKey);
@@ -444,7 +426,7 @@ export class PaymentService {
         if (status === 404) {
           throw new BadRequestException(
             'Myaza returned 404 for the session URL. ' +
-              'Set MYAZA_BASE_URL to the API host only (e.g. https://api.myaza.io) and, ' +
+              'Set MYAZA_BASE_URL to the API host only (e.g. https://business.myaza.app for production, https://api.myaza.io for dev) and, ' +
               'if Myaza changed their API, set MYAZA_SESSIONS_PATH to the path they document for creating sessions.',
           );
         }
@@ -480,7 +462,7 @@ export class PaymentService {
         depositAddress,
         chain: payload?.chain ?? chain,
         token: payload?.symbol || payload?.token || token,
-        amount: payload?.amount || payload?.amountExpected || order.total,
+        amount: payload?.amount || payload?.amountExpected || null,
       },
     });
     const responsePayload = {
@@ -493,7 +475,7 @@ export class PaymentService {
         payload?.qrCode || payload?.qrCodeDataUrl || payload?.qrCodeUrl || null,
       chain: payload?.chain ?? chain,
       token: payload?.symbol || payload?.token || token,
-      amount: payload?.amount || payload?.amountExpected || order.total,
+      amount: payload?.amount || payload?.amountExpected || null,
       status: payload?.status ?? 'pending',
       expiresAt: payload?.expiresAt ?? null,
       createdAt: payload?.createdAt ?? null,
@@ -933,12 +915,24 @@ export class PaymentService {
     amount?: string;
     symbol?: string;
     id?: string;
+    label?: string;
     metadata?: { orderId?: string };
   }) {
-    const orderId = data.metadata?.orderId || data.reference;
     const status = (data.status || '').toLowerCase();
+
+    // Resolve orderId: Myaza sends the session id (stored as checkoutId), not our internal orderId.
+    // Fall back to metadata or reference for any future Myaza webhook shape changes.
+    let orderId = data.metadata?.orderId || data.reference || null;
+    if (!orderId && data.id) {
+      const order = await this.ordersService.findByCheckoutId(data.id);
+      if (order) {
+        orderId = order.id;
+      }
+    }
+
     this.logger.log(
       `[payment] step=myaza_webhook_received orderId=${orderId ?? 'missing'} ` +
+        `myazaSessionId=${data.id ?? 'missing'} ` +
         `status=${status || 'missing'} payload=${this.safeJson(data)}`,
     );
     if (

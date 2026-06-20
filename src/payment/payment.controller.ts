@@ -218,6 +218,7 @@ export class PaymentController {
         amount?: string;
         symbol?: string;
         id?: string;
+        label?: string;
         metadata?: { orderId?: string };
       };
       reference?: string;
@@ -230,6 +231,7 @@ export class PaymentController {
       amount?: string;
       symbol?: string;
       id?: string;
+      label?: string;
       metadata?: { orderId?: string };
     };
     this.logger.log(

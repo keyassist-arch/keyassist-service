@@ -166,7 +166,7 @@ class EnvironmentVariables {
   @IsOptional()
   MYAZA_QUOTE_CHAIN?: string;
 
-  /** Override URL for the POS sessions quote endpoint (default: https://secureapi.gridlog.io/api/v1/pos/sessions/quote) */
+  /** Override URL for the POS sessions quote endpoint (default: {MYAZA_BASE_URL}/api/v1/pos/sessions/quote) */
   @IsString()
   @IsOptional()
   MYAZA_QUOTE_URL?: string;

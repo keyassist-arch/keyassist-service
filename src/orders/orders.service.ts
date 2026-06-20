@@ -281,6 +281,15 @@ export class OrdersService {
     return o;
   }
 
+  async findByCheckoutId(checkoutId: string): Promise<Order | null> {
+    return this.orders
+      .createQueryBuilder('o')
+      .where(`o.payment_method_details @> :val::jsonb`, {
+        val: JSON.stringify({ checkoutId }),
+      })
+      .getOne();
+  }
+
   async setStripeCheckoutSession(
     orderId: string,
     userId: string,
