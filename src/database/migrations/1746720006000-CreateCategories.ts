@@ -3,7 +3,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class CreateCategories1746720006000 implements MigrationInterface {
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
-      CREATE TABLE "categories" (
+      CREATE TABLE IF NOT EXISTS "categories" (
         "id"          uuid          NOT NULL DEFAULT uuid_generate_v4(),
         "name"        varchar       NOT NULL,
         "slug"        varchar       NOT NULL,
@@ -20,13 +20,25 @@ export class CreateCategories1746720006000 implements MigrationInterface {
 
     await queryRunner.query(`
       ALTER TABLE "products"
-        ADD COLUMN IF NOT EXISTS "category_id" uuid,
-        ADD CONSTRAINT "fk_products_category"
-          FOREIGN KEY ("category_id") REFERENCES "categories"("id") ON DELETE SET NULL
+        ADD COLUMN IF NOT EXISTS "category_id" uuid
     `);
 
     await queryRunner.query(`
-      CREATE INDEX "idx_products_category" ON "products" ("category_id")
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.table_constraints
+          WHERE constraint_name = 'fk_products_category' AND table_name = 'products'
+        ) THEN
+          ALTER TABLE "products"
+            ADD CONSTRAINT "fk_products_category"
+              FOREIGN KEY ("category_id") REFERENCES "categories"("id") ON DELETE SET NULL;
+        END IF;
+      END $$
+    `);
+
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "idx_products_category" ON "products" ("category_id")
     `);
   }
 
@@ -37,6 +49,6 @@ export class CreateCategories1746720006000 implements MigrationInterface {
         DROP CONSTRAINT IF EXISTS "fk_products_category",
         DROP COLUMN IF EXISTS "category_id"
     `);
-    await queryRunner.query(`DROP TABLE "categories"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "categories"`);
   }
 }

@@ -3,7 +3,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class CreateSavedProducts1746720003000 implements MigrationInterface {
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
-      CREATE TABLE "saved_products" (
+      CREATE TABLE IF NOT EXISTS "saved_products" (
         "id"         uuid              NOT NULL DEFAULT uuid_generate_v4(),
         "user_id"    uuid              NOT NULL,
         "product_id" uuid              NOT NULL,
@@ -17,11 +17,11 @@ export class CreateSavedProducts1746720003000 implements MigrationInterface {
       )
     `);
     await queryRunner.query(`
-      CREATE INDEX "idx_saved_products_user" ON "saved_products" ("user_id")
+      CREATE INDEX IF NOT EXISTS "idx_saved_products_user" ON "saved_products" ("user_id")
     `);
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP TABLE "saved_products"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "saved_products"`);
   }
 }
