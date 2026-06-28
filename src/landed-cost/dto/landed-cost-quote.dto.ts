@@ -97,4 +97,14 @@ export class LandedCostQuoteDto {
   @IsString()
   @IsOptional()
   displayCurrency?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Actual marketplace tax in USD scraped from the product page or checkout simulation. ' +
+      'When provided this bypasses the per-marketplace estimate so the quote reflects the real tax.',
+  })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  taxAmountUsd?: number;
 }

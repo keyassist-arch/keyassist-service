@@ -5,7 +5,7 @@ import { Product } from '../products/entities/product.entity';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { CurrencyService } from '../currency/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
-import { SERVICE_CHARGE_RATE, DISCOUNT_RATE, DISCOUNT_THRESHOLD_USD } from '../common/utils/pricing.util';
+import { computePlatformFee, DISCOUNT_RATE, DISCOUNT_THRESHOLD_USD } from '../common/utils/pricing.util';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
 import type { LandedCostBreakdown } from './interfaces/landed-cost-breakdown.interface';
@@ -61,7 +61,11 @@ export class LandedCostService {
 
     // ── 1. Source marketplace costs ──────────────────────────────────────────
     const productSubtotal = round(productPriceUsd * dto.quantity);
-    const marketplaceTax = round(productSubtotal * estimate.taxRate);
+    // Prefer an actual tax amount from the scraper/checkout over the flat estimate.
+    const marketplaceTax =
+      dto.taxAmountUsd != null
+        ? round(dto.taxAmountUsd)
+        : round(productSubtotal * estimate.taxRate);
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -84,7 +88,7 @@ export class LandedCostService {
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
 
     // ── 5. Our margin ────────────────────────────────────────────────────────
-    const serviceCharge = round(productSubtotal * SERVICE_CHARGE_RATE);
+    const serviceCharge = computePlatformFee(productSubtotal);
     const discount = productSubtotal > DISCOUNT_THRESHOLD_USD
       ? round(productSubtotal * DISCOUNT_RATE)
       : 0;
@@ -120,7 +124,7 @@ export class LandedCostService {
       destination: destination as ShippingDestination,
       internationalShipping,
       serviceCharge, discount,
-      totalUsd, totalDisplay, targetCurrency,
+      totalUsd,
     });
 
     this.logger.log(
@@ -215,7 +219,7 @@ export class LandedCostService {
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
 
     // ── 5. Margin ────────────────────────────────────────────────────────────
-    const serviceCharge = round(productSubtotal * SERVICE_CHARGE_RATE);
+    const serviceCharge = computePlatformFee(productSubtotal);
     const discount =
       productSubtotal > DISCOUNT_THRESHOLD_USD
         ? round(productSubtotal * DISCOUNT_RATE)
@@ -242,7 +246,7 @@ export class LandedCostService {
       destination,
       internationalShipping,
       serviceCharge, discount,
-      totalUsd, totalDisplay: totalUsd, targetCurrency: 'USD',
+      totalUsd,
     });
 
     this.logger.log(
@@ -339,8 +343,6 @@ function buildBreakdown(parts: {
   serviceCharge: number;
   discount: number;
   totalUsd: number;
-  totalDisplay: number;
-  targetCurrency: string;
 }): string[] {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const dest = parts.destination === 'outside_lagos' ? 'outside Lagos' : 'Lagos';
@@ -358,10 +360,6 @@ function buildBreakdown(parts: {
 
   lines.push(`─────────────────────────────`);
   lines.push(`Estimated total (USD): ${fmt(parts.totalUsd)}`);
-
-  if (parts.targetCurrency !== 'USD') {
-    lines.push(`Estimated total (${parts.targetCurrency}): ${parts.totalDisplay.toFixed(2)}`);
-  }
 
   return lines;
 }

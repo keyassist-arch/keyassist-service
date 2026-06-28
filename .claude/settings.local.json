@@ -61,7 +61,8 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\USER\\\\Documents\\\\code\\\\unified-commerce\\\\src\" -Directory)",
       "Bash(Select-Object Name)",
       "Bash(python3 *)",
-      "WebFetch(domain:www.kingzlogistics.com)"
+      "WebFetch(domain:www.kingzlogistics.com)",
+      "WebFetch(domain:shareshopshipstore.com)"
     ]
   }
 }

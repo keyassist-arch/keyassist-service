@@ -104,6 +104,8 @@ export class ProductsService {
       dealType: scraped.dealType ?? null,
       asin: scraped.asin ?? null,
       metadata: scraped.metadata ?? null,
+      observedTaxAmountUsd:
+        scraped.taxAmountUsd != null ? scraped.taxAmountUsd.toFixed(2) : null,
       lastScrapedAt: new Date(),
       lastVerifiedAt: new Date(),
     };
@@ -238,6 +240,10 @@ export class ProductsService {
 
   async disableRescrape(id: string): Promise<void> {
     await this.products.update({ id }, { rescrapeEnabled: false });
+  }
+
+  async updateObservedTax(id: string, taxAmountUsd: number): Promise<void> {
+    await this.products.update({ id }, { observedTaxAmountUsd: taxAmountUsd.toFixed(2) });
   }
 
   async remove(id: string): Promise<void> {

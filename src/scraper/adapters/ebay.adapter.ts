@@ -160,7 +160,19 @@ function parseEbayHtml(html: string, iid: string | null): RawEbayData | null {
       : productNode.image
         ? [productNode.image]
         : [];
-    result.images.push(...imgs.map((x) => String(x)).filter((x) => /^https?:\/\//i.test(x)));
+    result.images.push(
+      ...imgs
+        .map((x) => {
+          if (typeof x === 'string') return x;
+          // eBay often uses ImageObject nodes: { "@type": "ImageObject", "url": "..." }
+          if (x && typeof x === 'object') {
+            const obj = x as { url?: unknown; contentUrl?: unknown };
+            return String(obj.url ?? obj.contentUrl ?? '');
+          }
+          return '';
+        })
+        .filter((x) => /^https?:\/\//i.test(x)),
+    );
 
     const offersRaw = productNode.offers;
     const offerList: Record<string, unknown>[] = Array.isArray(offersRaw)
@@ -382,7 +394,16 @@ export class EbayAdapter implements ScraperAdapter {
             ? productNode.image
             : productNode.image ? [productNode.image] : [];
           result.images.push(
-            ...imgs.map((x) => String(x)).filter((x) => /^https?:\/\//i.test(x)),
+            ...imgs
+              .map((x) => {
+                if (typeof x === 'string') return x;
+                if (x && typeof x === 'object') {
+                  const obj = x as { url?: unknown; contentUrl?: unknown };
+                  return String(obj.url ?? obj.contentUrl ?? '');
+                }
+                return '';
+              })
+              .filter((x) => /^https?:\/\//i.test(x)),
           );
 
           const offersRaw = productNode.offers;
@@ -450,15 +471,20 @@ export class EbayAdapter implements ScraperAdapter {
         if (!result.images.length) {
           result.images.push(
             ...Array.from(
-              document.querySelectorAll('img[src*="ebayimg.com"], img[data-zoom-src*="ebayimg.com"]'),
+              document.querySelectorAll(
+                'img[src*="ebayimg.com"], img[data-zoom-src*="ebayimg.com"], img[data-src*="ebayimg.com"]',
+              ),
             )
-              .map(
-                (img) =>
-                  (img as HTMLImageElement).src ||
-                  (img as HTMLImageElement).getAttribute('data-zoom-src') ||
-                  '',
-              )
-              .filter(Boolean),
+              .map((img) => {
+                const el = img as HTMLImageElement;
+                // Prefer data-zoom-src (high-res); fall back to data-src (lazy load) then src.
+                return (
+                  el.getAttribute('data-zoom-src') ||
+                  el.getAttribute('data-src') ||
+                  (el.src?.includes('ebayimg.com') ? el.src : '')
+                );
+              })
+              .filter((u) => /^https?:\/\//i.test(u)),
           );
         }
         if (!result.images.length) {

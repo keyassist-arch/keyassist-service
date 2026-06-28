@@ -28,6 +28,7 @@ import { SavesModule } from './saves/saves.module';
 import { PasskeyModule } from './passkey/passkey.module';
 import { LandedCostModule } from './landed-cost/landed-cost.module';
 import { CategoriesModule } from './categories/categories.module';
+import { WannaBuyModule } from './wanna-buy/wanna-buy.module';
 import { ApiRootController } from './api-root.controller';
 import { HealthController } from './health.controller';
 
@@ -115,6 +116,7 @@ import { HealthController } from './health.controller';
     PasskeyModule,
     LandedCostModule,
     CategoriesModule,
+    WannaBuyModule,
   ],
   controllers: [HealthController, ApiRootController],
   providers: [

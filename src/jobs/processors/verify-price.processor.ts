@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { QUEUE_VERIFY_PRICE } from '../queue.constants';
 import { ProductsService } from '../../products/products.service';
 import { ScraperService } from '../../scraper/scraper.service';
+import { CheckoutSimulatorService } from '../../scraper/services/checkout-simulator.service';
 
 @Processor(QUEUE_VERIFY_PRICE, {
   /**
@@ -19,6 +20,7 @@ export class VerifyPriceProcessor extends WorkerHost {
   constructor(
     private readonly productsService: ProductsService,
     private readonly scraper: ScraperService,
+    private readonly checkoutSimulator: CheckoutSimulatorService,
   ) {
     super();
   }
@@ -59,11 +61,11 @@ export class VerifyPriceProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('failed')
-  onJobFailed(
+  async onJobFailed(
     job: Job<{ productId: string }> | undefined,
     err: Error,
     prev: string,
-  ): void {
+  ): Promise<void> {
     const attemptsLeft =
       job != null
         ? (job.opts.attempts ?? 1) - (job.attemptsMade ?? 0)
@@ -73,6 +75,21 @@ export class VerifyPriceProcessor extends WorkerHost {
         `productId=${job?.data?.productId} prevState=${prev} attemptsLeft=${attemptsLeft ?? 'n/a'}: ${err.message}`,
       err.stack,
     );
+
+    // On permanent failure, remove the job so the jobId slot is freed.
+    // Without this, jobId: 'rescrape-<productId>' would stay in the failed set
+    // and BullMQ would silently drop every subsequent add() with the same jobId,
+    // meaning the cron could never retry the product.
+    if (job != null && attemptsLeft === 0) {
+      this.logger.warn(
+        `[job:verify_price] worker=permanent_failure jobId=${String(job.id)} productId=${job.data.productId} — removing to free jobId slot for next cron tick`,
+      );
+      await job.remove().catch((removeErr: unknown) =>
+        this.logger.error(
+          `[job:verify_price] worker=remove_failed jobId=${String(job.id)}: ${removeErr instanceof Error ? removeErr.message : String(removeErr)}`,
+        ),
+      );
+    }
   }
 
   @OnWorkerEvent('error')
@@ -115,6 +132,19 @@ export class VerifyPriceProcessor extends WorkerHost {
     this.logger.log(
       `[job:verify_price] step=done productId=${productId} price=${scraped.price}`,
     );
+
+    // Simulate guest checkout to capture actual tax for this address.
+    // Fire-and-forget on failure — never fails the verify-price job.
+    const taxAmountUsd = await this.checkoutSimulator.simulate(
+      product.sourceUrl,
+      product.source,
+    );
+    if (taxAmountUsd !== null) {
+      await this.productsService.updateObservedTax(productId, taxAmountUsd);
+      this.logger.log(
+        `[job:verify_price] step=tax_simulated productId=${productId} taxAmountUsd=${taxAmountUsd.toFixed(2)}`,
+      );
+    }
     // Errors propagate uncaught — BullMQ catches them, triggers the failed event,
     // and respects the retry/backoff config set in QueuesModule defaultJobOptions.
   }

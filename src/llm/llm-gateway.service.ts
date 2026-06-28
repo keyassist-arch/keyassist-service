@@ -175,7 +175,13 @@ export class LlmGatewayService implements OnModuleInit {
 
       const text = response.text?.trim();
       if (!text) {
-        throw new Error(`Gemini returned empty content (model=${model})`);
+        const finishReason = response.candidates?.[0]?.finishReason ?? 'unknown';
+        // Common causes: SAFETY (content filtered), MAX_TOKENS (response truncated),
+        // RECITATION (training data refusal). Caller (ScrapeRefinementService) falls back gracefully.
+        this.logger.warn(
+          `[llm] step=empty_content provider=gemini model=${model} finishReason=${String(finishReason)}`,
+        );
+        throw new Error(`Gemini returned empty content (model=${model} finishReason=${String(finishReason)})`);
       }
 
       const usage = response.usageMetadata;
@@ -199,10 +205,14 @@ export class LlmGatewayService implements OnModuleInit {
         );
         throw new Error(`Gemini request timed out after ${this.timeoutMs}ms`);
       }
-      this.logger.error(
-        `[llm] step=api_error provider=gemini model=${model}: ${e instanceof Error ? e.message : String(e)}`,
-        e instanceof Error ? e.stack : undefined,
-      );
+      // Empty-content errors are already logged at warn level above.
+      const alreadyLogged = e instanceof Error && e.message.startsWith('Gemini returned empty content');
+      if (!alreadyLogged) {
+        this.logger.error(
+          `[llm] step=api_error provider=gemini model=${model}: ${e instanceof Error ? e.message : String(e)}`,
+          e instanceof Error ? e.stack : undefined,
+        );
+      }
       throw e;
     } finally {
       clearTimeout(timer);

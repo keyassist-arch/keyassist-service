@@ -17,15 +17,16 @@ import type { PaymentMethodDetails } from '../payment/types/payment-method-detai
 import { OrderStatus } from '../common/enums/order-status.enum';
 import { CartService } from '../cart/cart.service';
 import { ProductsService } from '../products/products.service';
-import { ScraperService } from '../scraper/scraper.service';
 import { UsersService } from '../users/users.service';
 import { ShippingAddress } from '../users/entities/user.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
+import { QUEUE_SEND_NOTIFICATION, QUEUE_VERIFY_PRICE } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { LandedCostService } from '../landed-cost/landed-cost.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
+import { WannaBuyItem } from '../wanna-buy/entities/wanna-buy-item.entity';
+import { WannaBuyItemStatus } from '../common/enums/wanna-buy-item-status.enum';
 
 @Injectable()
 export class OrdersService {
@@ -36,13 +37,16 @@ export class OrdersService {
     private readonly orders: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItems: Repository<OrderItem>,
+    @InjectRepository(WannaBuyItem)
+    private readonly wannaBuyItems: Repository<WannaBuyItem>,
     private readonly dataSource: DataSource,
     private readonly cartService: CartService,
     private readonly productsService: ProductsService,
-    private readonly scraper: ScraperService,
     private readonly usersService: UsersService,
     @InjectQueue(QUEUE_SEND_NOTIFICATION)
     private readonly notifyQueue: Queue<SendNotificationJob>,
+    @InjectQueue(QUEUE_VERIFY_PRICE)
+    private readonly verifyPriceQueue: Queue<{ productId: string }>,
     private readonly orderRealtime: OrderRealtimeService,
     private readonly landedCostService: LandedCostService,
     private readonly emailTemplates: EmailTemplateService,
@@ -69,33 +73,27 @@ export class OrdersService {
             );
           })();
 
-    // Scrape all cart items in parallel — each scrape is 5-30 s, sequential adds up fast.
+    // Use cached prices from the DB — avoids a 5-30 s scrape per item at checkout.
+    // Background verify-price jobs are enqueued after the order is saved so prices
+    // stay fresh for fulfillment without blocking the user.
     const lines = await Promise.all(
       cart.items.map(async (line) => {
         const product = await this.productsService.findById(line.productId);
         this.logger.log(
-          `[order] step=price_refresh productId=${line.productId} qty=${line.quantity}`,
-        );
-        const scraped = await this.scraper.scrape(
-          product.sourceUrl,
-          product.source,
-        );
-        const refreshed = await this.productsService.refreshPriceFromScrape(
-          product,
-          scraped,
+          `[order] step=price_from_cache productId=${line.productId} qty=${line.quantity} lastScrapedAt=${product.lastScrapedAt?.toISOString() ?? 'never'}`,
         );
         const unitPrice = this.productsService.resolveVariantPrice(
-          refreshed,
+          product,
           line.variantSelection,
         );
         return {
-          productId: refreshed.id,
-          title: refreshed.title,
+          productId: product.id,
+          title: product.title,
           price: unitPrice,
-          currency: refreshed.currency,
-          source: refreshed.source,
+          currency: product.currency,
+          source: product.source,
           qty: line.quantity,
-          images: refreshed.images,
+          images: product.images,
           variant: line.variantSelection,
         };
       }),
@@ -195,6 +193,24 @@ export class OrdersService {
     this.logger.log(
       `[order] step=created orderId=${order.id} userId=${userId} total=${order.total} ${order.currency}`,
     );
+
+    // Enqueue a background price-verify job for each purchased product so the catalog
+    // stays fresh for fulfillment. Fire-and-forget — never block the checkout response.
+    const seenProducts = new Set<string>();
+    for (const l of lines) {
+      if (seenProducts.has(l.productId)) continue;
+      seenProducts.add(l.productId);
+      this.verifyPriceQueue
+        .add('verify', { productId: l.productId }, {
+          jobId: `post-checkout-${l.productId}`,
+          delay: 0,
+        })
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `[order] step=verify_price_enqueue_failed orderId=${order.id} productId=${l.productId}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
 
     const confirmTpl = this.emailTemplates.orderConfirmation({
       orderId: order.id,
@@ -407,6 +423,25 @@ export class OrdersService {
         relations: ['items', 'user'],
       });
     });
+
+    // Sync any linked WannaBuyItem to paid status.
+    if (updated?.status === OrderStatus.PAID) {
+      this.wannaBuyItems
+        .findOne({ where: { orderId } })
+        .then(async (wbi) => {
+          if (!wbi) return;
+          wbi.status = WannaBuyItemStatus.PAID;
+          wbi.paidAt = new Date();
+          await this.wannaBuyItems.save(wbi);
+          this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
+        })
+        .catch((err: unknown) =>
+          this.logger.error(
+            `[order] step=wanna_buy_sync_failed orderId=${orderId}`,
+            err instanceof Error ? err.stack : String(err),
+          ),
+        );
+    }
 
     if (updated?.status === OrderStatus.PAID) {
       this.logger.log(

@@ -1,0 +1,29 @@
+user elects the product, ads it to wanna by list ( is a wait list for the platform to get the final prices and tax to be
+  computed for the user ), notification through email or whatsapp message is sent to them and they come and confirm and pay.
+  define batches.
+
+time for orders to get to ware house is about a week
+
+5-7$ flat fee for items $100 and below, 10% for items above $100
+
+-------------------
+Batches
+Wanna buy list ()
+Team processes the price and tax 
+Monday & tuesdays - estimated 10 orders 
+wednesday - order places (time to get the orders is a week)
+tuesday (of the next week) - order arrived  
+wednesday (kingz computes all dropoffs from our arrived order)
+Thursday (shipped)
+10 - 15 days weeks for orders to reach users
+
+-------------------
+
+
+
+
+scrape navigates to guest checkout and inputs the details and get final pricing for them with tax
+BELIEVE OKOBIA
+11969 PLANO RD
+DALLAS, TX 75243
+150-3204

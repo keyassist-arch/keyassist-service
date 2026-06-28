@@ -1,6 +1,12 @@
+/** @deprecated Use computePlatformFee() for the tiered structure */
 export const SERVICE_CHARGE_RATE = 0.1;
 export const DISCOUNT_RATE = 0.2;
 export const DISCOUNT_THRESHOLD_USD = 1000;
+
+/** Platform service fee: $6 flat for items ≤ $100, 10% for items > $100 */
+export function computePlatformFee(priceUsd: number): number {
+  return priceUsd <= 100 ? 6 : Math.round(priceUsd * 0.1 * 100) / 100;
+}
 
 export type PricingBreakdown = {
   serviceCharge: number;

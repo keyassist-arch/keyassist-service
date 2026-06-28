@@ -3,6 +3,7 @@ import { LlmModule } from '../llm/llm.module';
 import { PlaywrightService } from './playwright.service';
 import { ScraperService } from './scraper.service';
 import { ScrapeRefinementService } from './services/scrape-refinement.service';
+import { CheckoutSimulatorService } from './services/checkout-simulator.service';
 import { SCRAPER_ADAPTER_TOKEN } from './interfaces/scraper-adapter.interface';
 import { GenericAdapter } from './adapters/generic.adapter';
 import { JumiaAdapter } from './adapters/jumia.adapter';
@@ -26,6 +27,7 @@ import { ReebeloAdapter } from './adapters/reebelo.adapter';
     PlaywrightService,
     GenericAdapter,
     ScrapeRefinementService,
+    CheckoutSimulatorService,
     // Individual adapter providers — NestJS instantiates each one.
     JumiaAdapter,
     AmazonAdapter,
@@ -72,6 +74,6 @@ import { ReebeloAdapter } from './adapters/reebelo.adapter';
     },
     ScraperService,
   ],
-  exports: [ScraperService, PlaywrightService],
+  exports: [ScraperService, PlaywrightService, CheckoutSimulatorService],
 })
 export class ScraperModule {}

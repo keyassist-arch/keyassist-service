@@ -150,6 +150,13 @@ export class Product {
   @Column({ type: 'uuid', nullable: true, name: 'category_id' })
   categoryId: string | null;
 
+  /**
+   * Actual sales tax in USD observed during the last scrape or checkout simulation.
+   * Null = unknown (landed-cost service falls back to the marketplace estimate rate).
+   */
+  @Column({ name: 'observed_tax_amount_usd', type: 'decimal', precision: 14, scale: 2, nullable: true })
+  observedTaxAmountUsd: string | null;
+
   @Column({ name: 'last_scraped_at', type: 'timestamptz', nullable: true })
   lastScrapedAt: Date | null;
 

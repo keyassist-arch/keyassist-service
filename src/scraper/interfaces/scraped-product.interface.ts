@@ -33,6 +33,12 @@ export interface ScrapedProduct {
   metadata?: Record<string, unknown>;
   availability?: string;
   /**
+   * Actual sales tax in USD as shown on the product page or checkout summary.
+   * When populated by an adapter, the landed-cost quote uses this directly
+   * instead of the per-marketplace flat-rate estimate.
+   */
+  taxAmountUsd?: number;
+  /**
    * Full configuration lines from matrix-style PDPs (e.g. Apple: storage + color + carrier + price).
    * Folded into `description` for persistence when adapters set it.
    */
