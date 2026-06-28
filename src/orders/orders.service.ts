@@ -425,22 +425,27 @@ export class OrdersService {
     });
 
     // Sync any linked WannaBuyItem to paid status.
+    // setImmediate defers to the next event-loop tick so this query runs on a
+    // fresh pool connection rather than on the client still finishing the
+    // transaction above — avoids the pg "client already executing" warning.
     if (updated?.status === OrderStatus.PAID) {
-      this.wannaBuyItems
-        .findOne({ where: { orderId } })
-        .then(async (wbi) => {
-          if (!wbi) return;
-          wbi.status = WannaBuyItemStatus.PAID;
-          wbi.paidAt = new Date();
-          await this.wannaBuyItems.save(wbi);
-          this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
-        })
-        .catch((err: unknown) =>
-          this.logger.error(
-            `[order] step=wanna_buy_sync_failed orderId=${orderId}`,
-            err instanceof Error ? err.stack : String(err),
-          ),
-        );
+      setImmediate((): void => {
+        void (async () => {
+          try {
+            const wbi = await this.wannaBuyItems.findOne({ where: { orderId } });
+            if (!wbi) return;
+            wbi.status = WannaBuyItemStatus.PAID;
+            wbi.paidAt = new Date();
+            await this.wannaBuyItems.save(wbi);
+            this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
+          } catch (err) {
+            this.logger.error(
+              `[order] step=wanna_buy_sync_failed orderId=${orderId}`,
+              err instanceof Error ? err.stack : String(err),
+            );
+          }
+        })();
+      });
     }
 
     if (updated?.status === OrderStatus.PAID) {
