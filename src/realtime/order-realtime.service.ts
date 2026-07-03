@@ -22,4 +22,17 @@ export class OrderRealtimeService {
     }
     this.server.to(`user:${userId}`).emit('order.updated', payload);
   }
+
+  emitWannaBuyUpdate(
+    userId: string,
+    payload: { itemId: string; status: string },
+  ): void {
+    if (!this.server) {
+      this.logger.warn(
+        `[realtime] emitWannaBuyUpdate called before gateway init — itemId=${payload.itemId} userId=${userId}`,
+      );
+      return;
+    }
+    this.server.to(`user:${userId}`).emit('wannaBuyItem.updated', payload);
+  }
 }

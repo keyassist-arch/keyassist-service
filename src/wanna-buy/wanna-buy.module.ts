@@ -8,6 +8,7 @@ import { ScraperModule } from '../scraper/scraper.module';
 import { CurrencyModule } from '../currency/currency.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { UsersModule } from '../users/users.module';
     CurrencyModule,
     NotificationsModule,
     UsersModule,
+    RealtimeModule,
   ],
   providers: [WannaBuyService],
   controllers: [WannaBuyController],

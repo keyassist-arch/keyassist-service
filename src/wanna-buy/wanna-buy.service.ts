@@ -23,6 +23,7 @@ import { Order } from '../orders/entities/order.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
 import { OrderStatus } from '../common/enums/order-status.enum';
 import type { ShippingAddress } from '../users/entities/user.entity';
+import { OrderRealtimeService } from '../realtime/order-realtime.service';
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
@@ -42,6 +43,7 @@ export class WannaBuyService {
     private readonly notifications: NotificationsService,
     private readonly users: UsersService,
     private readonly dataSource: DataSource,
+    private readonly orderRealtime: OrderRealtimeService,
   ) {}
 
   // ── User endpoints ──────────────────────────────────────────────────────────
@@ -273,6 +275,11 @@ export class WannaBuyService {
     item.confirmedAt = new Date();
     await this.items.save(item);
 
+    this.orderRealtime.emitWannaBuyUpdate(item.userId, {
+      itemId: item.id,
+      status: item.status,
+    });
+
     this.logger.log(
       `[wanna-buy] order=${order.id} created for item=${itemId} user=${userId} total=${totalUsd}`,
     );
@@ -339,6 +346,11 @@ export class WannaBuyService {
     item.notifiedAt = new Date();
     item.status = WannaBuyItemStatus.QUOTED;
     await this.items.save(item);
+
+    this.orderRealtime.emitWannaBuyUpdate(item.userId, {
+      itemId: item.id,
+      status: item.status,
+    });
 
     this.logger.log(`[wanna-buy] quote sent to ${user.email} for item=${item.id}`);
   }

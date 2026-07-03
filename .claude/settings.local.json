@@ -62,7 +62,8 @@
       "Bash(Select-Object Name)",
       "Bash(python3 *)",
       "WebFetch(domain:www.kingzlogistics.com)",
-      "WebFetch(domain:shareshopshipstore.com)"
+      "WebFetch(domain:shareshopshipstore.com)",
+      "Read(//Users/aniebietabasi/Documents/code/**)"
     ]
   }
 }

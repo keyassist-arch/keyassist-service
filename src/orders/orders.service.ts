@@ -437,6 +437,10 @@ export class OrdersService {
             wbi.status = WannaBuyItemStatus.PAID;
             wbi.paidAt = new Date();
             await this.wannaBuyItems.save(wbi);
+            this.orderRealtime.emitWannaBuyUpdate(wbi.userId, {
+              itemId: wbi.id,
+              status: wbi.status,
+            });
             this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
           } catch (err) {
             this.logger.error(
