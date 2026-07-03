@@ -9,6 +9,8 @@ import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ConfirmTotpDto } from './dto/confirm-totp.dto';
 import { DisableTotpDto } from './dto/disable-totp.dto';
+import { SendPhoneOtpDto } from './dto/send-phone-otp.dto';
+import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
 
 @ApiTags('Me')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -75,5 +77,28 @@ export class UsersController {
   ) {
     await this.usersService.disableTotp(user.sub, dto.password, dto.code);
     return { twoFactor: { enabled: false, setupPending: false } };
+  }
+
+  @Post('me/phone/send-otp')
+  @ApiOperation({
+    summary: 'Send a WhatsApp OTP to verify (or re-verify) your phone number',
+  })
+  @Throttle({ default: { limit: 3, ttl: 300_000 } })
+  async sendPhoneOtp(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: SendPhoneOtpDto,
+  ) {
+    return this.usersService.sendPhoneOtp(user.sub, dto.phone);
+  }
+
+  @Post('me/phone/verify-otp')
+  @ApiOperation({ summary: 'Confirm the WhatsApp OTP code' })
+  @Throttle({ default: { limit: 10, ttl: 300_000 } })
+  async verifyPhoneOtp(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: VerifyPhoneOtpDto,
+  ) {
+    await this.usersService.verifyPhoneOtp(user.sub, dto.code);
+    return { phoneVerified: true };
   }
 }

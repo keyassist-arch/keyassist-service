@@ -406,6 +406,30 @@ class EnvironmentVariables {
   @Min(0)
   @IsOptional()
   DEFAULT_MARKUP_PERCENT = 10;
+
+  /**
+   * `true` / `1` — block checkout (POST /orders, POST /wanna-buy/:id/pay) until the user has
+   * verified their phone via WhatsApp OTP. Defaults to off so checkout isn't blocked before a
+   * WhatsApp provider is actually configured below.
+   */
+  @IsString()
+  @IsOptional()
+  PHONE_VERIFICATION_REQUIRED?: string;
+
+  /** Meta WhatsApp Cloud API permanent access token. Unset = sendWhatsApp() logs and no-ops. */
+  @IsString()
+  @IsOptional()
+  META_WHATSAPP_TOKEN?: string;
+
+  /** Meta WhatsApp Cloud API phone number ID (the sender), from the Meta App Dashboard. */
+  @IsString()
+  @IsOptional()
+  META_WHATSAPP_PHONE_NUMBER_ID?: string;
+
+  /** Graph API version to call, e.g. "v21.0". Defaults to "v21.0". */
+  @IsString()
+  @IsOptional()
+  META_WHATSAPP_API_VERSION?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

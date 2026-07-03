@@ -6,14 +6,22 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { User, ShippingAddress } from './entities/user.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { TotpService } from '../totp/totp.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { isEnvFlagEnabled } from '../common/utils/env-flag.util';
 
 /** PostgreSQL unique-constraint violation code. */
 const PG_UNIQUE_VIOLATION = '23505';
+
+const PHONE_OTP_TTL_MS = 10 * 60 * 1000;
+const PHONE_OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const PHONE_OTP_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class UsersService {
@@ -21,6 +29,8 @@ export class UsersService {
     @InjectRepository(User)
     private readonly users: Repository<User>,
     private readonly totp: TotpService,
+    private readonly notifications: NotificationsService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(
@@ -115,7 +125,14 @@ export class UsersService {
     if (dto.lastName !== undefined) {
       user.lastName = dto.lastName.trim();
     }
-    if (dto.phone !== undefined) user.phone = dto.phone;
+    if (dto.phone !== undefined) {
+      // Changing the number invalidates any prior verification — the new
+      // number hasn't been proven to belong to this user yet.
+      if (dto.phone !== user.phone) {
+        user.phoneVerifiedAt = null;
+      }
+      user.phone = dto.phone;
+    }
     if (dto.defaultShippingAddress !== undefined) {
       user.defaultShippingAddress =
         dto.defaultShippingAddress as ShippingAddress;
@@ -131,6 +148,10 @@ export class UsersService {
       email: user.email,
       emailVerified: !!user.emailVerifiedAt,
       phone: user.phone,
+      phoneVerified: !!user.phoneVerifiedAt,
+      phoneVerificationRequired: isEnvFlagEnabled(
+        this.config.get<string>('PHONE_VERIFICATION_REQUIRED'),
+      ),
       defaultShippingAddress: user.defaultShippingAddress,
       twoFactor: {
         enabled: user.totpEnabled,
@@ -243,5 +264,84 @@ export class UsersService {
     }
     await this.disableTotpAndSecrets(userId);
     await this.setRefreshTokenHash(userId, null);
+  }
+
+  /**
+   * Sends a 6-digit WhatsApp OTP to `phone` (or the number already on file).
+   * Passing a different `phone` updates the account number and marks it unverified.
+   */
+  async sendPhoneOtp(
+    userId: string,
+    phone?: string,
+  ): Promise<{ sentTo: string }> {
+    const user = await this.findById(userId);
+
+    if (phone !== undefined && phone.trim() !== user.phone) {
+      user.phone = phone.trim();
+      user.phoneVerifiedAt = null;
+    }
+    if (!user.phone) {
+      throw new BadRequestException(
+        'Add a phone number before requesting a verification code.',
+      );
+    }
+    if (
+      user.phoneOtpSentAt &&
+      Date.now() - user.phoneOtpSentAt.getTime() < PHONE_OTP_RESEND_COOLDOWN_MS
+    ) {
+      throw new BadRequestException(
+        'Please wait a moment before requesting another code.',
+      );
+    }
+
+    const code = crypto.randomInt(100000, 1000000).toString();
+    user.phoneOtpCodeHash = await bcrypt.hash(code, 10);
+    user.phoneOtpExpiresAt = new Date(Date.now() + PHONE_OTP_TTL_MS);
+    user.phoneOtpAttempts = 0;
+    user.phoneOtpSentAt = new Date();
+    await this.users.save(user);
+
+    await this.notifications.sendWhatsApp(
+      user.phone,
+      `Your verification code is ${code}. It expires in 10 minutes.`,
+    );
+
+    return { sentTo: user.phone };
+  }
+
+  async verifyPhoneOtp(userId: string, code: string): Promise<void> {
+    const user = await this.findById(userId);
+
+    if (!user.phoneOtpCodeHash || !user.phoneOtpExpiresAt) {
+      throw new BadRequestException(
+        'No verification code pending. Request a new one.',
+      );
+    }
+    if (user.phoneOtpExpiresAt.getTime() < Date.now()) {
+      throw new BadRequestException(
+        'Verification code expired. Request a new one.',
+      );
+    }
+    if (user.phoneOtpAttempts >= PHONE_OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException(
+        'Too many incorrect attempts. Request a new code.',
+      );
+    }
+
+    const matches = await bcrypt.compare(code, user.phoneOtpCodeHash);
+    if (!matches) {
+      await this.users.update(userId, {
+        phoneOtpAttempts: user.phoneOtpAttempts + 1,
+      });
+      throw new BadRequestException('Incorrect code.');
+    }
+
+    await this.users.update(userId, {
+      phoneVerifiedAt: new Date(),
+      phoneOtpCodeHash: null,
+      phoneOtpExpiresAt: null,
+      phoneOtpAttempts: 0,
+      phoneOtpSentAt: null,
+    });
   }
 }

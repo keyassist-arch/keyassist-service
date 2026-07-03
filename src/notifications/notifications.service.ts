@@ -78,6 +78,60 @@ export class NotificationsService {
   }
 
   /**
+   * Send a WhatsApp text message via the Meta Cloud API.
+   * No-ops with a warning when META_WHATSAPP_TOKEN / META_WHATSAPP_PHONE_NUMBER_ID
+   * aren't configured yet, mirroring the sendSms stub above.
+   */
+  async sendWhatsApp(to: string, body: string): Promise<void> {
+    if (!to?.trim()) {
+      this.logger.warn('[notify] sendWhatsApp skipped — empty recipient');
+      return;
+    }
+
+    const token = this.config.get<string>('META_WHATSAPP_TOKEN');
+    const phoneNumberId = this.config.get<string>(
+      'META_WHATSAPP_PHONE_NUMBER_ID',
+    );
+    if (!token || !phoneNumberId) {
+      this.logger.warn(
+        `[notify] WhatsApp channel not configured (no META_WHATSAPP_TOKEN/META_WHATSAPP_PHONE_NUMBER_ID) — message not sent to ${to}`,
+      );
+      return;
+    }
+
+    const apiVersion =
+      this.config.get<string>('META_WHATSAPP_API_VERSION') ?? 'v21.0';
+    const to_e164 = to.trim().replace(/^\+/, '').replace(/[^\d]/g, '');
+
+    const res = await fetch(
+      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: to_e164,
+          type: 'text',
+          text: { body },
+        }),
+      },
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      this.logger.error(
+        `[notify] WhatsApp send failed (${res.status}) to=${to}: ${errText}`,
+      );
+      throw new Error(`WhatsApp delivery failed: ${res.status} ${errText}`);
+    }
+
+    this.logger.log(`[notify] WhatsApp message sent to=${to}`);
+  }
+
+  /**
    * Resend requires a verified domain for custom `from` addresses.
    * Use their onboarding sender in dev / when `RESEND_SANDBOX` is set.
    */

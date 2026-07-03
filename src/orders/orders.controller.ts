@@ -15,6 +15,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PhoneVerifiedGuard } from '../common/guards/phone-verified.guard';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
@@ -29,6 +30,7 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
+  @UseGuards(PhoneVerifiedGuard)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateOrderDto) {
     return this.ordersService.createFromCart(user.sub, dto);
   }

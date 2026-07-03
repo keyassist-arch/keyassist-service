@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PhoneVerifiedGuard } from '../common/guards/phone-verified.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -44,7 +45,7 @@ export class WannaBuyController {
   }
 
   @Post('wanna-buy/:id/pay')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PhoneVerifiedGuard)
   @ApiOperation({
     summary: 'Convert a quoted Wanna Buy item into a payable Order',
     description:
@@ -52,10 +53,7 @@ export class WannaBuyController {
       'The frontend then uses POST /payments/initialize with the returned orderId ' +
       '(or redirects to /checkout?resume=<orderId>).',
   })
-  pay(
-    @CurrentUser() user: JwtPayload,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  pay(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
     return this.service.createOrderForPayment(id, user.sub);
   }
 
@@ -99,7 +97,9 @@ export class WannaBuyController {
   @Patch('admin/wanna-buy/:id/quote')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF)
-  @ApiOperation({ summary: 'Edit price / enter tax and optionally notify user' })
+  @ApiOperation({
+    summary: 'Edit price / enter tax and optionally notify user',
+  })
   saveQuote(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AdminQuoteWannaBuyItemDto,

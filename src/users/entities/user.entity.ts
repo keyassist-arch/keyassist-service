@@ -58,6 +58,23 @@ export class User {
   @Column({ name: 'email_verified_at', type: 'timestamptz', nullable: true })
   emailVerifiedAt: Date | null;
 
+  @Column({ name: 'phone_verified_at', type: 'timestamptz', nullable: true })
+  phoneVerifiedAt: Date | null;
+
+  /** bcrypt hash of the current pending WhatsApp OTP code. */
+  @Column({ name: 'phone_otp_code_hash', type: 'varchar', nullable: true })
+  phoneOtpCodeHash: string | null;
+
+  @Column({ name: 'phone_otp_expires_at', type: 'timestamptz', nullable: true })
+  phoneOtpExpiresAt: Date | null;
+
+  @Column({ name: 'phone_otp_attempts', type: 'int', default: 0 })
+  phoneOtpAttempts: number;
+
+  /** Used to rate-limit resends independently of the throttler (survives restarts). */
+  @Column({ name: 'phone_otp_sent_at', type: 'timestamptz', nullable: true })
+  phoneOtpSentAt: Date | null;
+
   @Column({ name: 'totp_enabled', type: 'boolean', default: false })
   totpEnabled: boolean;
 
