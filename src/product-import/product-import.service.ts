@@ -445,6 +445,8 @@ export class ProductImportService {
             /** Safe for clients; internal detail stays in DB only */
             message:
               'We could not import this product. Check the URL or try again later.',
+            requiresManualEntry: true,
+            sourceUrl: row.sourceUrl,
           }
         : {}),
       ...(row.status !== ImportStatus.FAILED && row.product
