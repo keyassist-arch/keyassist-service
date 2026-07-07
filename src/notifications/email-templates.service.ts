@@ -422,4 +422,97 @@ export class EmailTemplateService {
       }),
     };
   }
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
+
+  adminInvite(args: {
+    setPasswordUrl: string;
+    ttlLabel: string;
+    displayName?: string | null;
+  }): EmailTemplate {
+    const name = args.displayName?.trim();
+    const greeting = name ? `Hi ${name},` : 'Hi there,';
+    const subject = "You've been added as an admin";
+
+    const text =
+      `${greeting}\n\n` +
+      `You've been invited to the Unified Commerce admin panel.\n\n` +
+      `Set your password (valid for ${args.ttlLabel}):\n${args.setPasswordUrl}\n\n` +
+      `If you weren't expecting this, you can ignore this email.`;
+
+    const bodyHtml =
+      `<p style="margin:0 0 12px;">${esc(greeting)}</p>` +
+      `<p style="margin:0 0 12px;">You've been invited to the Unified Commerce admin panel.</p>` +
+      btn(args.setPasswordUrl, 'Set your password') +
+      `<p style="margin:16px 0 0;font-size:13px;color:#6b7280;">This link expires in <strong>${esc(args.ttlLabel)}</strong>.</p>` +
+      `<p style="margin:16px 0 0;font-size:13px;color:#6b7280;">If you weren't expecting this, you can ignore this email.</p>`;
+
+    return {
+      subject,
+      text,
+      html: layout({
+        preheader: 'Set your password to access the admin panel.',
+        heading: subject,
+        bodyHtml,
+      }),
+    };
+  }
+
+  // ── Wanna Buy ─────────────────────────────────────────────────────────────
+
+  wannaBuyQuoteReady(args: {
+    productTitle: string;
+    priceLabel: string;
+    taxLabel: string;
+    platformFeeLabel: string;
+    shippingLabel: string;
+    totalUsdLabel: string;
+    totalNgnLabel?: string | null;
+    wannaBuyUrl: string;
+    displayName?: string | null;
+  }): EmailTemplate {
+    const name = args.displayName?.trim();
+    const greeting = name ? `Hi ${name},` : 'Hi there,';
+    const subject = `Your quote is ready — ${args.productTitle}`;
+
+    const infoRows: [string, string][] = [
+      ['Product price', args.priceLabel],
+      ['Marketplace tax', args.taxLabel],
+      ['Platform fee', args.platformFeeLabel],
+      ['International shipping', args.shippingLabel],
+      ['Total (USD)', args.totalUsdLabel],
+    ];
+    if (args.totalNgnLabel) infoRows.push(['Total (NGN)', args.totalNgnLabel]);
+
+    const text =
+      `${greeting}\n\n` +
+      `Your quote is ready for:\n${args.productTitle}\n\n` +
+      `Product price:     ${args.priceLabel}\n` +
+      `Marketplace tax:   ${args.taxLabel}\n` +
+      `Platform fee:      ${args.platformFeeLabel}\n` +
+      `International shipping: ${args.shippingLabel}\n` +
+      `─────────────────────────────\n` +
+      `Total (USD):       ${args.totalUsdLabel}\n` +
+      (args.totalNgnLabel ? `Total (NGN):       ${args.totalNgnLabel}\n` : '') +
+      `\nView the full breakdown and confirm your order:\n${args.wannaBuyUrl}\n\n` +
+      `Payment must be completed by Wednesday for your item to be included in this week's batch.`;
+
+    const bodyHtml =
+      `<p style="margin:0 0 16px;">${esc(greeting)}</p>` +
+      `<p style="margin:0 0 12px;">Your quote is ready for:</p>` +
+      `<p style="margin:0 0 20px;font-weight:600;color:#111827;">${esc(args.productTitle)}</p>` +
+      infoTable(infoRows) +
+      btn(args.wannaBuyUrl, 'View in Wanna Buy') +
+      `<p style="margin:0;font-size:13px;color:#6b7280;">Payment must be completed by Wednesday for your item to be included in this week's batch.</p>`;
+
+    return {
+      subject,
+      text,
+      html: layout({
+        preheader: `Your quote for ${args.productTitle} is ready — view and confirm your order.`,
+        heading: 'Your quote is ready',
+        bodyHtml,
+      }),
+    };
+  }
 }

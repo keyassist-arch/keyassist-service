@@ -286,6 +286,34 @@ export class OrdersService {
     return this.toResponse(o);
   }
 
+  /**
+   * Self-serve cancel — only while the order hasn't been paid yet, so no
+   * money has moved and there's nothing to refund. Once PAID or later,
+   * customers go through the existing disputes/support flow instead.
+   */
+  async cancelOrder(userId: string, orderId: string) {
+    const o = await this.orders.findOne({
+      where: { id: orderId, userId },
+      relations: ['items', 'trackingEvents'],
+    });
+    if (!o) {
+      throw new NotFoundException('Order not found');
+    }
+    if (o.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Only unpaid orders can be cancelled (current status: ${o.status})`,
+      );
+    }
+    o.status = OrderStatus.CANCELLED;
+    await this.orders.save(o);
+    this.logger.log(`[order] step=cancelled_by_user orderId=${o.id} userId=${userId}`);
+    this.orderRealtime.emitOrderUpdate(userId, {
+      orderId: o.id,
+      status: o.status,
+    });
+    return this.toResponse(o);
+  }
+
   async findById(orderId: string): Promise<Order> {
     const o = await this.orders.findOne({
       where: { id: orderId },

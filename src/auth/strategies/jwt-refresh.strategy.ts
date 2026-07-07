@@ -46,10 +46,17 @@ export class JwtRefreshStrategy extends PassportStrategy(
     ) {
       throw new UnauthorizedException();
     }
+    if (user.adminDisabledAt) {
+      throw new UnauthorizedException();
+    }
     return {
       sub: payload.sub,
       email: payload.email,
-      role: payload.role,
+      // Read fresh from the DB rather than the (possibly stale) decoded
+      // payload — a role/permissions edit then takes effect on the next
+      // silent refresh instead of requiring the user to log in again.
+      role: user.role,
+      permissions: user.permissions,
       refreshToken,
     };
   }

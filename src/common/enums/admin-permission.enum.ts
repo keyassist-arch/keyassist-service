@@ -1,0 +1,8 @@
+export enum AdminPermission {
+  ORDERS = 'ORDERS',
+  BATCHES = 'BATCHES',
+  PRODUCTS = 'PRODUCTS',
+  REFUNDS = 'REFUNDS',
+  ISSUES = 'ISSUES',
+  SHIPPING_RATES = 'SHIPPING_RATES',
+}

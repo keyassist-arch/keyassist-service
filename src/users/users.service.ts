@@ -15,6 +15,8 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { TotpService } from '../totp/totp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { isEnvFlagEnabled } from '../common/utils/env-flag.util';
+import { UserRole } from '../common/enums/role.enum';
+import { AdminPermission } from '../common/enums/admin-permission.enum';
 
 /** PostgreSQL unique-constraint violation code. */
 const PG_UNIQUE_VIOLATION = '23505';
@@ -71,6 +73,87 @@ export class UsersService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Creates an ADMIN_STAFF account with no usable password — the invited
+   * admin sets their own via the password-reset flow (see
+   * `AuthService.issueAdminInviteToken`). `emailVerifiedAt` is set
+   * immediately since the super admin is vouching for the address.
+   */
+  async createAdminUser(args: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    permissions: AdminPermission[];
+  }): Promise<User> {
+    const normalizedEmail = args.email.trim().toLowerCase();
+    const existing = await this.users.findOne({
+      where: { email: normalizedEmail },
+    });
+    if (existing) {
+      throw new ConflictException('Email already registered');
+    }
+    // Random, never-communicated placeholder — unusable until reset.
+    const passwordHash = await bcrypt.hash(crypto.randomUUID(), 10);
+    const user = this.users.create({
+      firstName: args.firstName.trim(),
+      lastName: args.lastName.trim(),
+      email: normalizedEmail,
+      passwordHash,
+      role: UserRole.ADMIN_STAFF,
+      permissions: args.permissions,
+      emailVerifiedAt: new Date(),
+    });
+    try {
+      return await this.users.save(user);
+    } catch (err: unknown) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: string }).code === PG_UNIQUE_VIOLATION
+      ) {
+        throw new ConflictException('Email already registered');
+      }
+      throw err;
+    }
+  }
+
+  /** Admin users only (ADMIN_SUPER / ADMIN_STAFF), ordered newest first. */
+  async listAdminUsers(): Promise<User[]> {
+    return this.users
+      .createQueryBuilder('u')
+      .where('u.role IN (:...roles)', {
+        roles: [UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF],
+      })
+      .orderBy('u.createdAt', 'DESC')
+      .getMany();
+  }
+
+  /**
+   * Updates permissions and/or disabled state for an ADMIN_STAFF account.
+   * Refuses to touch ADMIN_SUPER rows — promotion/demotion of the top role
+   * stays a manual/DB action.
+   */
+  async patchAdminUser(
+    userId: string,
+    dto: { permissions?: AdminPermission[]; disabled?: boolean },
+  ): Promise<User> {
+    const user = await this.findById(userId);
+    if (user.role !== UserRole.ADMIN_STAFF) {
+      throw new BadRequestException('Only staff admin accounts can be edited here');
+    }
+    if (dto.permissions !== undefined) {
+      user.permissions = dto.permissions;
+    }
+    if (dto.disabled !== undefined) {
+      user.adminDisabledAt = dto.disabled ? new Date() : null;
+      if (dto.disabled) {
+        user.refreshTokenHash = null;
+      }
+    }
+    return this.users.save(user);
   }
 
   async findByEmail(email: string): Promise<User | null> {
@@ -158,6 +241,21 @@ export class UsersService {
         setupPending: Boolean(!user.totpEnabled && user.totpSetupSecret),
       },
       role: user.role,
+      permissions: user.permissions,
+      createdAt: user.createdAt,
+    };
+  }
+
+  /** Compact admin-user response for the team-management screen. */
+  toAdminUserResponse(user: User) {
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      permissions: user.permissions,
+      disabled: !!user.adminDisabledAt,
       createdAt: user.createdAt,
     };
   }

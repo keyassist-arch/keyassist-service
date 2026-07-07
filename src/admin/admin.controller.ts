@@ -17,6 +17,9 @@ import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/role.enum';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { AdminPermission } from '../common/enums/admin-permission.enum';
 import { AdminService } from './admin.service';
 import { AdminPatchOrderDto } from './dto/admin-patch-order.dto';
 import { AdminSeedDto } from './dto/admin-seed.dto';
@@ -27,7 +30,7 @@ import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dt
 @ApiTags('Admin')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
 @Controller('admin')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF)
 export class AdminController {
   constructor(
@@ -36,11 +39,13 @@ export class AdminController {
   ) {}
 
   @Get('orders')
+  @RequirePermission(AdminPermission.ORDERS)
   orders() {
     return this.adminService.listOrders();
   }
 
   @Patch('orders/:id')
+  @RequirePermission(AdminPermission.ORDERS)
   patchOrder(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AdminPatchOrderDto,
@@ -49,11 +54,13 @@ export class AdminController {
   }
 
   @Get('products')
+  @RequirePermission(AdminPermission.PRODUCTS)
   products() {
     return this.adminService.listProducts();
   }
 
   @Delete('products/:id')
+  @RequirePermission(AdminPermission.PRODUCTS)
   deleteProduct(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteProduct(id);
   }
@@ -63,11 +70,13 @@ export class AdminController {
    * Product ingestion for users stays on `POST /products/import` + Bull queue.
    */
   @Get('shipping-rates')
+  @RequirePermission(AdminPermission.SHIPPING_RATES)
   getShippingRates() {
     return this.adminService.getShippingRates();
   }
 
   @Patch('shipping-rates')
+  @RequirePermission(AdminPermission.SHIPPING_RATES)
   updateShippingRates(@Body() dto: UpdateShippingRatesDto) {
     return this.adminService.updateShippingRates(dto);
   }

@@ -32,6 +32,7 @@ import { AddOrderLandedCostColumns1746720005000 } from './migrations/17467200050
 import { CreateCategories1746720006000 } from './migrations/1746720006000-CreateCategories';
 import { AddProductAsin1780272000000 } from './migrations/1780272000000-AddProductAsin';
 import { AddSavedPaymentMethods1780800000000 } from './migrations/1780800000000-AddSavedPaymentMethods';
+import { AddUserAdminPermissions1782300000000 } from './migrations/1782300000000-AddUserAdminPermissions';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -74,6 +75,7 @@ export default new DataSource({
     CreateCategories1746720006000,
     AddProductAsin1780272000000,
     AddSavedPaymentMethods1780800000000,
+    AddUserAdminPermissions1782300000000,
   ],
   synchronize: false,
 });

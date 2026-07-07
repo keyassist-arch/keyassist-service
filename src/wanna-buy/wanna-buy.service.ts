@@ -24,6 +24,9 @@ import { OrderItem } from '../orders/entities/order-item.entity';
 import { OrderStatus } from '../common/enums/order-status.enum';
 import type { ShippingAddress } from '../users/entities/user.entity';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
+import { EmailTemplateService } from '../notifications/email-templates.service';
+import { ConfigService } from '@nestjs/config';
+import { resolveFrontendBaseUrl } from '../common/utils/frontend-url.util';
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
@@ -44,6 +47,8 @@ export class WannaBuyService {
     private readonly users: UsersService,
     private readonly dataSource: DataSource,
     private readonly orderRealtime: OrderRealtimeService,
+    private readonly emailTemplates: EmailTemplateService,
+    private readonly config: ConfigService,
   ) {}
 
   // ── User endpoints ──────────────────────────────────────────────────────────
@@ -318,28 +323,24 @@ export class WannaBuyService {
     const fmtNgn = (n: number) =>
       n > 0 ? `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : '';
 
-    const lines = [
-      `Hi ${user.firstName ?? 'there'},`,
-      '',
-      `Your quote is ready for:`,
-      `${item.productTitle ?? item.productUrl}`,
-      '',
-      `Product price:     ${fmt(price)}`,
-      `Marketplace tax:   ${fmt(tax)}`,
-      `Platform fee:      ${fmt(platformFee)}`,
-      `International shipping: ${fmt(kingzShipping)}`,
-      `─────────────────────────────`,
-      `Total (USD):       ${fmt(totalUsd)}`,
-      ...(totalNgn > 0 ? [`Total (NGN):       ${fmtNgn(totalNgn)}`] : []),
-      '',
-      `To confirm your order, reply to this email or log in to your account.`,
-      `Payment must be completed by Wednesday for your item to be included in this week's batch.`,
-    ];
+    const wannaBuyUrl = `${resolveFrontendBaseUrl(this.config)}/dashboard/wanna-buy`;
+    const tpl = this.emailTemplates.wannaBuyQuoteReady({
+      productTitle: item.productTitle ?? item.productUrl,
+      priceLabel: fmt(price),
+      taxLabel: fmt(tax),
+      platformFeeLabel: fmt(platformFee),
+      shippingLabel: fmt(kingzShipping),
+      totalUsdLabel: fmt(totalUsd),
+      totalNgnLabel: totalNgn > 0 ? fmtNgn(totalNgn) : null,
+      wannaBuyUrl,
+      displayName: user.firstName,
+    });
 
     await this.notifications.sendEmail({
       to: user.email,
-      subject: `Your quote is ready — ${item.productTitle ?? 'item'}`,
-      text: lines.join('\n'),
+      subject: tpl.subject,
+      text: tpl.text,
+      html: tpl.html,
       idempotencyKey: `wanna-buy-quote-${item.id}`,
     });
 

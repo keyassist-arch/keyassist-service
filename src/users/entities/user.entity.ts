@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { UserRole } from '../../common/enums/role.enum';
+import { AdminPermission } from '../../common/enums/admin-permission.enum';
 import { Cart } from '../../cart/entities/cart.entity';
 import { Order } from '../../orders/entities/order.entity';
 
@@ -93,6 +94,14 @@ export class User {
 
   @Column({ name: 'stripe_customer_id', type: 'varchar', nullable: true })
   stripeCustomerId: string | null;
+
+  /** Screens an ADMIN_STAFF user may access. Ignored for ADMIN_SUPER (implicit all-access). */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  permissions: AdminPermission[];
+
+  /** Set to soft-disable an admin account (blocks login) without deleting the row. */
+  @Column({ name: 'admin_disabled_at', type: 'timestamptz', nullable: true })
+  adminDisabledAt: Date | null;
 
   @OneToOne(() => Cart, (c) => c.user)
   cart: Cart | null;

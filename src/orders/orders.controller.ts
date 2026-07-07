@@ -60,4 +60,13 @@ export class OrdersController {
   one(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
     return this.ordersService.findForUser(user.sub, id);
   }
+
+  @Post(':id/cancel')
+  @ApiOperation({
+    summary: 'Cancel an unpaid order',
+    description: 'Only orders in PENDING status can be self-cancelled.',
+  })
+  cancel(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
+    return this.ordersService.cancelOrder(user.sub, id);
+  }
 }

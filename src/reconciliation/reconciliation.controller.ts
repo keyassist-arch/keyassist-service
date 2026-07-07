@@ -21,6 +21,9 @@ import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/role.enum';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { AdminPermission } from '../common/enums/admin-permission.enum';
 import { ReconciliationService } from './reconciliation.service';
 import { CreateRefundDto } from './dto/create-refund.dto';
 import { CreateIssueDto } from './dto/create-issue.dto';
@@ -30,7 +33,7 @@ import { ListIssuesDto } from './dto/list-issues.dto';
 @ApiTags('Admin – Reconciliation')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
 @Controller('admin/reconciliation')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF)
 export class ReconciliationController {
   constructor(private readonly reconciliationService: ReconciliationService) {}
@@ -40,6 +43,7 @@ export class ReconciliationController {
   // --------------------------------------------------------------------------
 
   @Post('refunds')
+  @RequirePermission(AdminPermission.REFUNDS)
   @ApiOperation({
     summary:
       'Issue a refund for an order (Stripe / Paystack / PayPal / manual)',
@@ -52,6 +56,7 @@ export class ReconciliationController {
   }
 
   @Get('refunds')
+  @RequirePermission(AdminPermission.REFUNDS)
   @ApiOperation({ summary: 'List all refunds, optionally filtered by orderId' })
   @ApiQuery({ name: 'orderId', required: false })
   listRefunds(@Query('orderId') orderId?: string) {
@@ -59,6 +64,7 @@ export class ReconciliationController {
   }
 
   @Get('refunds/:id')
+  @RequirePermission(AdminPermission.REFUNDS)
   @ApiOperation({ summary: 'Get a single refund record' })
   getRefund(@Param('id', ParseUUIDPipe) id: string) {
     return this.reconciliationService.getRefund(id);
@@ -69,6 +75,7 @@ export class ReconciliationController {
   // --------------------------------------------------------------------------
 
   @Post('issues')
+  @RequirePermission(AdminPermission.ISSUES)
   @ApiOperation({
     summary: 'Open a customer issue (dispute / complaint / request)',
   })
@@ -77,12 +84,14 @@ export class ReconciliationController {
   }
 
   @Get('issues')
+  @RequirePermission(AdminPermission.ISSUES)
   @ApiOperation({ summary: 'List customer issues with optional filters' })
   listIssues(@Query() query: ListIssuesDto) {
     return this.reconciliationService.listIssues(query);
   }
 
   @Get('issues/:id')
+  @RequirePermission(AdminPermission.ISSUES)
   @ApiOperation({
     summary: 'Get a single customer issue with related order and user',
   })
@@ -91,6 +100,7 @@ export class ReconciliationController {
   }
 
   @Patch('issues/:id')
+  @RequirePermission(AdminPermission.ISSUES)
   @ApiOperation({
     summary: 'Update a customer issue (status, assignment, resolution note)',
   })
@@ -102,6 +112,7 @@ export class ReconciliationController {
   }
 
   @Post('issues/:id/resolve-with-refund')
+  @RequirePermission(AdminPermission.REFUNDS, AdminPermission.ISSUES)
   @ApiOperation({
     summary: 'Resolve a customer issue and issue a refund in one operation',
   })
