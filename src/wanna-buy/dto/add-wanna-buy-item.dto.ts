@@ -10,4 +10,15 @@ export class AddWannaBuyItemDto {
   @IsOptional()
   @IsObject()
   variantSelection?: Record<string, string>;
+
+  /** Known up front when the frontend picked an existing catalog product; skips the need to scrape it. */
+  @ApiPropertyOptional({ example: 'Nike Air Max 90' })
+  @IsOptional()
+  @IsString()
+  productTitle?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/image.jpg' })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 }

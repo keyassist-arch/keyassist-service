@@ -32,7 +32,11 @@ import { AddOrderLandedCostColumns1746720005000 } from './migrations/17467200050
 import { CreateCategories1746720006000 } from './migrations/1746720006000-CreateCategories';
 import { AddProductAsin1780272000000 } from './migrations/1780272000000-AddProductAsin';
 import { AddSavedPaymentMethods1780800000000 } from './migrations/1780800000000-AddSavedPaymentMethods';
+import { CreateWannaBuyTables1782000000000 } from './migrations/1782000000000-CreateWannaBuyTables';
+import { AddWannaBuyItemOrderId1782100000000 } from './migrations/1782100000000-AddWannaBuyItemOrderId';
 import { AddUserAdminPermissions1782300000000 } from './migrations/1782300000000-AddUserAdminPermissions';
+import { AddBatchCollectingEndsAt1783800000000 } from './migrations/1783800000000-AddBatchCollectingEndsAt';
+import { AddWannaBuyItemReminderSentAt1783900000000 } from './migrations/1783900000000-AddWannaBuyItemReminderSentAt';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -75,7 +79,11 @@ export default new DataSource({
     CreateCategories1746720006000,
     AddProductAsin1780272000000,
     AddSavedPaymentMethods1780800000000,
+    CreateWannaBuyTables1782000000000,
+    AddWannaBuyItemOrderId1782100000000,
     AddUserAdminPermissions1782300000000,
+    AddBatchCollectingEndsAt1783800000000,
+    AddWannaBuyItemReminderSentAt1783900000000,
   ],
   synchronize: false,
 });

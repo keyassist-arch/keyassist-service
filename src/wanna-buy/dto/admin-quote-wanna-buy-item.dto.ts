@@ -29,4 +29,15 @@ export class AdminQuoteWannaBuyItemDto {
   @IsOptional()
   @IsBoolean()
   notifyUser?: boolean;
+
+  /** Items added by URL no longer get a scraped title/image — admin fills these in while quoting. */
+  @ApiPropertyOptional({ description: 'Product title, for items that arrived without one' })
+  @IsOptional()
+  @IsString()
+  productTitle?: string;
+
+  @ApiPropertyOptional({ description: 'Product image URL, for items that arrived without one' })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 }

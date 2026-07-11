@@ -515,4 +515,74 @@ export class EmailTemplateService {
       }),
     };
   }
+
+  wannaBuyBatchRolledOver(args: {
+    productTitle: string;
+    newBatchLabel: string;
+    collectingEndsAtLabel: string;
+    wannaBuyUrl: string;
+    displayName?: string | null;
+  }): EmailTemplate {
+    const name = args.displayName?.trim();
+    const greeting = name ? `Hi ${name},` : 'Hi there,';
+    const subject = `Your item moved to the next batch — ${args.productTitle}`;
+
+    const text =
+      `${greeting}\n\n` +
+      `This week's batch already closed for new items by the time you added:\n${args.productTitle}\n\n` +
+      `No action needed — it's been added to ${args.newBatchLabel} instead, which is open for new items until ${args.collectingEndsAtLabel}.\n\n` +
+      `View it in your Wanna Buy list:\n${args.wannaBuyUrl}`;
+
+    const bodyHtml =
+      `<p style="margin:0 0 16px;">${esc(greeting)}</p>` +
+      `<p style="margin:0 0 12px;">This week's batch already closed for new items by the time you added:</p>` +
+      `<p style="margin:0 0 20px;font-weight:600;color:#111827;">${esc(args.productTitle)}</p>` +
+      `<p style="margin:0 0 20px;">No action needed — it's been added to <strong>${esc(args.newBatchLabel)}</strong> instead, ` +
+      `which is open for new items until ${esc(args.collectingEndsAtLabel)}.</p>` +
+      btn(args.wannaBuyUrl, 'View in Wanna Buy');
+
+    return {
+      subject,
+      text,
+      html: layout({
+        preheader: `${args.productTitle} is now in ${args.newBatchLabel} — here's what that means.`,
+        heading: 'Added to the next batch',
+        bodyHtml,
+      }),
+    };
+  }
+
+  wannaBuyPaymentReminder(args: {
+    productTitle: string;
+    totalLabel: string;
+    wannaBuyUrl: string;
+    displayName?: string | null;
+  }): EmailTemplate {
+    const name = args.displayName?.trim();
+    const greeting = name ? `Hi ${name},` : 'Hi there,';
+    const subject = `Still want it? Your quote for ${args.productTitle} is waiting`;
+
+    const text =
+      `${greeting}\n\n` +
+      `Your quote for ${args.productTitle} (${args.totalLabel}) is ready, but we haven't seen a payment yet.\n\n` +
+      `Confirm and pay soon to keep your spot in this batch:\n${args.wannaBuyUrl}`;
+
+    const bodyHtml =
+      `<p style="margin:0 0 16px;">${esc(greeting)}</p>` +
+      `<p style="margin:0 0 12px;">Your quote for the item below is ready, but we haven't seen a payment yet:</p>` +
+      `<p style="margin:0 0 8px;font-weight:600;color:#111827;">${esc(args.productTitle)}</p>` +
+      `<p style="margin:0 0 20px;font-weight:600;color:#111827;">${esc(args.totalLabel)}</p>` +
+      `<p style="margin:0 0 20px;">Confirm and pay soon to keep your spot in this batch.</p>` +
+      btn(args.wannaBuyUrl, 'Confirm & Pay');
+
+    return {
+      subject,
+      text,
+      html: layout({
+        preheader: `Your quote for ${args.productTitle} is ready — confirm and pay to keep your spot.`,
+        heading: 'Your quote is still waiting',
+        bodyHtml,
+      }),
+    };
+  }
 }

@@ -88,6 +88,10 @@ export class WannaBuyItem {
   @Column({ name: 'notified_at', type: 'timestamptz', nullable: true })
   notifiedAt: Date | null;
 
+  /** When the "you've been quoted, still waiting on payment" nudge last went out. */
+  @Column({ name: 'reminder_sent_at', type: 'timestamptz', nullable: true })
+  reminderSentAt: Date | null;
+
   @Column({ name: 'confirmed_at', type: 'timestamptz', nullable: true })
   confirmedAt: Date | null;
 

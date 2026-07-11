@@ -1,16 +1,17 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { DataSource, In, IsNull, LessThan, Repository } from 'typeorm';
 import { Batch } from './entities/batch.entity';
 import { WannaBuyItem } from './entities/wanna-buy-item.entity';
 import { BatchStatus } from '../common/enums/batch-status.enum';
 import { WannaBuyItemStatus } from '../common/enums/wanna-buy-item-status.enum';
-import { ScraperService } from '../scraper/scraper.service';
 import { CurrencyService } from '../currency/currency.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
@@ -19,6 +20,14 @@ import type { AdminQuoteWannaBuyItemDto } from './dto/admin-quote-wanna-buy-item
 import { detectProductSource } from '../scraper/utils/detect-source.util';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { computePlatformFee } from '../common/utils/pricing.util';
+import { getNextWeeklyCutoff } from './utils/collecting-cutoff.util';
+import {
+  assertTransition,
+  BATCH_STATUS_TRANSITIONS,
+  UNPAID_ITEM_STATUSES,
+  WANNA_BUY_ITEM_TRANSITIONS,
+} from './utils/status-transitions.util';
+import type { BatchRolloverInfo } from './interfaces/batch-rollover-info.interface';
 import { Order } from '../orders/entities/order.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
 import { OrderStatus } from '../common/enums/order-status.enum';
@@ -27,6 +36,8 @@ import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
 import { ConfigService } from '@nestjs/config';
 import { resolveFrontendBaseUrl } from '../common/utils/frontend-url.util';
+
+const PAYMENT_REMINDER_DELAY_HOURS = 24;
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
@@ -41,7 +52,6 @@ export class WannaBuyService {
     private readonly batches: Repository<Batch>,
     @InjectRepository(WannaBuyItem)
     private readonly items: Repository<WannaBuyItem>,
-    private readonly scraper: ScraperService,
     private readonly currency: CurrencyService,
     private readonly notifications: NotificationsService,
     private readonly users: UsersService,
@@ -53,42 +63,48 @@ export class WannaBuyService {
 
   // ── User endpoints ──────────────────────────────────────────────────────────
 
-  async addItem(userId: string, dto: AddWannaBuyItemDto): Promise<WannaBuyItem> {
-    const batch = await this.getOrCreateCollectingBatch();
-
-    let scrapedPriceUsd: string | null = null;
-    let productTitle: string | null = null;
-    let imageUrl: string | null = null;
-    let marketplace: ProductSource | null = null;
-
-    try {
-      const source = detectProductSource(dto.productUrl);
-      marketplace = source;
-      const scraped = await this.scraper.scrape(dto.productUrl, source);
-      scrapedPriceUsd = scraped.price ? String(parseFloat(scraped.price)) : null;
-      productTitle = scraped.title ?? null;
-      imageUrl = scraped.images?.[0] ?? null;
-    } catch (err) {
-      this.logger.warn(
-        `[wanna-buy] scrape failed for ${dto.productUrl}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  /**
+   * No scraping here — admins price these manually via `saveQuote`. Scraping only
+   * happens on the storefront's product import flow, which is where users expect
+   * to wait for it; Wanna Buy adds must stay instant.
+   */
+  async addItem(
+    userId: string,
+    dto: AddWannaBuyItemDto,
+  ): Promise<WannaBuyItem & { batchRollover: BatchRolloverInfo | null }> {
+    const { batch, rolledOverFrom } = await this.resolveCollectingBatch();
+    const marketplace: ProductSource = detectProductSource(dto.productUrl);
 
     const item = this.items.create({
       userId,
       batchId: batch.id,
       productUrl: dto.productUrl,
-      productTitle,
-      imageUrl,
+      productTitle: dto.productTitle ?? null,
+      imageUrl: dto.imageUrl ?? null,
       marketplace,
       variantSelection: dto.variantSelection ?? null,
-      scrapedPriceUsd,
+      scrapedPriceUsd: null,
       status: WannaBuyItemStatus.PENDING,
     });
 
     const saved = await this.items.save(item);
     this.logger.log(`[wanna-buy] item=${saved.id} added by user=${userId} batch=${batch.id}`);
-    return saved;
+
+    let batchRollover: BatchRolloverInfo | null = null;
+    if (rolledOverFrom) {
+      batchRollover = {
+        previousBatchLabel: this.batchLabel(rolledOverFrom),
+        newBatchLabel: this.batchLabel(batch),
+        collectingEndsAt: batch.collectingEndsAt?.toISOString() ?? null,
+      };
+      void this.sendBatchRolloverEmail(userId, saved, batchRollover).catch((err) => {
+        this.logger.warn(
+          `[wanna-buy] rollover email failed for item=${saved.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+
+    return { ...saved, batchRollover };
   }
 
   async listUserItems(userId: string): Promise<WannaBuyItem[]> {
@@ -96,6 +112,36 @@ export class WannaBuyService {
       where: { userId },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  /**
+   * Lets a user remove an item from their own list before it's gone anywhere —
+   * once it's `confirmed` an Order already exists, so removal from there on
+   * would mean touching payment/refund logic, not just this record.
+   */
+  async cancelItem(userId: string, itemId: string): Promise<WannaBuyItem> {
+    const item = await this.items.findOne({ where: { id: itemId, userId } });
+    if (!item) throw new NotFoundException(`WannaBuyItem ${itemId} not found`);
+
+    if (item.status !== WannaBuyItemStatus.PENDING && item.status !== WannaBuyItemStatus.QUOTED) {
+      throw new BadRequestException(
+        `Only pending or quoted items can be removed. This item is already "${item.status}".`,
+      );
+    }
+
+    item.status = WannaBuyItemStatus.CANCELLED;
+    const saved = await this.items.save(item);
+
+    this.orderRealtime.emitWannaBuyUpdate(userId, { itemId: saved.id, status: saved.status });
+    this.logger.log(`[wanna-buy] item=${itemId} cancelled by user=${userId}`);
+
+    return saved;
+  }
+
+  /** Read-only — unlike `resolveCollectingBatch`, never opens a new batch as a side effect of a GET. */
+  async getCurrentOpenBatch(): Promise<Batch | null> {
+    const mostRecent = await this.mostRecentBatch();
+    return this.isBatchOpen(mostRecent) ? mostRecent : null;
   }
 
   // ── Admin endpoints ─────────────────────────────────────────────────────────
@@ -121,9 +167,61 @@ export class WannaBuyService {
     return this.batches.save(batch);
   }
 
-  async advanceBatchStatus(batchId: string, status: BatchStatus): Promise<Batch> {
+  /**
+   * `resolveUnpaid: 'reassign'` is only meaningful (and only checked) on the
+   * Processing → Placing Orders move — that's the point real money gets spent,
+   * so it's the only transition gated on payment. Without it, that move throws
+   * a 409 listing the unpaid items instead of silently including them.
+   */
+  async advanceBatchStatus(
+    batchId: string,
+    status: BatchStatus,
+    resolveUnpaid?: 'reassign',
+  ): Promise<Batch> {
     const batch = await this.batches.findOne({ where: { id: batchId } });
     if (!batch) throw new NotFoundException(`Batch ${batchId} not found`);
+
+    assertTransition(BATCH_STATUS_TRANSITIONS, batch.status, status);
+
+    if (status === BatchStatus.PLACING_ORDERS) {
+      const unpaidItems = await this.items.find({
+        where: { batchId, status: In(UNPAID_ITEM_STATUSES) },
+      });
+
+      if (unpaidItems.length > 0) {
+        if (resolveUnpaid !== 'reassign') {
+          throw new ConflictException({
+            message: `${unpaidItems.length} item(s) in this batch are still unpaid.`,
+            unpaidCount: unpaidItems.length,
+            unpaidItems: unpaidItems.map((i) => ({
+              id: i.id,
+              productTitle: i.productTitle ?? i.productUrl,
+              userId: i.userId,
+            })),
+          });
+        }
+
+        const { batch: nextBatch } = await this.resolveCollectingBatch();
+        for (const item of unpaidItems) {
+          const rollover: BatchRolloverInfo = {
+            previousBatchLabel: this.batchLabel(batch),
+            newBatchLabel: this.batchLabel(nextBatch),
+            collectingEndsAt: nextBatch.collectingEndsAt?.toISOString() ?? null,
+          };
+          item.batchId = nextBatch.id;
+          await this.items.save(item);
+          this.orderRealtime.emitWannaBuyUpdate(item.userId, { itemId: item.id, status: item.status });
+          void this.sendBatchRolloverEmail(item.userId, item, rollover).catch((err) => {
+            this.logger.warn(
+              `[wanna-buy] reassignment rollover email failed for item=${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+        }
+        this.logger.log(
+          `[wanna-buy] batch=${batchId} → placing_orders: reassigned ${unpaidItems.length} unpaid item(s) to batch=${nextBatch.id}`,
+        );
+      }
+    }
 
     batch.status = status;
     const now = new Date();
@@ -134,7 +232,57 @@ export class WannaBuyService {
     else if (status === BatchStatus.SHIPPED) batch.shippedAt = now;
     else if (status === BatchStatus.DELIVERED) batch.deliveredAt = now;
 
-    return this.batches.save(batch);
+    const saved = await this.batches.save(batch);
+
+    if (status === BatchStatus.PLACING_ORDERS) {
+      const paidItems = await this.items.find({ where: { batchId, status: WannaBuyItemStatus.PAID } });
+      for (const item of paidItems) {
+        item.status = WannaBuyItemStatus.ORDERED;
+        await this.items.save(item);
+        this.orderRealtime.emitWannaBuyUpdate(item.userId, { itemId: item.id, status: item.status });
+      }
+    }
+
+    return saved;
+  }
+
+  /** Admin-triggered — sends the payment nudge to every quoted-but-unpaid item in a batch right now, bypassing the cron's dedup. */
+  async nudgeUnpaidBatchItems(batchId: string): Promise<{ nudged: number }> {
+    const batch = await this.batches.findOne({ where: { id: batchId } });
+    if (!batch) throw new NotFoundException(`Batch ${batchId} not found`);
+
+    const items = await this.items.find({
+      where: { batchId, status: WannaBuyItemStatus.QUOTED },
+    });
+    for (const item of items) {
+      await this.sendPaymentNudge(item);
+    }
+    return { nudged: items.length };
+  }
+
+  /** Fixed-delay, once — quoted items unpaid `PAYMENT_REMINDER_DELAY_HOURS` after the quote email, not yet reminded. */
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async sendPaymentReminders(): Promise<void> {
+    const cutoff = new Date(Date.now() - PAYMENT_REMINDER_DELAY_HOURS * 60 * 60 * 1000);
+    const items = await this.items.find({
+      where: {
+        status: WannaBuyItemStatus.QUOTED,
+        notifiedAt: LessThan(cutoff),
+        reminderSentAt: IsNull(),
+      },
+    });
+    for (const item of items) {
+      try {
+        await this.sendPaymentNudge(item);
+      } catch (err) {
+        this.logger.warn(
+          `[wanna-buy] payment nudge failed for item=${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    if (items.length > 0) {
+      this.logger.log(`[wanna-buy] payment reminder sweep: nudged ${items.length} item(s)`);
+    }
   }
 
   async saveQuote(itemId: string, dto: AdminQuoteWannaBuyItemDto): Promise<WannaBuyItem> {
@@ -153,6 +301,12 @@ export class WannaBuyService {
     }
     if (dto.kingzShippingUsd !== undefined) {
       item.kingzShippingUsd = String(dto.kingzShippingUsd);
+    }
+    if (dto.productTitle !== undefined) {
+      item.productTitle = dto.productTitle;
+    }
+    if (dto.imageUrl !== undefined) {
+      item.imageUrl = dto.imageUrl;
     }
 
     // Recompute totals whenever any pricing field changes
@@ -189,104 +343,124 @@ export class WannaBuyService {
   }
 
   /**
-   * Creates an Order from a quoted WannaBuyItem so the user can pay through
-   * the existing payment rail (Paystack / Stripe). The item must be in `quoted`
-   * status and belong to the requesting user.
+   * Creates ONE Order (with one OrderItem per WannaBuyItem) so the user can pay
+   * for several quoted items in a single payment through the existing payment
+   * rail (Paystack / Stripe). Every item must be `quoted` and belong to the
+   * requesting user.
    *
    * Returns the newly-created Order. The caller (controller) then directs the
    * frontend to `/checkout?resume=<orderId>` so it can use the existing payment
    * provider selection + webhook flow without any changes.
    */
-  async createOrderForPayment(itemId: string, userId: string): Promise<Order> {
-    const item = await this.items.findOne({
-      where: { id: itemId, userId },
+  async createOrderForPayment(itemIds: string[], userId: string): Promise<Order> {
+    const items = await this.items.find({
+      where: { id: In(itemIds), userId },
       relations: ['user'],
     });
-    if (!item) throw new NotFoundException(`WannaBuyItem ${itemId} not found`);
-    if (item.status !== WannaBuyItemStatus.QUOTED) {
-      throw new BadRequestException(
-        `Item must be in "quoted" status before payment. Current status: ${item.status}`,
-      );
+    if (items.length !== itemIds.length) {
+      throw new NotFoundException('One or more WannaBuyItems were not found');
     }
-    if (!item.totalUsd) {
-      throw new BadRequestException('Quote has not been fully computed yet — totalUsd is missing');
+    for (const item of items) {
+      assertTransition(WANNA_BUY_ITEM_TRANSITIONS, item.status, WannaBuyItemStatus.CONFIRMED);
+      if (!item.totalUsd) {
+        throw new BadRequestException(
+          `Quote for "${item.productTitle ?? item.productUrl}" has not been fully computed yet`,
+        );
+      }
     }
 
-    const user = item.user ?? (await this.users.findById(userId));
+    const user = items[0].user ?? (await this.users.findById(userId));
     if (!user.defaultShippingAddress) {
       throw new BadRequestException(
         'No default shipping address on file. Please add one in your profile before paying.',
       );
     }
-
-    const effectivePriceUsd = parseFloat((item.adminPriceUsd ?? item.scrapedPriceUsd) ?? '0');
-    const taxUsd = parseFloat(item.taxAmountUsd ?? '0');
-    const platformFeeUsd = parseFloat(item.platformFeeUsd ?? '0');
-    const kingzShippingUsd = parseFloat(item.kingzShippingUsd ?? '0');
-    const fxBufferUsd = parseFloat(item.fxBufferUsd ?? '0');
-    const totalUsd = parseFloat(item.totalUsd);
-
-    const breakdown = [
-      `Product: $${effectivePriceUsd.toFixed(2)}`,
-      `Marketplace tax: $${taxUsd.toFixed(2)}`,
-      `Platform fee: $${platformFeeUsd.toFixed(2)}`,
-      `International shipping: $${kingzShippingUsd.toFixed(2)}`,
-      `─────────────────────────────`,
-      `Total (USD): $${totalUsd.toFixed(2)}`,
-    ];
-
     const shippingAddress = user.defaultShippingAddress as ShippingAddress;
+
+    let subtotal = 0;
+    let tax = 0;
+    let platformFee = 0;
+    let shipping = 0;
+    let fxBuffer = 0;
+    let total = 0;
+    const breakdown: string[] = [];
+
+    for (const item of items) {
+      const effectivePriceUsd = parseFloat((item.adminPriceUsd ?? item.scrapedPriceUsd) ?? '0');
+      const taxUsd = parseFloat(item.taxAmountUsd ?? '0');
+      const platformFeeUsd = parseFloat(item.platformFeeUsd ?? '0');
+      const kingzShippingUsd = parseFloat(item.kingzShippingUsd ?? '0');
+      const fxBufferUsd = parseFloat(item.fxBufferUsd ?? '0');
+      const itemTotalUsd = parseFloat(item.totalUsd ?? '0');
+
+      subtotal += effectivePriceUsd;
+      tax += taxUsd;
+      platformFee += platformFeeUsd;
+      shipping += kingzShippingUsd;
+      fxBuffer += fxBufferUsd;
+      total += itemTotalUsd;
+
+      breakdown.push(`${item.productTitle ?? item.productUrl}: $${itemTotalUsd.toFixed(2)}`);
+    }
+    breakdown.push(`─────────────────────────────`, `Total (USD): $${round(total).toFixed(2)}`);
 
     const order = await this.dataSource.transaction(async (em) => {
       const o = em.create(Order, {
         userId,
         status: OrderStatus.PENDING,
-        subtotal: effectivePriceUsd.toFixed(2),
-        fees: platformFeeUsd.toFixed(2),
+        subtotal: round(subtotal).toFixed(2),
+        fees: round(platformFee).toFixed(2),
         discount: '0.00',
-        shippingFee: kingzShippingUsd.toFixed(2),
-        marketplaceTax: taxUsd.toFixed(2),
+        shippingFee: round(shipping).toFixed(2),
+        marketplaceTax: round(tax).toFixed(2),
         marketplaceShipping: '0.00',
         domesticHandling: '0.00',
         customsTotal: '0.00',
-        fxBuffer: fxBufferUsd.toFixed(2),
+        fxBuffer: round(fxBuffer).toFixed(2),
         riskBuffer: '0.00',
         pricingBreakdown: breakdown,
-        total: totalUsd.toFixed(2),
+        total: round(total).toFixed(2),
         currency: 'USD',
         shippingAddress,
       });
       await em.save(o);
 
-      await em.save(
-        em.create(OrderItem, {
-          orderId: o.id,
-          productId: null,
-          titleSnapshot: item.productTitle ?? item.productUrl,
-          priceSnapshot: effectivePriceUsd.toFixed(2),
-          currencySnapshot: 'USD',
-          quantity: 1,
-          imagesSnapshot: item.imageUrl ? [item.imageUrl] : [],
-          variantSnapshot: item.variantSelection,
-        }),
-      );
+      for (const item of items) {
+        const effectivePriceUsd = parseFloat((item.adminPriceUsd ?? item.scrapedPriceUsd) ?? '0');
+        await em.save(
+          em.create(OrderItem, {
+            orderId: o.id,
+            productId: null,
+            titleSnapshot: item.productTitle ?? item.productUrl,
+            priceSnapshot: effectivePriceUsd.toFixed(2),
+            currencySnapshot: 'USD',
+            quantity: 1,
+            imagesSnapshot: item.imageUrl ? [item.imageUrl] : [],
+            variantSnapshot: item.variantSelection,
+          }),
+        );
+      }
 
       return o;
     });
 
-    // Link the order to the WannaBuyItem and mark confirmed
-    item.orderId = order.id;
-    item.status = WannaBuyItemStatus.CONFIRMED;
-    item.confirmedAt = new Date();
-    await this.items.save(item);
+    const now = new Date();
+    for (const item of items) {
+      item.orderId = order.id;
+      item.status = WannaBuyItemStatus.CONFIRMED;
+      item.confirmedAt = now;
+    }
+    await this.items.save(items);
 
-    this.orderRealtime.emitWannaBuyUpdate(item.userId, {
-      itemId: item.id,
-      status: item.status,
-    });
+    for (const item of items) {
+      this.orderRealtime.emitWannaBuyUpdate(item.userId, {
+        itemId: item.id,
+        status: item.status,
+      });
+    }
 
     this.logger.log(
-      `[wanna-buy] order=${order.id} created for item=${itemId} user=${userId} total=${totalUsd}`,
+      `[wanna-buy] order=${order.id} created for ${items.length} item(s) user=${userId} total=${round(total)}`,
     );
 
     return order;
@@ -294,15 +468,82 @@ export class WannaBuyService {
 
   // ── Internal helpers ────────────────────────────────────────────────────────
 
-  private async getOrCreateCollectingBatch(): Promise<Batch> {
-    const existing = await this.batches.findOne({
-      where: { status: BatchStatus.COLLECTING },
-      order: { createdAt: 'DESC' },
-    });
-    if (existing) return existing;
+  /** `findOne({ order })` with no `where` throws in this TypeORM version — `find` + `take: 1` is the correct way to get "the latest row". */
+  private async mostRecentBatch(): Promise<Batch | null> {
+    const [batch] = await this.batches.find({ order: { createdAt: 'DESC' }, take: 1 });
+    return batch ?? null;
+  }
 
-    const batch = this.batches.create({ status: BatchStatus.COLLECTING });
-    return this.batches.save(batch);
+  private isBatchOpen(batch: Batch | null): batch is Batch {
+    if (!batch || batch.status !== BatchStatus.COLLECTING) return false;
+    if (!batch.collectingEndsAt) return true; // legacy batch, no cutoff — always open
+    return batch.collectingEndsAt.getTime() > Date.now();
+  }
+
+  private batchLabel(batch: Batch): string {
+    return batch.label ?? `Batch ${batch.id.slice(0, 8)}`;
+  }
+
+  /**
+   * Finds the batch new items should join. If the most recent batch is still
+   * open (collecting + before its cutoff), reuse it. Otherwise open a fresh one
+   * and report what it replaced so the caller can notify the user of the rollover.
+   */
+  private async resolveCollectingBatch(): Promise<{ batch: Batch; rolledOverFrom: Batch | null }> {
+    const mostRecent = await this.mostRecentBatch();
+    if (this.isBatchOpen(mostRecent)) {
+      return { batch: mostRecent, rolledOverFrom: null };
+    }
+
+    const batch = await this.batches.save(
+      this.batches.create({
+        status: BatchStatus.COLLECTING,
+        collectingEndsAt: getNextWeeklyCutoff(new Date()),
+      }),
+    );
+    return { batch, rolledOverFrom: mostRecent ?? null };
+  }
+
+  private async sendBatchRolloverEmail(
+    userId: string,
+    item: WannaBuyItem,
+    rollover: BatchRolloverInfo,
+  ): Promise<void> {
+    const user = await this.users.findById(userId);
+    if (!user?.email) {
+      this.logger.warn(`[wanna-buy] no email for user=${userId}, skipping rollover notice`);
+      return;
+    }
+
+    const wannaBuyUrl = `${resolveFrontendBaseUrl(this.config)}/dashboard/wanna-buy`;
+    const collectingEndsAtLabel = rollover.collectingEndsAt
+      ? new Date(rollover.collectingEndsAt).toLocaleString('en-US', {
+          weekday: 'long',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZone: 'UTC',
+        })
+      : 'the next cutoff';
+
+    const tpl = this.emailTemplates.wannaBuyBatchRolledOver({
+      productTitle: item.productTitle ?? item.productUrl,
+      newBatchLabel: rollover.newBatchLabel,
+      collectingEndsAtLabel,
+      wannaBuyUrl,
+      displayName: user.firstName,
+    });
+
+    await this.notifications.sendEmail({
+      to: user.email,
+      subject: tpl.subject,
+      text: tpl.text,
+      html: tpl.html,
+      idempotencyKey: `wanna-buy-rollover-${item.id}`,
+    });
+
+    this.logger.log(`[wanna-buy] rollover notice sent to ${user.email} for item=${item.id}`);
   }
 
   private async sendQuoteNotification(item: WannaBuyItem): Promise<void> {
@@ -344,6 +585,7 @@ export class WannaBuyService {
       idempotencyKey: `wanna-buy-quote-${item.id}`,
     });
 
+    assertTransition(WANNA_BUY_ITEM_TRANSITIONS, item.status, WannaBuyItemStatus.QUOTED);
     item.notifiedAt = new Date();
     item.status = WannaBuyItemStatus.QUOTED;
     await this.items.save(item);
@@ -354,5 +596,54 @@ export class WannaBuyService {
     });
 
     this.logger.log(`[wanna-buy] quote sent to ${user.email} for item=${item.id}`);
+  }
+
+  private async sendPaymentNudge(item: WannaBuyItem): Promise<void> {
+    const user = item.user ?? (await this.users.findById(item.userId));
+    if (!user?.email) {
+      this.logger.warn(`[wanna-buy] no email for user=${item.userId}, skipping payment nudge`);
+      return;
+    }
+
+    const totalUsd = parseFloat(item.totalUsd ?? '0');
+    const totalLabel = `$${totalUsd.toFixed(2)}`;
+    const productTitle = item.productTitle ?? item.productUrl;
+    const wannaBuyUrl = `${resolveFrontendBaseUrl(this.config)}/dashboard/wanna-buy`;
+
+    const tpl = this.emailTemplates.wannaBuyPaymentReminder({
+      productTitle,
+      totalLabel,
+      wannaBuyUrl,
+      displayName: user.firstName,
+    });
+
+    // Bucketed by minute — lets a genuinely later nudge (cron vs. an admin re-triggering)
+    // through, while still protecting against an accidental rapid double-send.
+    const idempotencyKey = `wanna-buy-nudge-${item.id}-${Math.floor(Date.now() / 60_000)}`;
+    await this.notifications.sendEmail({
+      to: user.email,
+      subject: tpl.subject,
+      text: tpl.text,
+      html: tpl.html,
+      idempotencyKey,
+    });
+
+    if (user.phone && user.phoneVerifiedAt) {
+      try {
+        await this.notifications.sendWhatsApp(
+          user.phone,
+          `Hi${user.firstName ? ` ${user.firstName}` : ''}! Your quote for ${productTitle} (${totalLabel}) is ready. Confirm & pay: ${wannaBuyUrl}`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[wanna-buy] WhatsApp nudge failed for item=${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    item.reminderSentAt = new Date();
+    await this.items.save(item);
+
+    this.logger.log(`[wanna-buy] payment nudge sent to ${user.email} for item=${item.id}`);
   }
 }

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -24,6 +25,7 @@ import { WannaBuyService } from './wanna-buy.service';
 import { AddWannaBuyItemDto } from './dto/add-wanna-buy-item.dto';
 import { AdminQuoteWannaBuyItemDto } from './dto/admin-quote-wanna-buy-item.dto';
 import { AdminBatchStatusDto } from './dto/admin-batch-status.dto';
+import { PayWannaBuyItemsDto } from './dto/pay-wanna-buy-items.dto';
 
 @ApiTags('Wanna Buy')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -47,17 +49,31 @@ export class WannaBuyController {
     return this.service.listUserItems(user.sub);
   }
 
-  @Post('wanna-buy/:id/pay')
+  @Get('wanna-buy/current-batch')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'The batch new items are currently landing in, if collecting is open' })
+  getCurrentBatch() {
+    return this.service.getCurrentOpenBatch();
+  }
+
+  @Delete('wanna-buy/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Remove a pending or quoted item from your Wanna Buy list' })
+  cancel(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
+    return this.service.cancelItem(user.sub, id);
+  }
+
+  @Post('wanna-buy/pay')
   @UseGuards(JwtAuthGuard, PhoneVerifiedGuard)
   @ApiOperation({
-    summary: 'Convert a quoted Wanna Buy item into a payable Order',
+    summary: 'Convert one or more quoted Wanna Buy items into a single payable Order',
     description:
-      'Creates an Order from the quoted item and returns it. ' +
+      'Creates one Order (with one OrderItem per selected item) and returns it. ' +
       'The frontend then uses POST /payments/initialize with the returned orderId ' +
       '(or redirects to /checkout?resume=<orderId>).',
   })
-  pay(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
-    return this.service.createOrderForPayment(id, user.sub);
+  pay(@CurrentUser() user: JwtPayload, @Body() dto: PayWannaBuyItemsDto) {
+    return this.service.createOrderForPayment(dto.itemIds, user.sub);
   }
 
   // ── Admin routes ─────────────────────────────────────────────────────────────
@@ -84,12 +100,21 @@ export class WannaBuyController {
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF)
   @RequirePermission(AdminPermission.BATCHES)
-  @ApiOperation({ summary: 'Advance batch lifecycle status' })
+  @ApiOperation({ summary: 'Advance batch lifecycle status (one step forward, or cancel)' })
   advanceBatchStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AdminBatchStatusDto,
   ) {
-    return this.service.advanceBatchStatus(id, dto.status);
+    return this.service.advanceBatchStatus(id, dto.status, dto.resolveUnpaid);
+  }
+
+  @Post('admin/batches/:id/nudge-unpaid')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles(UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF)
+  @RequirePermission(AdminPermission.BATCHES)
+  @ApiOperation({ summary: 'Send the payment-reminder nudge to every quoted-but-unpaid item in this batch, right now' })
+  nudgeUnpaidBatchItems(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.nudgeUnpaidBatchItems(id);
   }
 
   @Get('admin/batches/:id/items')

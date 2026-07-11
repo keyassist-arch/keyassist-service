@@ -398,9 +398,11 @@ export class OrdersService {
       `[order] step=mark_paid_begin orderId=${orderId} provider=${input.provider}`,
     );
     const updated = await this.dataSource.transaction(async (em) => {
+      // Lock only the Order row here — `FOR UPDATE` combined with the `items`
+      // relation's LEFT JOIN is rejected by Postgres ("cannot be applied to
+      // the nullable side of an outer join"). Items are loaded separately below.
       const o = await em.findOne(Order, {
         where: { id: orderId },
-        relations: ['items'],
         lock: { mode: 'pessimistic_write' },
       });
       if (!o || o.status !== OrderStatus.PENDING) {
@@ -415,6 +417,8 @@ export class OrdersService {
         }
         return o ?? null;
       }
+      const items = await em.find(OrderItem, { where: { orderId: o.id } });
+
       o.status = OrderStatus.PAID;
       o.paymentProvider = input.provider;
       if (input.paystackReference != null) {
@@ -432,7 +436,7 @@ export class OrdersService {
       await em.save(o);
 
       const prodRepo = em.getRepository(Product);
-      for (const item of o.items ?? []) {
+      for (const item of items) {
         if (!item.productId) {
           continue;
         }
@@ -452,7 +456,8 @@ export class OrdersService {
       });
     });
 
-    // Sync any linked WannaBuyItem to paid status.
+    // Sync any linked WannaBuyItem(s) to paid status — bulk-pay puts several
+    // items on one Order, so this must update every match, not just one.
     // setImmediate defers to the next event-loop tick so this query runs on a
     // fresh pool connection rather than on the client still finishing the
     // transaction above — avoids the pg "client already executing" warning.
@@ -460,16 +465,22 @@ export class OrdersService {
       setImmediate((): void => {
         void (async () => {
           try {
-            const wbi = await this.wannaBuyItems.findOne({ where: { orderId } });
-            if (!wbi) return;
-            wbi.status = WannaBuyItemStatus.PAID;
-            wbi.paidAt = new Date();
-            await this.wannaBuyItems.save(wbi);
-            this.orderRealtime.emitWannaBuyUpdate(wbi.userId, {
-              itemId: wbi.id,
-              status: wbi.status,
-            });
-            this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
+            const items = await this.wannaBuyItems.find({ where: { orderId } });
+            const now = new Date();
+            for (const wbi of items) {
+              // Webhook retries are common — skip items already synced past PAID.
+              if (wbi.status === WannaBuyItemStatus.PAID || wbi.status === WannaBuyItemStatus.ORDERED) {
+                continue;
+              }
+              wbi.status = WannaBuyItemStatus.PAID;
+              wbi.paidAt = now;
+              await this.wannaBuyItems.save(wbi);
+              this.orderRealtime.emitWannaBuyUpdate(wbi.userId, {
+                itemId: wbi.id,
+                status: wbi.status,
+              });
+              this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
+            }
           } catch (err) {
             this.logger.error(
               `[order] step=wanna_buy_sync_failed orderId=${orderId}`,

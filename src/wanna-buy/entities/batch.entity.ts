@@ -20,6 +20,10 @@ export class Batch {
   @Column({ type: 'varchar', length: 128, nullable: true })
   label: string | null;
 
+  /** When new items stop being accepted into this batch. `null` = no cutoff (legacy batches). */
+  @Column({ name: 'collecting_ends_at', type: 'timestamptz', nullable: true })
+  collectingEndsAt: Date | null;
+
   @Column({ name: 'processing_started_at', type: 'timestamptz', nullable: true })
   processingStartedAt: Date | null;
 
