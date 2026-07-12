@@ -474,6 +474,7 @@ export class OrdersService {
               }
               wbi.status = WannaBuyItemStatus.PAID;
               wbi.paidAt = now;
+              wbi.chargedTotalUsd = wbi.totalUsd;
               await this.wannaBuyItems.save(wbi);
               this.orderRealtime.emitWannaBuyUpdate(wbi.userId, {
                 itemId: wbi.id,

@@ -134,9 +134,10 @@ export class WannaBuyController {
     summary: 'Edit price / enter tax and optionally notify user',
   })
   saveQuote(
+    @CurrentUser() admin: JwtPayload,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AdminQuoteWannaBuyItemDto,
   ) {
-    return this.service.saveQuote(id, dto);
+    return this.service.saveQuote(id, dto, admin.sub);
   }
 }

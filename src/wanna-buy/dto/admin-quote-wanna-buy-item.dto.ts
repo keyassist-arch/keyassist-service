@@ -30,6 +30,14 @@ export class AdminQuoteWannaBuyItemDto {
   @IsBoolean()
   notifyUser?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'True for a fast, price-only quote so the customer can pay upfront; false/omitted for the final tax+shipping-inclusive quote. Finalizing a previously-estimated, already-paid item auto-refunds the difference if the final total is lower.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isEstimateQuote?: boolean;
+
   /** Items added by URL no longer get a scraped title/image — admin fills these in while quoting. */
   @ApiPropertyOptional({ description: 'Product title, for items that arrived without one' })
   @IsOptional()

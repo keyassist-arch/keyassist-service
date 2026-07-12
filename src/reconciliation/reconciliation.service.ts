@@ -122,11 +122,18 @@ export class ReconciliationService {
     }
 
     const orderTotal = parseFloat(order.total);
-    const refundAmount = dto.amount ?? orderTotal;
 
-    if (refundAmount > orderTotal) {
+    const priorRefunds = await this.refunds.find({ where: { orderId: order.id } });
+    const alreadyRefunded = priorRefunds
+      .filter((r) => r.status !== RefundStatus.FAILED)
+      .reduce((sum, r) => sum + parseFloat(r.amount), 0);
+    const remaining = orderTotal - alreadyRefunded;
+
+    const refundAmount = dto.amount ?? remaining;
+
+    if (refundAmount > remaining) {
       throw new BadRequestException(
-        `Refund amount (${refundAmount}) exceeds order total (${orderTotal})`,
+        `Refund amount (${refundAmount}) exceeds remaining refundable balance (${remaining})`,
       );
     }
 
@@ -161,8 +168,8 @@ export class ReconciliationService {
       throw err;
     }
 
-    // Mark the order as refunded only on full refund.
-    const isFullRefund = refundAmount >= orderTotal;
+    // Mark the order as refunded only once the cumulative refunded amount covers the total.
+    const isFullRefund = alreadyRefunded + refundAmount >= orderTotal;
     if (isFullRefund) {
       order.status = OrderStatus.REFUNDED;
       await this.orders.save(order);

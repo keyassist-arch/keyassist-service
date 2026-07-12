@@ -37,6 +37,7 @@ import { AddWannaBuyItemOrderId1782100000000 } from './migrations/1782100000000-
 import { AddUserAdminPermissions1782300000000 } from './migrations/1782300000000-AddUserAdminPermissions';
 import { AddBatchCollectingEndsAt1783800000000 } from './migrations/1783800000000-AddBatchCollectingEndsAt';
 import { AddWannaBuyItemReminderSentAt1783900000000 } from './migrations/1783900000000-AddWannaBuyItemReminderSentAt';
+import { AddWannaBuyItemEstimateQuote1783950000000 } from './migrations/1783950000000-AddWannaBuyItemEstimateQuote';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -84,6 +85,7 @@ export default new DataSource({
     AddUserAdminPermissions1782300000000,
     AddBatchCollectingEndsAt1783800000000,
     AddWannaBuyItemReminderSentAt1783900000000,
+    AddWannaBuyItemEstimateQuote1783950000000,
   ],
   synchronize: false,
 });

@@ -36,6 +36,7 @@ import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
 import { ConfigService } from '@nestjs/config';
 import { resolveFrontendBaseUrl } from '../common/utils/frontend-url.util';
+import { ReconciliationService } from '../reconciliation/reconciliation.service';
 
 const PAYMENT_REMINDER_DELAY_HOURS = 24;
 
@@ -59,6 +60,7 @@ export class WannaBuyService {
     private readonly orderRealtime: OrderRealtimeService,
     private readonly emailTemplates: EmailTemplateService,
     private readonly config: ConfigService,
+    private readonly reconciliation: ReconciliationService,
   ) {}
 
   // ── User endpoints ──────────────────────────────────────────────────────────
@@ -285,12 +287,20 @@ export class WannaBuyService {
     }
   }
 
-  async saveQuote(itemId: string, dto: AdminQuoteWannaBuyItemDto): Promise<WannaBuyItem> {
+  async saveQuote(
+    itemId: string,
+    dto: AdminQuoteWannaBuyItemDto,
+    adminUserId: string,
+  ): Promise<WannaBuyItem> {
     const item = await this.items.findOne({
       where: { id: itemId },
       relations: ['user'],
     });
     if (!item) throw new NotFoundException(`WannaBuyItem ${itemId} not found`);
+
+    // Was this a rough, price-only upfront estimate before this save? If so, and it's
+    // already been paid, we may owe the customer a refund once this save finalizes it.
+    const wasEstimate = item.isEstimateQuote;
 
     if (dto.adminPriceUsd !== undefined) {
       item.adminPriceUsd = String(dto.adminPriceUsd);
@@ -307,6 +317,9 @@ export class WannaBuyService {
     }
     if (dto.imageUrl !== undefined) {
       item.imageUrl = dto.imageUrl;
+    }
+    if (dto.isEstimateQuote !== undefined) {
+      item.isEstimateQuote = dto.isEstimateQuote;
     }
 
     // Recompute totals whenever any pricing field changes
@@ -331,12 +344,57 @@ export class WannaBuyService {
       } catch (err) {
         this.logger.warn(`[wanna-buy] NGN conversion failed: ${err instanceof Error ? err.message : String(err)}`);
       }
+
+      if (item.status === WannaBuyItemStatus.PENDING) {
+        assertTransition(WANNA_BUY_ITEM_TRANSITIONS, item.status, WannaBuyItemStatus.QUOTED);
+        item.status = WannaBuyItemStatus.QUOTED;
+      }
+    }
+
+    // Finalizing a previously-estimated, already-paid item: reconcile what was charged
+    // against the real total. Only refunds are automated (undercharge is flagged for
+    // manual follow-up) per the agreed scope.
+    if (wasEstimate && !item.isEstimateQuote && item.chargedTotalUsd != null) {
+      const chargedTotalUsd = parseFloat(item.chargedTotalUsd);
+      const finalTotalUsd = parseFloat(item.totalUsd ?? '0');
+      const delta = round(chargedTotalUsd - finalTotalUsd);
+
+      if (delta > 0 && item.orderId) {
+        try {
+          await this.reconciliation.issueRefund(
+            {
+              orderId: item.orderId,
+              amount: delta,
+              reason: 'Wanna Buy quote finalized below the upfront estimate',
+            },
+            adminUserId,
+          );
+          this.logger.log(
+            `[wanna-buy] estimate refund issued item=${item.id} order=${item.orderId} amount=${delta}`,
+          );
+        } catch (err) {
+          this.logger.warn(
+            `[wanna-buy] estimate refund failed item=${item.id} order=${item.orderId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else if (delta < 0) {
+        this.logger.warn(
+          `[wanna-buy] final quote exceeds upfront estimate — manual follow-up needed item=${item.id} order=${item.orderId} shortfall=${-delta}`,
+        );
+      }
+
+      item.quoteFinalizedAt = new Date();
     }
 
     const saved = await this.items.save(item);
 
     if (dto.notifyUser) {
-      await this.sendQuoteNotification(saved);
+      try {
+        await this.sendQuoteNotification(saved);
+      } catch (err) {
+        // Quote is already saved and marked QUOTED above — for now, don't fail the admin's save if the email send errors out.
+        this.logger.warn(`[wanna-buy] quote notification failed for item=${saved.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     return saved;

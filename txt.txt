@@ -27,3 +27,10 @@ BELIEVE OKOBIA
 11969 PLANO RD
 DALLAS, TX 75243
 150-3204
+
+
+
+
+
+make sure to return error for missing shipping address
+add an option for upfreon charges and possible refund instead of waiting for full pricing from admin

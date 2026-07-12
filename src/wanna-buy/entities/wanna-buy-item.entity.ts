@@ -85,6 +85,17 @@ export class WannaBuyItem {
   @Column({ name: 'total_ngn', type: 'decimal', precision: 18, scale: 2, nullable: true })
   totalNgn: string | null;
 
+  /** True when the current quote is a fast, price-only estimate rather than the admin's final tax/shipping-inclusive quote. */
+  @Column({ name: 'is_estimate_quote', type: 'boolean', default: false })
+  isEstimateQuote: boolean;
+
+  /** Snapshot of `totalUsd` at the moment the customer actually paid — the baseline a later "finalize" refund is diffed against. */
+  @Column({ name: 'charged_total_usd', type: 'decimal', precision: 14, scale: 2, nullable: true })
+  chargedTotalUsd: string | null;
+
+  @Column({ name: 'quote_finalized_at', type: 'timestamptz', nullable: true })
+  quoteFinalizedAt: Date | null;
+
   @Column({ name: 'notified_at', type: 'timestamptz', nullable: true })
   notifiedAt: Date | null;
 

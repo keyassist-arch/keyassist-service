@@ -8,6 +8,7 @@ import { CurrencyModule } from '../currency/currency.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { ReconciliationModule } from '../reconciliation/reconciliation.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     NotificationsModule,
     UsersModule,
     RealtimeModule,
+    ReconciliationModule,
   ],
   providers: [WannaBuyService],
   controllers: [WannaBuyController],
