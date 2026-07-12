@@ -65,7 +65,13 @@
       "WebFetch(domain:shareshopshipstore.com)",
       "Read(//Users/aniebietabasi/Documents/code/**)",
       "Bash(npx --prefix /Users/aniebietabasi/Documents/code/unified-commerce-frontend eslint /Users/aniebietabasi/Documents/code/unified-commerce-frontend/components/storefront/sticky-search-bar.tsx /Users/aniebietabasi/Documents/code/unified-commerce-frontend/components/storefront/add-manual-product-form.tsx)",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(mkdir -p /Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products/new /Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products/\\\\[id\\\\])"
+    ],
+    "additionalDirectories": [
+      "/Users/aniebietabasi/Documents/code/unified-commerce-frontend/lib",
+      "/Users/aniebietabasi/Documents/code/unified-commerce-frontend/components/admin",
+      "/Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products"
     ]
   }
 }

@@ -15,6 +15,7 @@ import { ShippingModule } from '../shipping/shipping.module';
 import { ScraperModule } from '../scraper/scraper.module';
 import { UsersModule } from '../users/users.module';
 import { AuthModule } from '../auth/auth.module';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AuthModule } from '../auth/auth.module';
     ScraperModule,
     UsersModule,
     AuthModule,
+    UploadsModule,
   ],
   providers: [AdminService, AdminUsersService],
   controllers: [AdminController, AdminUsersController],

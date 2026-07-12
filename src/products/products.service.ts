@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import {
   Product,
   ProductConfigurationPrice,
@@ -14,6 +15,8 @@ import { ScrapedProduct } from '../scraper/interfaces/scraped-product.interface'
 import { parsePriceToDecimalString } from '../scraper/utils/normalize-price.util';
 import { slugifyTitle } from '../common/utils/slugify.util';
 import { CurrencyService } from '../currency/currency.service';
+import { AdminCreateProductDto } from './dto/admin-create-product.dto';
+import { AdminUpdateProductDto } from './dto/admin-update-product.dto';
 
 @Injectable()
 export class ProductsService {
@@ -212,6 +215,74 @@ export class ProductsService {
     /** Last attempt failed — do not keep a stale FK; product row may still exist by `sourceUrl` */
     importRow.product = null;
     await this.imports.save(importRow);
+  }
+
+  /**
+   * Admin-authored product, no scrape involved. `sourceUrl` is synthesized since the column is
+   * NOT NULL + unique — hand-entered products aren't tied to a retailer URL to rescrape.
+   */
+  async createManual(dto: AdminCreateProductDto): Promise<Product> {
+    const slug = await this.allocateUniqueSlug(dto.title);
+    const originalPrice = dto.originalPrice.toFixed(2);
+    const markupPercent = '0.00';
+    const product = this.products.create({
+      sourceUrl: `internal://admin/${randomUUID()}`,
+      source: ProductSource.GENERIC,
+      title: dto.title,
+      slug,
+      description: dto.description ?? null,
+      brand: dto.brand ?? null,
+      originalPrice,
+      currency: 'USD',
+      markupPercent,
+      salePrice: this.salePrice(originalPrice, markupPercent),
+      images: dto.images ?? [],
+      variants: (dto.variants ?? []) as ProductVariant[],
+      configurationPrices: (dto.configurationPrices ?? []) as ProductConfigurationPrice[],
+      availability: dto.availability ?? null,
+      compareAtPrice:
+        dto.compareAtPrice != null ? dto.compareAtPrice.toFixed(2) : null,
+      stockQuantity: dto.stockQuantity ?? null,
+      categoryId: dto.categoryId ?? null,
+      rescrapeEnabled: false,
+      lastScrapedAt: null,
+      lastVerifiedAt: null,
+    });
+    return this.products.save(product);
+  }
+
+  async updateManual(id: string, dto: AdminUpdateProductDto): Promise<Product> {
+    const product = await this.findById(id);
+
+    if (dto.title !== undefined && dto.title !== product.title) {
+      product.title = dto.title;
+      product.slug = await this.allocateUniqueSlug(dto.title, product.id);
+    }
+    if (dto.description !== undefined) product.description = dto.description ?? null;
+    if (dto.brand !== undefined) product.brand = dto.brand ?? null;
+    if (dto.originalPrice !== undefined) {
+      const originalPrice = dto.originalPrice.toFixed(2);
+      product.originalPrice = originalPrice;
+      product.salePrice = this.salePrice(originalPrice, product.markupPercent);
+    }
+    if (dto.images !== undefined) product.images = [...dto.images];
+    if (dto.variants !== undefined) {
+      product.variants = JSON.parse(JSON.stringify(dto.variants)) as ProductVariant[];
+    }
+    if (dto.configurationPrices !== undefined) {
+      product.configurationPrices = JSON.parse(
+        JSON.stringify(dto.configurationPrices),
+      ) as ProductConfigurationPrice[];
+    }
+    if (dto.stockQuantity !== undefined) product.stockQuantity = dto.stockQuantity ?? null;
+    if (dto.categoryId !== undefined) product.categoryId = dto.categoryId ?? null;
+    if (dto.availability !== undefined) product.availability = dto.availability ?? null;
+    if (dto.compareAtPrice !== undefined) {
+      product.compareAtPrice =
+        dto.compareAtPrice != null ? dto.compareAtPrice.toFixed(2) : null;
+    }
+
+    return this.products.save(product);
   }
 
   async findById(id: string): Promise<Product> {
@@ -518,6 +589,7 @@ export class ProductsService {
       dealType: p.dealType ?? null,
       metadata: p.metadata ?? null,
       stockQuantity: p.stockQuantity,
+      categoryId: p.categoryId ?? null,
       lastScrapedAt: p.lastScrapedAt,
       lastVerifiedAt: p.lastVerifiedAt,
     };

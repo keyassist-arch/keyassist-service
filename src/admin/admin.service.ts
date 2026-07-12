@@ -18,6 +18,9 @@ import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { ShippingRatesService } from '../shipping/shipping-rates.service';
 import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
 import { EmailTemplateService } from '../notifications/email-templates.service';
+import { UploadsService } from '../uploads/uploads.service';
+import { AdminCreateProductDto } from '../products/dto/admin-create-product.dto';
+import { AdminUpdateProductDto } from '../products/dto/admin-update-product.dto';
 
 @Injectable()
 export class AdminService {
@@ -38,6 +41,7 @@ export class AdminService {
     private readonly orderRealtime: OrderRealtimeService,
     private readonly shippingRatesService: ShippingRatesService,
     private readonly emailTemplates: EmailTemplateService,
+    private readonly uploadsService: UploadsService,
   ) {}
 
   async listOrders() {
@@ -56,6 +60,20 @@ export class AdminService {
 
   async deleteProduct(id: string): Promise<void> {
     await this.productsService.remove(id);
+  }
+
+  async createProduct(dto: AdminCreateProductDto) {
+    const product = await this.productsService.createManual(dto);
+    return this.productsService.toResponse(product);
+  }
+
+  async updateProduct(id: string, dto: AdminUpdateProductDto) {
+    const product = await this.productsService.updateManual(id, dto);
+    return this.productsService.toResponse(product);
+  }
+
+  getProductImageUploadSignature() {
+    return this.uploadsService.generateProductImageSignature();
   }
 
   async patchOrder(orderId: string, dto: AdminPatchOrderDto) {

@@ -36,6 +36,8 @@ export type ProductConfigurationPrice = {
   currency?: string;
   /** `false` = show disabled / OOS in UI. */
   available?: boolean;
+  /** Stock count for this specific combination. Display-only today — checkout still enforces `Product.stockQuantity` only. */
+  stockQuantity?: number;
   /** Human-readable line (e.g. `9.5 — from USD 425.00`); omit to build from option + prices in the client. */
   displayLabel?: string;
   /** Store-specific fields (condition, retailer ids, etc.). */

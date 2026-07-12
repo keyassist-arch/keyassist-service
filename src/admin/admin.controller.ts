@@ -26,6 +26,8 @@ import { AdminSeedDto } from './dto/admin-seed.dto';
 import { ScraperService } from '../scraper/scraper.service';
 import { AdminScrapePreviewDto } from './dto/admin-scrape-preview.dto';
 import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
+import { AdminCreateProductDto } from '../products/dto/admin-create-product.dto';
+import { AdminUpdateProductDto } from '../products/dto/admin-update-product.dto';
 
 @ApiTags('Admin')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -59,10 +61,34 @@ export class AdminController {
     return this.adminService.listProducts();
   }
 
+  @Post('products')
+  @RequirePermission(AdminPermission.PRODUCTS)
+  @ApiOperation({ summary: 'Create a product by hand (admin panel, no scrape)' })
+  createProduct(@Body() dto: AdminCreateProductDto) {
+    return this.adminService.createProduct(dto);
+  }
+
+  @Patch('products/:id')
+  @RequirePermission(AdminPermission.PRODUCTS)
+  @ApiOperation({ summary: 'Update a product (admin panel)' })
+  updateProduct(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateProductDto,
+  ) {
+    return this.adminService.updateProduct(id, dto);
+  }
+
   @Delete('products/:id')
   @RequirePermission(AdminPermission.PRODUCTS)
   deleteProduct(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteProduct(id);
+  }
+
+  @Post('uploads/signature')
+  @RequirePermission(AdminPermission.PRODUCTS)
+  @ApiOperation({ summary: 'Signed params for a direct-to-Cloudinary product image upload' })
+  getUploadSignature() {
+    return this.adminService.getProductImageUploadSignature();
   }
 
   /**
