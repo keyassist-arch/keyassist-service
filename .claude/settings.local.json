@@ -66,7 +66,10 @@
       "Read(//Users/aniebietabasi/Documents/code/**)",
       "Bash(npx --prefix /Users/aniebietabasi/Documents/code/unified-commerce-frontend eslint /Users/aniebietabasi/Documents/code/unified-commerce-frontend/components/storefront/sticky-search-bar.tsx /Users/aniebietabasi/Documents/code/unified-commerce-frontend/components/storefront/add-manual-product-form.tsx)",
       "Bash(npx next *)",
-      "Bash(mkdir -p /Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products/new /Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products/\\\\[id\\\\])"
+      "Bash(mkdir -p /Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products/new /Users/aniebietabasi/Documents/code/unified-commerce-frontend/app/admin/products/\\\\[id\\\\])",
+      "Bash(cp /private/tmp/claude-501/-Users-aniebietabasi-Documents-code-unified-commerce/9fe93361-8c1a-4684-b9fa-9889cfcf9dbe/scratchpad/diag.ts /Users/aniebietabasi/Documents/code/unified-commerce/src/scripts/_diag-scrape.ts)",
+      "Bash(sed -i '' \"s#path: '/Users/aniebietabasi/Documents/code/unified-commerce/.env'#path: __dirname + '/../../.env'#\" src/scripts/_diag-scrape.ts)",
+      "Bash(sed -i '' \"s#OUT_DIR = '.*';#OUT_DIR = '/private/tmp/claude-501/-Users-aniebietabasi-Documents-code-unified-commerce/9fe93361-8c1a-4684-b9fa-9889cfcf9dbe/scratchpad';#\" src/scripts/_diag-scrape.ts)"
     ],
     "additionalDirectories": [
       "/Users/aniebietabasi/Documents/code/unified-commerce-frontend/lib",

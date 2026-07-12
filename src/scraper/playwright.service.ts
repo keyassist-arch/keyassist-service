@@ -8,7 +8,7 @@ import {
 } from 'playwright';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import axios from 'axios';
+import { scrapeDoGet } from './utils/scrape-do-client.util';
 
 export type LoadPageOptions = {
   contextOverrides?: BrowserContextOptions;
@@ -228,15 +228,11 @@ export class PlaywrightService implements OnModuleDestroy {
     const token = this.config.get<string>('SCRAPE_DO_TOKEN')?.trim();
     if (!token) return null;
     try {
-      const params = new URLSearchParams({ token, url, super: 'true', wait: String(wait) });
-      const { data: html } = await axios.get<string>(
-        `http://api.scrape.do/?${params.toString()}`,
-        {
-          timeout: 60_000,
-          maxContentLength: 10_000_000,
-          headers: { Accept: 'text/html' },
-          validateStatus: (s) => s >= 200 && s < 400,
-        },
+      const { data: html } = await scrapeDoGet<string>(
+        token,
+        url,
+        { super: 'true', wait: String(wait) },
+        { responseType: 'text' },
       );
       if (typeof html !== 'string' || html.length < 500) return null;
       return html;
@@ -279,7 +275,24 @@ export class PlaywrightService implements OnModuleDestroy {
 
     if (html) {
       this.logger.log(`[playwright] loadPage source=scrape.do url=${url.slice(0, 80)}`);
-      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      // Serve the pre-fetched HTML for the top-level navigation instead of
+      // page.setContent(): setContent() leaves the page on `about:blank`
+      // (origin "null"), which throws SecurityErrors on cookies/XHR/history
+      // APIs and silently breaks any client-side hydration or relative
+      // fetches (e.g. price XHRs) the page tries to run afterwards. Routing
+      // the real URL to fulfill with our HTML keeps the correct origin while
+      // still avoiding a second live fetch of the document itself.
+      await page.route(url, (route) =>
+        route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }),
+      );
+      await page.goto(url, gotoOptions).catch((e) => {
+        this.logger.warn(
+          `[playwright] scrape.do-fulfilled goto failed, content may be partial: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
+      await page.unroute(url).catch(() => undefined);
       return { page, context, source: 'scrape.do' };
     }
 

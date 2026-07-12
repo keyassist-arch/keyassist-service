@@ -1,12 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
 import { ProductSource } from '../../common/enums/product-source.enum';
 import { GenericAdapter } from './generic.adapter';
 import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import { parsePriceToDecimalString } from '../utils/normalize-price.util';
+import { scrapeDoGet } from '../utils/scrape-do-client.util';
 
 // ─── Back Market Nuxt payload types ─────────────────────────────────────────
 
@@ -452,21 +452,11 @@ export class BackMarketAdapter implements ScraperAdapter {
     if (!token) return null;
 
     try {
-      const params = new URLSearchParams({
+      const { data: html } = await scrapeDoGet<string>(
         token,
         url,
-        super: 'true',
-        wait: '3000',
-        render: 'true',
-      });
-      const { data: html } = await axios.get<string>(
-        `http://api.scrape.do/?${params.toString()}`,
-        {
-          timeout: 60_000,
-          maxContentLength: 10_000_000,
-          headers: { Accept: 'text/html' },
-          validateStatus: (s) => s >= 200 && s < 400,
-        },
+        { super: 'true', wait: '3000', render: 'true' },
+        { responseType: 'text' },
       );
       if (typeof html !== 'string' || html.length < 1000) return null;
       const data = parseBackMarketHtml(html);
