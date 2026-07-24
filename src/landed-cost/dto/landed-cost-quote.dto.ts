@@ -60,7 +60,7 @@ export class LandedCostQuoteDto {
 
   @ApiPropertyOptional({
     enum: PRODUCT_CATEGORIES,
-    description: 'Product category for weight/customs estimation. Defaults to "generic".',
+    description: 'Product category for weight estimation. Defaults to "generic".',
   })
   @IsEnum(PRODUCT_CATEGORIES)
   @IsOptional()

@@ -1,6 +1,5 @@
 export enum AdminPermission {
   ORDERS = 'ORDERS',
-  BATCHES = 'BATCHES',
   PRODUCTS = 'PRODUCTS',
   REFUNDS = 'REFUNDS',
   ISSUES = 'ISSUES',

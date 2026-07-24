@@ -25,8 +25,6 @@ import type { SendNotificationJob } from '../jobs/processors/send-notification.p
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { LandedCostService } from '../landed-cost/landed-cost.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
-import { WannaBuyItem } from '../wanna-buy/entities/wanna-buy-item.entity';
-import { WannaBuyItemStatus } from '../common/enums/wanna-buy-item-status.enum';
 
 @Injectable()
 export class OrdersService {
@@ -37,8 +35,6 @@ export class OrdersService {
     private readonly orders: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItems: Repository<OrderItem>,
-    @InjectRepository(WannaBuyItem)
-    private readonly wannaBuyItems: Repository<WannaBuyItem>,
     private readonly dataSource: DataSource,
     private readonly cartService: CartService,
     private readonly productsService: ProductsService,
@@ -455,42 +451,6 @@ export class OrdersService {
         relations: ['items', 'user'],
       });
     });
-
-    // Sync any linked WannaBuyItem(s) to paid status — bulk-pay puts several
-    // items on one Order, so this must update every match, not just one.
-    // setImmediate defers to the next event-loop tick so this query runs on a
-    // fresh pool connection rather than on the client still finishing the
-    // transaction above — avoids the pg "client already executing" warning.
-    if (updated?.status === OrderStatus.PAID) {
-      setImmediate((): void => {
-        void (async () => {
-          try {
-            const items = await this.wannaBuyItems.find({ where: { orderId } });
-            const now = new Date();
-            for (const wbi of items) {
-              // Webhook retries are common — skip items already synced past PAID.
-              if (wbi.status === WannaBuyItemStatus.PAID || wbi.status === WannaBuyItemStatus.ORDERED) {
-                continue;
-              }
-              wbi.status = WannaBuyItemStatus.PAID;
-              wbi.paidAt = now;
-              wbi.chargedTotalUsd = wbi.totalUsd;
-              await this.wannaBuyItems.save(wbi);
-              this.orderRealtime.emitWannaBuyUpdate(wbi.userId, {
-                itemId: wbi.id,
-                status: wbi.status,
-              });
-              this.logger.log(`[order] step=wanna_buy_marked_paid itemId=${wbi.id} orderId=${orderId}`);
-            }
-          } catch (err) {
-            this.logger.error(
-              `[order] step=wanna_buy_sync_failed orderId=${orderId}`,
-              err instanceof Error ? err.stack : String(err),
-            );
-          }
-        })();
-      });
-    }
 
     if (updated?.status === OrderStatus.PAID) {
       this.logger.log(

@@ -408,7 +408,7 @@ class EnvironmentVariables {
   DEFAULT_MARKUP_PERCENT = 10;
 
   /**
-   * `true` / `1` — block checkout (POST /orders, POST /wanna-buy/:id/pay) until the user has
+   * `true` / `1` — block checkout (POST /orders) until the user has
    * verified their phone via WhatsApp OTP. Defaults to off so checkout isn't blocked before a
    * WhatsApp provider is actually configured below.
    */
