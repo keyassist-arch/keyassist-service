@@ -1,9 +1,10 @@
 import { Type } from 'class-transformer';
 import { IsObject, IsOptional, ValidateNested } from 'class-validator';
-import { ShippingAddressDto } from './shipping-address.dto';
-import { LandedCostInputDto } from './landed-cost-input.dto';
+import { ShippingAddressDto } from '../../orders/dto/shipping-address.dto';
+import { LandedCostInputDto } from '../../orders/dto/landed-cost-input.dto';
 
-export class CreateOrderDto {
+export class AdminPlaceManualImportOrderDto {
+  /** Falls back to the customer's saved default shipping address if omitted. */
   @IsOptional()
   @IsObject()
   @ValidateNested()

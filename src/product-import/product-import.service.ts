@@ -498,7 +498,10 @@ export class ProductImportService {
     return this.buildImportStatusPayload(row);
   }
 
-  async createManualProduct(dto: ManualProductImportDto) {
+  async createManualProduct(
+    dto: ManualProductImportDto,
+    requestedByUserId: string,
+  ) {
     let normalized: string;
     try {
       normalized = normalizeProductUrl(dto.sourceUrl);
@@ -512,6 +515,19 @@ export class ProductImportService {
     });
 
     if (existing?.status === ImportStatus.COMPLETED && existing.product) {
+      // Re-attribute an already-completed-but-not-yet-ordered row to the latest
+      // requester so admin can act on it. If it's already been ordered, leave the
+      // requester as-is — that request is fulfilled; a repeat purchase is a
+      // separate flow (ordinary cart/checkout), not the manual-import queue.
+      if (existing.orderId == null) {
+        existing.requestedByUserId = requestedByUserId;
+        existing.dismissedAt = null;
+        existing.dismissReason = null;
+        await this.imports.save(existing);
+        this.logger.log(
+          `[import] step=manual_resubmit_reopened importId=${existing.id} requestedByUserId=${requestedByUserId}`,
+        );
+      }
       return {
         status: 'completed' as const,
         product: this.productsService.toResponse(existing.product),
@@ -541,12 +557,14 @@ export class ProductImportService {
     let importRow: ImportedProduct;
     if (existing && existing.status === ImportStatus.FAILED) {
       existing.errorMessage = null;
+      existing.requestedByUserId = requestedByUserId;
       importRow = existing;
     } else {
       importRow = this.imports.create({
         sourceUrl: normalized,
         source: ProductSource.GENERIC,
         status: ImportStatus.QUEUED,
+        requestedByUserId,
       });
     }
 

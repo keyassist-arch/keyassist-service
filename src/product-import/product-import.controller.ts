@@ -5,10 +5,15 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { ProductImportService } from './product-import.service';
 import { ImportProductDto } from './dto/import-product.dto';
 import { ManualProductImportDto } from './dto/manual-product-import.dto';
@@ -30,16 +35,20 @@ export class ProductImportController {
     return this.productImportService.importByUrl(dto.url);
   }
 
-  @Public()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('manual')
   @ApiOperation({
     summary: 'Create product from manually entered details',
     description:
-      'Used when the product URL is from an unsupported retailer. Creates the product synchronously and returns it immediately with status `completed`.',
+      'Used when the product URL is from an unsupported retailer. Creates the product synchronously and returns it immediately with status `completed`. Requires login so the request can be attributed to the submitting customer for admin order placement.',
   })
-  async createManual(@Body() dto: ManualProductImportDto) {
-    return this.productImportService.createManualProduct(dto);
+  async createManual(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ManualProductImportDto,
+  ) {
+    return this.productImportService.createManualProduct(dto, user.sub);
   }
 
   @Public()

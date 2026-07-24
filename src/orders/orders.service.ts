@@ -18,13 +18,19 @@ import { OrderStatus } from '../common/enums/order-status.enum';
 import { CartService } from '../cart/cart.service';
 import { ProductsService } from '../products/products.service';
 import { UsersService } from '../users/users.service';
-import { ShippingAddress } from '../users/entities/user.entity';
+import { ShippingAddress, User } from '../users/entities/user.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QUEUE_SEND_NOTIFICATION, QUEUE_VERIFY_PRICE } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { LandedCostService } from '../landed-cost/landed-cost.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
+import { ProductSource } from '../common/enums/product-source.enum';
+import type {
+  ShippingDestination,
+  ShippingService as ShippingServiceType,
+} from '../shipping/utils/kingz-rates';
+import type { ProductCategory } from '../landed-cost/rules/category-weights';
 
 @Injectable()
 export class OrdersService {
@@ -95,6 +101,102 @@ export class OrdersService {
       }),
     );
 
+    const order = await this.placeOrder(userId, lines, dto.landedCost, shipping, user, {
+      cartIdToClear: cart.id,
+    });
+    return this.toResponse(order);
+  }
+
+  /**
+   * Places an order on behalf of `targetUserId` from an explicit item list rather
+   * than the user's live cart — used by admin-initiated order placement (e.g. for
+   * manually-imported products the customer couldn't check out themselves). The
+   * resulting order is identical in shape/state to a customer-created one (status
+   * PENDING, payable via the normal /payments/initialize flow).
+   */
+  async createForUserFromItems(
+    targetUserId: string,
+    items: {
+      productId: string;
+      quantity: number;
+      variantSelection?: Record<string, string> | null;
+    }[],
+    landedCost: {
+      destination: ShippingDestination;
+      shippingService: ShippingServiceType;
+      category?: ProductCategory;
+    },
+    shippingAddress?: ShippingAddress,
+  ) {
+    if (!items.length) {
+      throw new BadRequestException('At least one item is required');
+    }
+    const user = await this.usersService.findById(targetUserId);
+    const shipping: ShippingAddress = shippingAddress
+      ? shippingAddress
+      : user.defaultShippingAddress
+        ? user.defaultShippingAddress
+        : (() => {
+            throw new BadRequestException(
+              'Customer has no default shipping address; provide one explicitly',
+            );
+          })();
+
+    const lines = await Promise.all(
+      items.map(async (item) => {
+        const product = await this.productsService.findById(item.productId);
+        const unitPrice = this.productsService.resolveVariantPrice(
+          product,
+          item.variantSelection,
+        );
+        return {
+          productId: product.id,
+          title: product.title,
+          price: unitPrice,
+          currency: product.currency,
+          source: product.source,
+          qty: item.quantity,
+          images: product.images,
+          variant: item.variantSelection ?? null,
+        };
+      }),
+    );
+
+    const order = await this.placeOrder(targetUserId, lines, landedCost, shipping, user);
+    this.logger.log(
+      `[order] step=admin_created orderId=${order.id} targetUserId=${targetUserId}`,
+    );
+    return this.toResponse(order);
+  }
+
+  /**
+   * Shared core for order placement: computes landed-cost pricing, locks/checks
+   * stock, persists the Order + OrderItem rows in a transaction, then fires the
+   * post-creation side effects (verify-price queue, confirmation email, realtime
+   * update). `createFromCart` and `createForUserFromItems` both fan into this so
+   * pricing/transaction/notification logic exists in exactly one place.
+   */
+  private async placeOrder(
+    userId: string,
+    lines: {
+      productId: string;
+      title: string;
+      price: string;
+      currency: string;
+      source: ProductSource;
+      qty: number;
+      images: string[];
+      variant?: Record<string, string> | null;
+    }[],
+    landedCost: {
+      destination: ShippingDestination;
+      shippingService: ShippingServiceType;
+      category?: ProductCategory;
+    },
+    shipping: ShippingAddress,
+    user: User,
+    opts: { cartIdToClear?: string } = {},
+  ): Promise<Order> {
     const currency = 'USD';
     const subtotal = lines.reduce(
       (acc, l) => acc + parseFloat(l.price) * l.qty,
@@ -108,13 +210,12 @@ export class OrdersService {
         qty: l.qty,
       })),
       {
-        destination: dto.landedCost.destination,
-        shippingService: dto.landedCost.shippingService,
-        category: dto.landedCost.category ?? 'generic',
+        destination: landedCost.destination,
+        shippingService: landedCost.shippingService,
+        category: landedCost.category ?? 'generic',
       },
     );
 
-    const fees = lc.serviceChargeUsd;
     const total = lc.totalUsd;
 
     this.logger.log(
@@ -176,7 +277,9 @@ export class OrdersService {
           ),
         );
       }
-      await em.delete(CartItem, { cartId: cart.id });
+      if (opts.cartIdToClear) {
+        await em.delete(CartItem, { cartId: opts.cartIdToClear });
+      }
       // Attach items in-memory — avoids a second DB round-trip inside the transaction.
       o.items = savedItems;
       return o;
@@ -231,7 +334,7 @@ export class OrdersService {
       `[order] step=realtime_emitted orderId=${order.id} status=${order.status}`,
     );
 
-    return this.toResponse(order);
+    return order;
   }
 
   async listForUser(userId: string, query?: { status?: string }) {
