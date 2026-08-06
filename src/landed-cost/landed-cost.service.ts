@@ -5,11 +5,14 @@ import { Product } from '../products/entities/product.entity';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { CurrencyService } from '../currency/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
+import { CartService } from '../cart/cart.service';
+import { ProductsService } from '../products/products.service';
 import { computePlatformFee, DISCOUNT_RATE, DISCOUNT_THRESHOLD_USD } from '../common/utils/pricing.util';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
 import type { LandedCostBreakdown } from './interfaces/landed-cost-breakdown.interface';
 import type { LandedCostQuoteDto } from './dto/landed-cost-quote.dto';
+import type { LandedCostCartQuoteDto } from './dto/landed-cost-cart-quote.dto';
 import type { ShippingDestination, ShippingService as ShippingServiceType } from '../shipping/utils/kingz-rates';
 
 export type CartLineInput = {
@@ -28,8 +31,19 @@ export type CartLandedCostOpts = {
   category: ProductCategory;
 };
 
-/** Flat warehouse receiving/processing fee per shipment (USD) */
-const DOMESTIC_HANDLING_FEE_USD = 8;
+/**
+ * Warehouse receiving/processing fee per shipment (USD).
+ * Dropped to $0 — Kingz international shipping already covers this leg;
+ * charging it separately doubled up on cost with no added service.
+ */
+const DOMESTIC_HANDLING_FEE_USD = 0;
+
+/**
+ * Flat estimated-tax charge (USD), replacing the old per-marketplace percentage
+ * estimate (8.8% of price). Kept simple and predictable rather than scaling with
+ * price; real observed tax (`taxAmountUsd`) still overrides this when known.
+ */
+const FLAT_TAX_USD = 5;
 
 const FX_BUFFER_RATE = 0;
 const RISK_BUFFER_RATE = 0;
@@ -43,6 +57,8 @@ export class LandedCostService {
     private readonly products: Repository<Product>,
     private readonly currencyService: CurrencyService,
     private readonly shippingService: ShippingService,
+    private readonly cartService: CartService,
+    private readonly productsService: ProductsService,
   ) {}
 
   async quote(dto: LandedCostQuoteDto): Promise<LandedCostBreakdown> {
@@ -63,9 +79,7 @@ export class LandedCostService {
     const productSubtotal = round(productPriceUsd * dto.quantity);
     // Prefer an actual tax amount from the scraper/checkout over the flat estimate.
     const marketplaceTax =
-      dto.taxAmountUsd != null
-        ? round(dto.taxAmountUsd)
-        : round(productSubtotal * estimate.taxRate);
+      dto.taxAmountUsd != null ? round(dto.taxAmountUsd) : FLAT_TAX_USD;
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -172,7 +186,7 @@ export class LandedCostService {
     // ── 1. Source marketplace costs ──────────────────────────────────────────
     const productSubtotal = round(lines.reduce((s, l) => s + l.priceUsd * l.qty, 0));
 
-    let marketplaceTax = 0;
+    const marketplaceTax = FLAT_TAX_USD;
     const seenMarketplaces = new Set<ProductSource>();
     let marketplaceShipping = 0;
     let lowestConfidence: 'high' | 'medium' | 'low' = 'high';
@@ -180,7 +194,6 @@ export class LandedCostService {
 
     for (const line of lines) {
       const est = MARKETPLACE_ESTIMATES[line.marketplace];
-      marketplaceTax += line.priceUsd * line.qty * est.taxRate;
       if (!seenMarketplaces.has(line.marketplace)) {
         marketplaceShipping += est.domesticShippingUsd;
         seenMarketplaces.add(line.marketplace);
@@ -189,7 +202,6 @@ export class LandedCostService {
         lowestConfidence = est.confidence;
       }
     }
-    marketplaceTax = round(marketplaceTax);
     marketplaceShipping = round(marketplaceShipping);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -275,6 +287,56 @@ export class LandedCostService {
       totalDisplay: totalUsd,
       breakdown,
     };
+  }
+
+  /**
+   * Preview quote for the checkout confirm step. Mirrors `OrdersService.placeOrder()`'s
+   * pricing step exactly (same price resolution, same `quoteForCartLines` aggregation)
+   * so what the customer previews here matches what the order is actually created with —
+   * unlike quoting a single cart line, which silently ignores the rest of the cart.
+   */
+  async quoteForUserCart(
+    userId: string,
+    opts: LandedCostCartQuoteDto,
+  ): Promise<LandedCostBreakdown> {
+    const cart = await this.cartService.getOrCreateCart(userId);
+    const items = (cart.items ?? []).filter((i) => i.product);
+    if (!items.length) {
+      throw new BadRequestException('Cart is empty');
+    }
+
+    const lines: CartLineInput[] = items.map((i) => ({
+      priceUsd: parseFloat(
+        this.productsService.resolveVariantPrice(i.product, i.variantSelection),
+      ),
+      marketplace: i.product.source,
+      qty: i.quantity,
+    }));
+
+    const breakdown = await this.quoteForCartLines(lines, {
+      destination: opts.destination,
+      shippingService: opts.shippingService,
+      category: opts.category ?? 'generic',
+    });
+
+    const targetCurrency = (opts.displayCurrency ?? 'USD').toUpperCase();
+    if (targetCurrency === 'USD') return breakdown;
+
+    try {
+      const totalDisplay = round(
+        await this.currencyService.convert(
+          breakdown.totalUsd,
+          'USD',
+          targetCurrency,
+        ),
+      );
+      return { ...breakdown, displayCurrency: targetCurrency, totalDisplay };
+    } catch (err) {
+      this.logger.warn(
+        `[landed-cost] currency conversion to ${targetCurrency} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return breakdown;
+    }
   }
 
   private async resolveInputs(dto: LandedCostQuoteDto): Promise<{
