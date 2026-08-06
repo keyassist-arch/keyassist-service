@@ -113,4 +113,10 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       domesticShippingUsd: 9.99,
       confidence: 'low',
     },
+    [ProductSource.KEYASSIST]: {
+      // Sourced/held by Key Assist directly — no separate US retail purchase leg.
+      taxRate: 0,
+      domesticShippingUsd: 0,
+      confidence: 'high',
+    },
   };
