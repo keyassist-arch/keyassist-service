@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional } from 'class-validator';
 import type {
   ShippingDestination,
   ShippingService,
@@ -22,4 +22,9 @@ export class LandedCostInputDto {
   @IsEnum(PRODUCT_CATEGORIES)
   @IsOptional()
   category?: ProductCategory;
+
+  /** Opt in to Kingz cargo insurance (3% of item cost). Lagos destinations only. */
+  @IsBoolean()
+  @IsOptional()
+  insurance?: boolean;
 }

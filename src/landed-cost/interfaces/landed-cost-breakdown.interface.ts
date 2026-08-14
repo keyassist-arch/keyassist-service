@@ -18,6 +18,8 @@ export interface LandedCostBreakdown {
   domesticHandlingUsd: number;
   /** Kingz all-inclusive rate (customs & clearing included in their price) */
   internationalShippingUsd: number;
+  /** Optional cargo insurance (3% of item cost, Lagos only). 0 unless opted in. */
+  insuranceUsd: number;
 
   // ── Buffers (USD) ───────────────────────────────────────────────────────────
   fxBufferUsd: number;

@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   PRODUCT_CATEGORIES,
@@ -35,4 +35,13 @@ export class LandedCostCartQuoteDto {
   @IsString()
   @IsOptional()
   displayCurrency?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Opt in to Kingz cargo insurance (3% of item cost). Lagos destinations only.',
+    default: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  insurance?: boolean;
 }

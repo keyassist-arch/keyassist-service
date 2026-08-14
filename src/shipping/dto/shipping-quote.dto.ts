@@ -37,4 +37,13 @@ export class ShippingQuoteDto {
   @IsOptional()
   @IsBoolean()
   isTV?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  declaredValueUsd?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  insurance?: boolean;
 }
