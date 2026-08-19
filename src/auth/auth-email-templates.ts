@@ -1,5 +1,5 @@
 /**
- * HTML + plain-text bodies for authentication emails (Resend).
+ * HTML + plain-text bodies for authentication emails (MailerSend).
  * Keep copy neutral; links use FRONTEND_URL-derived URLs from the caller.
  */
 

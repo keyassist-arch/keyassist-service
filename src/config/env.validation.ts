@@ -190,25 +190,16 @@ class EnvironmentVariables {
 
   @IsString()
   @IsOptional()
-  RESEND_API_KEY?: string;
+  MAILERSEND_API_KEY?: string;
 
-  /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain in production */
+  /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain (or the trial sender) */
   @IsString()
   @IsOptional()
-  RESEND_FROM?: string;
+  MAILERSEND_FROM?: string;
 
   @IsString()
   @IsOptional()
   MAIL_FROM?: string;
-
-  /**
-   * `true` / `1` — always send from Resend onboarding address (no verified domain).
-   * `false` / `0` — use RESEND_FROM / MAIL_FROM even in development.
-   * Unset — use onboarding outside production; use RESEND_FROM in production.
-   */
-  @IsString()
-  @IsOptional()
-  RESEND_SANDBOX?: string;
 
   /** Password-reset email links: https://your-app/reset-password?token=... */
   @IsString()
