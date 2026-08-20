@@ -26,6 +26,7 @@
     "backfill:categories": "ts-node -r tsconfig-paths/register src/scripts/backfill-product-categories.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1114.0",
     "@google/genai": "^2.3.0",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.0.1",
@@ -46,7 +47,6 @@
     "bullmq": "^5.71.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
-    "cloudinary": "^2.10.0",
     "date-fns": "^4.4.0",
     "dotenv": "^17.3.1",
     "ioredis": "^5.10.1",
@@ -75,6 +75,7 @@
     "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
     "@types/qrcode": "^1.5.6",

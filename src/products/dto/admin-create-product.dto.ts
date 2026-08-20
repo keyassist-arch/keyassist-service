@@ -38,7 +38,7 @@ export class AdminCreateProductDto {
   @Min(0)
   originalPrice: number;
 
-  @ApiProperty({ type: [String], example: ['https://res.cloudinary.com/.../image.jpg'] })
+  @ApiProperty({ type: [String], example: ['https://api.example.com/uploads/products/abc123.jpg'] })
   @IsArray()
   @ArrayMaxSize(20)
   @IsUrl({}, { each: true })

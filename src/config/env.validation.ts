@@ -421,6 +421,36 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   META_WHATSAPP_API_VERSION?: string;
+
+  /** S3-compatible endpoint for the object storage bucket (product image uploads). */
+  @IsString()
+  @IsOptional()
+  STORAGE_ENDPOINT?: string;
+
+  /** Object storage region. Defaults to "auto" (Railway/Tigris buckets don't use AWS regions). */
+  @IsString()
+  @IsOptional()
+  STORAGE_REGION?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_BUCKET?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_ACCESS_KEY_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_SECRET_ACCESS_KEY?: string;
+
+  /**
+   * Public base URL of this API (no trailing slash) — used to build product image URLs
+   * served via `GET /uploads/:key`. Falls back to `RAILWAY_PUBLIC_DOMAIN` when unset.
+   */
+  @IsString()
+  @IsOptional()
+  API_PUBLIC_URL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
