@@ -11,9 +11,9 @@ export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 
   @Public()
-  @Get(':key(*)')
-  async getObject(@Param('key') key: string, @Res() res: Response) {
-    const { body, contentType } = await this.uploadsService.getObject(key);
+  @Get('*key')
+  async getObject(@Param('key') key: string[], @Res() res: Response) {
+    const { body, contentType } = await this.uploadsService.getObject(key.join('/'));
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     body.pipe(res);
