@@ -125,6 +125,7 @@ export class OrdersService {
       destination: ShippingDestination;
       shippingService: ShippingServiceType;
       category?: ProductCategory;
+      insurance?: boolean;
     },
     shippingAddress?: ShippingAddress,
   ) {
@@ -192,6 +193,7 @@ export class OrdersService {
       destination: ShippingDestination;
       shippingService: ShippingServiceType;
       category?: ProductCategory;
+      insurance?: boolean;
     },
     shipping: ShippingAddress,
     user: User,
@@ -213,6 +215,7 @@ export class OrdersService {
         destination: landedCost.destination,
         shippingService: landedCost.shippingService,
         category: landedCost.category ?? 'generic',
+        insurance: landedCost.insurance ?? false,
       },
     );
 
@@ -252,6 +255,7 @@ export class OrdersService {
         marketplaceShipping: lc.marketplaceShippingUsd.toFixed(2),
         domesticHandling: lc.domesticHandlingUsd.toFixed(2),
         customsTotal: '0.00',
+        insurance: lc.insuranceUsd.toFixed(2),
         fxBuffer: lc.fxBufferUsd.toFixed(2),
         riskBuffer: lc.riskBufferUsd.toFixed(2),
         pricingBreakdown: lc.breakdown,
@@ -602,6 +606,7 @@ export class OrdersService {
       parseFloat(o.domesticHandling  || '0') +
       parseFloat(o.shippingFee       || '0') +
       parseFloat(o.customsTotal      || '0') +
+      parseFloat(o.insurance         || '0') +
       parseFloat(o.fxBuffer          || '0') +
       parseFloat(o.riskBuffer        || '0')
     ).toFixed(2);
@@ -630,6 +635,7 @@ export class OrdersService {
       marketplaceShipping: o.marketplaceShipping,
       domesticHandling: o.domesticHandling,
       customsTotal: o.customsTotal,
+      insurance: o.insurance,
       fxBuffer: o.fxBuffer,
       riskBuffer: o.riskBuffer,
       pricingBreakdown: o.pricingBreakdown ?? [],

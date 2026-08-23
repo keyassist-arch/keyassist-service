@@ -72,8 +72,8 @@ export class AdminService {
     return this.productsService.toResponse(product);
   }
 
-  getProductImageUploadSignature() {
-    return this.uploadsService.generateProductImageSignature();
+  uploadProductImage(file: Express.Multer.File) {
+    return this.uploadsService.uploadProductImage(file);
   }
 
   async patchOrder(orderId: string, dto: AdminPatchOrderDto) {

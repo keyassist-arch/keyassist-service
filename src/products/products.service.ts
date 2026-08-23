@@ -227,7 +227,7 @@ export class ProductsService {
     const markupPercent = '0.00';
     const product = this.products.create({
       sourceUrl: `internal://admin/${randomUUID()}`,
-      source: ProductSource.GENERIC,
+      source: ProductSource.KEYASSIST,
       title: dto.title,
       slug,
       description: dto.description ?? null,

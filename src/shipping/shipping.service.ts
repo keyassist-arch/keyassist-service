@@ -9,6 +9,7 @@ export type ShippingQuoteResult = {
   baseRate: number;
   tvFee: number;
   bulkSurcharge: number;
+  insuranceUsd: number;
   total: number;
   breakdown: string[];
 };
@@ -29,9 +30,24 @@ export class ShippingService {
       service,
       bulkCommercial = false,
       isTV = false,
+      declaredValueUsd = 0,
+      insurance = false,
     } = dto;
 
+    const insuranceUsd =
+      insurance && destination === 'lagos' && declaredValueUsd > 0
+        ? parseFloat(
+            (declaredValueUsd * rates.cargoInsuranceRateLagos).toFixed(2),
+          )
+        : 0;
+    const insuranceBreakdown = insuranceUsd > 0
+      ? [
+          `Cargo insurance: ${(rates.cargoInsuranceRateLagos * 100).toFixed(0)}% of $${declaredValueUsd.toFixed(2)} declared value = $${insuranceUsd.toFixed(2)}`,
+        ]
+      : [];
+
     if (service === 'ocean_small') {
+      const total = rates.oceanSmallBoxRate + insuranceUsd;
       return {
         actualWeight: weight,
         dimWeight: 0,
@@ -39,9 +55,11 @@ export class ShippingService {
         baseRate: rates.oceanSmallBoxRate,
         tvFee: 0,
         bulkSurcharge: 0,
-        total: rates.oceanSmallBoxRate,
+        insuranceUsd,
+        total,
         breakdown: [
           `Ocean small box flat rate: $${rates.oceanSmallBoxRate.toFixed(2)}`,
+          ...insuranceBreakdown,
         ],
       };
     }
@@ -83,7 +101,9 @@ export class ShippingService {
       );
     }
 
-    const total = baseRate + tvFee + bulkSurcharge;
+    breakdown.push(...insuranceBreakdown);
+
+    const total = baseRate + tvFee + bulkSurcharge + insuranceUsd;
     breakdown.push(`Total: $${total.toFixed(2)}`);
 
     return {
@@ -93,6 +113,7 @@ export class ShippingService {
       baseRate: parseFloat(baseRate.toFixed(2)),
       tvFee,
       bulkSurcharge,
+      insuranceUsd,
       total: parseFloat(total.toFixed(2)),
       breakdown,
     };

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,9 +8,13 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -84,11 +89,21 @@ export class AdminController {
     return this.adminService.deleteProduct(id);
   }
 
-  @Post('uploads/signature')
+  @Post('uploads')
   @RequirePermission(AdminPermission.PRODUCTS)
-  @ApiOperation({ summary: 'Signed params for a direct-to-Cloudinary product image upload' })
-  getUploadSignature() {
-    return this.adminService.getProductImageUploadSignature();
+  @ApiOperation({ summary: 'Upload a product image to object storage' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+    }),
+  )
+  uploadProductImage(@UploadedFile() file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded — expected field "file"');
+    }
+    return this.adminService.uploadProductImage(file);
   }
 
   /**

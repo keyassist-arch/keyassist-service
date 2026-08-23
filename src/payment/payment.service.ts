@@ -855,6 +855,38 @@ export class PaymentService {
     });
   }
 
+  /**
+   * Confirms orders paid via a saved card (`initStripeWithSavedMethod`), which
+   * creates a PaymentIntent directly rather than a Checkout Session. Those
+   * PaymentIntents carry `metadata.orderId`; Checkout Session PaymentIntents
+   * don't, so this is a no-op for the `checkout.session.completed` flow above.
+   */
+  async handleStripePaymentIntentSucceeded(
+    paymentIntent: Stripe.PaymentIntent,
+  ) {
+    const orderId = paymentIntent.metadata?.orderId;
+    if (!orderId) {
+      return;
+    }
+
+    const stripe = this.getStripe();
+    const pm =
+      typeof paymentIntent.payment_method === 'string'
+        ? await stripe.paymentMethods.retrieve(paymentIntent.payment_method)
+        : (paymentIntent.payment_method ?? null);
+
+    const method = stripePaymentMethodToDetails(pm);
+
+    this.logger.log(
+      `[payment] step=stripe_payment_intent_apply orderId=${orderId} paymentIntentId=${paymentIntent.id}`,
+    );
+    await this.ordersService.markOrderPaid(orderId, {
+      provider: PaymentProvider.STRIPE,
+      stripePaymentIntentId: paymentIntent.id,
+      paymentMethodDetails: method,
+    });
+  }
+
   async capturePaypalOrder(
     orderId: string,
     userId: string,

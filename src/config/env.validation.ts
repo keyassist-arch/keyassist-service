@@ -190,25 +190,16 @@ class EnvironmentVariables {
 
   @IsString()
   @IsOptional()
-  RESEND_API_KEY?: string;
+  MAILERSEND_API_KEY?: string;
 
-  /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain in production */
+  /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain (or the trial sender) */
   @IsString()
   @IsOptional()
-  RESEND_FROM?: string;
+  MAILERSEND_FROM?: string;
 
   @IsString()
   @IsOptional()
   MAIL_FROM?: string;
-
-  /**
-   * `true` / `1` — always send from Resend onboarding address (no verified domain).
-   * `false` / `0` — use RESEND_FROM / MAIL_FROM even in development.
-   * Unset — use onboarding outside production; use RESEND_FROM in production.
-   */
-  @IsString()
-  @IsOptional()
-  RESEND_SANDBOX?: string;
 
   /** Password-reset email links: https://your-app/reset-password?token=... */
   @IsString()
@@ -454,6 +445,36 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   META_WHATSAPP_API_VERSION?: string;
+
+  /** S3-compatible endpoint for the object storage bucket (product image uploads). */
+  @IsString()
+  @IsOptional()
+  STORAGE_ENDPOINT?: string;
+
+  /** Object storage region. Defaults to "auto" (Railway/Tigris buckets don't use AWS regions). */
+  @IsString()
+  @IsOptional()
+  STORAGE_REGION?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_BUCKET?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_ACCESS_KEY_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_SECRET_ACCESS_KEY?: string;
+
+  /**
+   * Public base URL of this API (no trailing slash) — used to build product image URLs
+   * served via `GET /uploads/:key`. Falls back to `RAILWAY_PUBLIC_DOMAIN` when unset.
+   */
+  @IsString()
+  @IsOptional()
+  API_PUBLIC_URL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

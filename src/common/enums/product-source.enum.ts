@@ -14,4 +14,5 @@ export enum ProductSource {
   WALMART = 'walmart',
   REEBELO = 'reebelo',
   GENERIC = 'generic',
+  KEYASSIST = 'keyassist',
 }

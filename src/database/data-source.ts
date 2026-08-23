@@ -35,6 +35,8 @@ import { AddSavedPaymentMethods1780800000000 } from './migrations/1780800000000-
 import { AddUserAdminPermissions1782300000000 } from './migrations/1782300000000-AddUserAdminPermissions';
 import { DropWannaBuyTables1784000000000 } from './migrations/1784000000000-DropWannaBuyTables';
 import { AddImportedProductAttribution1784911137000 } from './migrations/1784911137000-AddImportedProductAttribution';
+import { AddShippingInsuranceAndFixDimDivisor1786724439000 } from './migrations/1786724439000-AddShippingInsuranceAndFixDimDivisor';
+import { AddOrderInsurance1786724440000 } from './migrations/1786724440000-AddOrderInsurance';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -80,6 +82,8 @@ export default new DataSource({
     AddUserAdminPermissions1782300000000,
     DropWannaBuyTables1784000000000,
     AddImportedProductAttribution1784911137000,
+    AddShippingInsuranceAndFixDimDivisor1786724439000,
+    AddOrderInsurance1786724440000,
   ],
   synchronize: false,
 });

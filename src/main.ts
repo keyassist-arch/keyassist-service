@@ -1,27 +1,32 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { setupSwagger } from './swagger';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+
+const LOCALHOST_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // app.enableCors({
-  //   origin: true, // TEMP: allow all for debugging
-  //   credentials: true,
-  // });
+  const config = app.get(ConfigService);
+  const allowedOrigins = (config.get<string>('CORS_ORIGIN') ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const allowLocalhost =
+    config.get<string>('CORS_ALLOW_LOCALHOST')?.trim().toLowerCase() === 'true';
 
-  // Enable CORS with explicit configuration
   app.enableCors({
-    origin: [
-      'https://keyassist.up.railway.app',
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001',
-    ],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // non-browser clients (curl, server-to-server)
+      if (allowedOrigins.length === 0) return callback(null, true); // unset = echo request origin
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (allowLocalhost && LOCALHOST_ORIGIN.test(origin)) return callback(null, true);
+      callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: 'Origin,X-Requested-With,Content-Type,Accept,Authorization',

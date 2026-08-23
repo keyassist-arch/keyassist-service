@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
@@ -107,4 +108,13 @@ export class LandedCostQuoteDto {
   @Min(0)
   @IsOptional()
   taxAmountUsd?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Opt in to Kingz cargo insurance (3% of item cost). Lagos destinations only.',
+    default: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  insurance?: boolean;
 }

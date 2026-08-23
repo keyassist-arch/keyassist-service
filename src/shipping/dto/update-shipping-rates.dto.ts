@@ -45,4 +45,9 @@ export class UpdateShippingRatesDto {
   @IsNumber()
   @Min(0)
   oceanSmallBoxRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  cargoInsuranceRateLagos?: number;
 }

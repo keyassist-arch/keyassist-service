@@ -282,7 +282,7 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Always returns the same message (do not reveal whether the email is registered).
-   * Sends Resend email when user exists and `RESEND_API_KEY` is set.
+   * Sends an email via MailerSend when user exists and `MAILERSEND_API_KEY` is set.
    */
   async requestPasswordReset(email: string): Promise<{ message: string }> {
     const user = await this.usersService.findByEmailInsensitive(email);

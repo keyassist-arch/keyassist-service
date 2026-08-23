@@ -66,6 +66,14 @@ export class ShippingRates {
   })
   oceanSmallBoxRate: string;
 
+  @Column({
+    name: 'cargo_insurance_rate_lagos',
+    type: 'decimal',
+    precision: 5,
+    scale: 4,
+  })
+  cargoInsuranceRateLagos: string;
+
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }

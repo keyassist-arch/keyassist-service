@@ -185,6 +185,10 @@ export class PaymentController {
       await this.paymentService.handleStripeCheckoutSessionCompleted(
         event.data.object,
       );
+    } else if (event.type === 'payment_intent.succeeded') {
+      await this.paymentService.handleStripePaymentIntentSucceeded(
+        event.data.object,
+      );
     }
     return { received: true };
   }

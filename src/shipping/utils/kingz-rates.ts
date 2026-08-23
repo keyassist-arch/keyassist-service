@@ -21,7 +21,13 @@ export const AIR_RATE_LAGOS_PER_LB = AIR_RATE_PER_LB;
 export const AIR_RATE_OUTSIDE_LAGOS_PER_LB = AIR_RATE_PER_LB;
 
 /** Divisor used to calculate dimensional (volumetric) weight: (L×W×H in inches) / DIM_DIVISOR */
-export const DIM_DIVISOR = 166;
+export const DIM_DIVISOR = 139;
+
+/**
+ * Optional cargo insurance rate, applied to the declared (item) value.
+ * Per Kingz Lagos shipping spec — Lagos-destined shipments only.
+ */
+export const CARGO_INSURANCE_RATE_LAGOS = 0.03;
 
 /**
  * Weight threshold in lbs below which the weight is rounded up to the next integer.
