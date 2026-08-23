@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ProductSource } from '../../common/enums/product-source.enum';
 import type { ProductConfigurationPrice } from '../../products/entities/product.entity';
 import { GenericAdapter } from './generic.adapter';
@@ -6,6 +7,38 @@ import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import { parsePriceToDecimalString } from '../utils/normalize-price.util';
+import { rapidApiGet } from '../utils/rapidapi-client.util';
+
+/**
+ * Shape of the "Real-Time Amazon Data" RapidAPI listing's `/scrape-by-url` response
+ * (host configured via RAPIDAPI_AMAZON_HOST) for `page_type: "product"`. Field names
+ * mirror that API's `product-details` endpoint vocabulary.
+ */
+interface RapidApiAmazonProduct {
+  asin?: string;
+  product_title?: string;
+  product_price?: string | null;
+  product_original_price?: string | null;
+  currency?: string | null;
+  product_photo?: string;
+  product_photos?: string[];
+  product_star_rating?: string | null;
+  product_num_ratings?: number | null;
+  product_availability?: string | null;
+  about_product?: string[];
+  product_description?: string;
+  product_information?: Record<string, string>;
+  product_details?: Record<string, string>;
+}
+
+interface RapidApiAmazonScrapeByUrlResponse {
+  status?: string;
+  data?: {
+    page_type?: string;
+    product?: RapidApiAmazonProduct;
+    products?: RapidApiAmazonProduct[];
+  };
+}
 
 /**
  * Amazon PDP layout varies; a saved example lives at repo `amazon.html`.
@@ -68,9 +101,138 @@ export class AmazonAdapter implements ScraperAdapter {
   constructor(
     private readonly playwright: PlaywrightService,
     private readonly generic: GenericAdapter,
+    private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Try the subscribed RapidAPI "Real-Time Amazon Data" listing first — it proxies the
+   * request through its own infra, avoiding Amazon's bot detection entirely, and is
+   * typically faster than a full Playwright render. Falls through to scrape.do/Playwright
+   * (see `scrape()`) when unset, on error, or when the response is missing title/price.
+   */
+  private async fetchViaRapidApi(url: string): Promise<ScrapedProduct | null> {
+    const key = this.config.get<string>('RAPIDAPI_KEY')?.trim();
+    const host = this.config.get<string>('RAPIDAPI_AMAZON_HOST')?.trim();
+    if (!key || !host) return null;
+
+    try {
+      const { data } = await rapidApiGet<RapidApiAmazonScrapeByUrlResponse>(
+        key,
+        host,
+        '/scrape-by-url',
+        { url, country: this.countryFromAmazonUrl(url), return_html: 'false' },
+      );
+
+      const payload = data?.data;
+      const product =
+        payload?.page_type === 'product' ? payload.product : payload?.products?.[0];
+
+      if (!product?.product_title) {
+        this.logger.warn(`AmazonAdapter: RapidAPI returned no product for ${url}`);
+        return null;
+      }
+
+      const price = parsePriceToDecimalString(product.product_price ?? '');
+      if (!price) {
+        this.logger.warn(`AmazonAdapter: RapidAPI product missing price for ${url}`);
+        return null;
+      }
+
+      const compareAtPrice = product.product_original_price
+        ? (parsePriceToDecimalString(product.product_original_price) ?? undefined)
+        : undefined;
+
+      const images = [
+        ...(product.product_photo ? [product.product_photo] : []),
+        ...(product.product_photos ?? []),
+      ].filter((u, i, arr) => !!u && arr.indexOf(u) === i);
+
+      const ratingValue = product.product_star_rating
+        ? parseFloat(product.product_star_rating)
+        : undefined;
+
+      const specifications: Record<string, string> = {
+        ...(product.product_information ?? {}),
+        ...(product.product_details ?? {}),
+      };
+
+      const descParts: string[] = [];
+      if (product.about_product?.length) descParts.push(product.about_product.join('\n'));
+      if (product.product_description) descParts.push(product.product_description);
+
+      this.logger.log(
+        `AmazonAdapter: RapidAPI hit for ${url} — title="${product.product_title}" price=${price}`,
+      );
+
+      return {
+        title: product.product_title,
+        price,
+        currency: (
+          product.currency ||
+          this.currencyFromAmazonUrl(url) ||
+          'USD'
+        ).toUpperCase(),
+        compareAtPrice,
+        images,
+        description: descParts.join('\n\n') || undefined,
+        asin: product.asin || undefined,
+        ...(ratingValue != null
+          ? {
+              rating: {
+                value: ratingValue,
+                reviewCount: product.product_num_ratings ?? undefined,
+              },
+            }
+          : {}),
+        ...(Object.keys(specifications).length ? { specifications } : {}),
+        variants: [],
+        availability: product.product_availability ?? undefined,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `AmazonAdapter: RapidAPI fetch failed for ${url} — ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  /** Best-effort marketplace country code for the RapidAPI `country` param. Defaults to US. */
+  private countryFromAmazonUrl(url: string): string {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+      const map: Record<string, string> = {
+        'amazon.co.uk': 'GB',
+        'amazon.de': 'DE',
+        'amazon.fr': 'FR',
+        'amazon.it': 'IT',
+        'amazon.es': 'ES',
+        'amazon.nl': 'NL',
+        'amazon.com.be': 'BE',
+        'amazon.pl': 'PL',
+        'amazon.se': 'SE',
+        'amazon.co.jp': 'JP',
+        'amazon.in': 'IN',
+        'amazon.com.br': 'BR',
+        'amazon.ca': 'CA',
+        'amazon.com.au': 'AU',
+        'amazon.com.mx': 'MX',
+        'amazon.com.tr': 'TR',
+        'amazon.sa': 'SA',
+        'amazon.ae': 'AE',
+        'amazon.sg': 'SG',
+      };
+      return map[host] ?? 'US';
+    } catch {
+      return 'US';
+    }
+  }
+
   async scrape(url: string): Promise<ScrapedProduct> {
+    const viaRapidApi = await this.fetchViaRapidApi(url);
+    if (viaRapidApi) {
+      return viaRapidApi;
+    }
+
     const { page, context } = await this.playwright.loadPage(url, {
       contextOverrides: {
         userAgent:

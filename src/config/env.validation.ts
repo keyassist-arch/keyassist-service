@@ -267,6 +267,30 @@ class EnvironmentVariables {
   @IsOptional()
   SCRAPE_DO_TOKEN?: string;
 
+  /**
+   * RapidAPI key (from https://rapidapi.com — "X-RapidAPI-Key"). When set, GOAT/StockX/Amazon
+   * adapters call their subscribed RapidAPI listing first, falling back to scrape.do/Playwright
+   * on failure or incomplete data.
+   */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_KEY?: string;
+
+  /** RapidAPI host for the subscribed GOAT listing, e.g. `goat5.p.rapidapi.com`. */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_GOAT_HOST?: string;
+
+  /** RapidAPI host for the subscribed StockX listing, e.g. `stockx1.p.rapidapi.com`. */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_STOCKX_HOST?: string;
+
+  /** RapidAPI host for the subscribed Amazon listing, e.g. `real-time-amazon-data.p.rapidapi.com`. */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_AMAZON_HOST?: string;
+
   /** Playwright BCP 47 locale (avoids wrong storefront HTML e.g. ko-KR vs en-US) */
   @IsString()
   @IsOptional()
