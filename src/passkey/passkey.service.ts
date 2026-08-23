@@ -70,7 +70,7 @@ export class PasskeyService {
       this.config.get<string>('FRONTEND_URL')?.trim() ||
       this.config.get<string>('PUBLIC_APP_URL')?.trim();
     if (frontend) return [frontend.replace(/\/$/, '')];
-    return ['http://localhost:3000'];
+    return ['https://keyassistco.com'];
   }
 
   private regChallengeKey(userId: string) {

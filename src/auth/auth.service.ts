@@ -486,7 +486,7 @@ export class AuthService implements OnModuleInit {
     if (url?.trim()) {
       return url.trim();
     }
-    return 'http://localhost:3000';
+    return 'https://keyassistco.com';
   }
 
   private async issueTokens(
