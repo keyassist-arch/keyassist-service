@@ -6,6 +6,43 @@ import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
 import type { ProductConfigurationPrice } from '../../products/entities/product.entity';
 
+/** Cap on the deep __NEXT_DATA__ walk - Nike ships hundreds of product-shaped nodes. */
+const DEEP_CANDIDATE_LIMIT = 200;
+
+/** Nike style-color code as it appears in PDP URLs and `styleColor`, e.g. `CN8490-002`. */
+const STYLE_COLOR_RE = /^[A-Z0-9]{5,10}-[0-9]{3}$/;
+
+function normalizeStyleColor(value: string | null | undefined): string | null {
+  const code = value?.trim().toUpperCase();
+  return code && STYLE_COLOR_RE.test(code) ? code : null;
+}
+
+/**
+ * `https://www.nike.com/t/air-max-90-mens-shoes-6n3vKB/CN8490-002` -> `CN8490-002`.
+ * Null for URLs without a colorway (style landing pages), where the page default is the
+ * right product anyway.
+ */
+function styleColorFromUrl(url: string): string | null {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    pathname = url;
+  }
+  const segments = pathname.split('/').filter(Boolean);
+  for (let i = segments.length - 1; i >= 0; i--) {
+    let segment = segments[i];
+    try {
+      segment = decodeURIComponent(segment);
+    } catch {
+      // keep the raw segment
+    }
+    const code = normalizeStyleColor(segment);
+    if (code) return code;
+  }
+  return null;
+}
+
 interface NikeImageProps {
   squarish?: { url: string };
   portrait?: { url: string };
@@ -152,7 +189,7 @@ export class NikeAdapter implements ScraperAdapter {
         `[nike] __NEXT_DATA__ present=${raw.nextDataJson != null} len=${raw.nextDataJson?.length ?? 0} ogImage=${!!raw.ogImage} titleFallback=${!!raw.titleFallback}`,
       );
 
-      const parsed = this.parseNextData(raw);
+      const parsed = this.parseNextData(raw, styleColorFromUrl(url));
       if (parsed) return parsed;
 
       this.logger.warn(
@@ -173,7 +210,10 @@ export class NikeAdapter implements ScraperAdapter {
     return this.generic.scrape(url);
   }
 
-  private parseNextData(raw: NikeRawData): ScrapedProduct | null {
+  private parseNextData(
+    raw: NikeRawData,
+    urlStyleColor: string | null,
+  ): ScrapedProduct | null {
     if (!raw.nextDataJson) return null;
 
     let root: Record<string, unknown>;
@@ -183,7 +223,7 @@ export class NikeAdapter implements ScraperAdapter {
       return null;
     }
 
-    const selected = this.findSelectedProduct(root);
+    const selected = this.findSelectedProduct(root, urlStyleColor);
     if (!selected) {
       this.logger.warn('[nike] selectedProduct not found in __NEXT_DATA__');
       return null;
@@ -369,6 +409,15 @@ export class NikeAdapter implements ScraperAdapter {
       });
     }
 
+    // Other age/gender groups carry their own (lower) prices — e.g. Big Kids at $90 next
+    // to Men's at $120. Lead with the group the URL actually opened so a UI reading the
+    // first configurationPrices row shows this product's price, not a sibling's.
+    groupConfigPrices.sort(
+      (a, b) =>
+        Number(b.metadata?.isSelectedGroup === true) -
+        Number(a.metadata?.isSelectedGroup === true),
+    );
+
     return {
       groupVariant: options.length > 1 ? { name: 'Fit', options } : null,
       groupConfigPrices,
@@ -426,11 +475,14 @@ export class NikeAdapter implements ScraperAdapter {
   }
 
   /**
-   * Recursively searches the entire __NEXT_DATA__ tree for any object that looks
-   * like a Nike selectedProduct. This handles any app version / path variation.
+   * Nike embeds every colorway, every age/gender group and the recommendation carousel in
+   * `__NEXT_DATA__`, all shaped like a `selectedProduct`. Picking the wrong one silently
+   * yields another product's price, so when the URL carries a style-color
+   * (`/t/<slug>/CN8490-002`) that colorway wins over whatever the page defaulted to.
    */
   private findSelectedProduct(
     root: Record<string, unknown>,
+    urlStyleColor: string | null,
   ): NikeSelectedProduct | null {
     const get = (obj: unknown, ...keys: string[]): unknown => {
       let cur = obj;
@@ -441,13 +493,14 @@ export class NikeAdapter implements ScraperAdapter {
       return cur;
     };
 
+    const matchesUrl = (candidate: NikeSelectedProduct): boolean =>
+      urlStyleColor != null &&
+      normalizeStyleColor(candidate.styleColor) === urlStyleColor;
+
     // Primary path on current Nike pages — selectedProduct at pageProps level
     const p1 = get(root, 'props', 'pageProps', 'selectedProduct');
-    if (this.looksLikeSelectedProduct(p1)) return p1 as NikeSelectedProduct;
-
     // Legacy path (older Nike builds use initialState)
     const p2 = get(root, 'props', 'pageProps', 'initialState', 'selectedProduct');
-    if (this.looksLikeSelectedProduct(p2)) return p2 as NikeSelectedProduct;
 
     const threadsProducts = get(
       root,
@@ -457,18 +510,38 @@ export class NikeAdapter implements ScraperAdapter {
       'Threads',
       'products',
     );
-    if (threadsProducts && typeof threadsProducts === 'object') {
-      const first = Object.values(
-        threadsProducts as Record<string, unknown>,
-      )[0];
-      if (this.looksLikeSelectedProduct(first))
-        return first as NikeSelectedProduct;
+    const threadValues =
+      threadsProducts && typeof threadsProducts === 'object'
+        ? Object.values(threadsProducts as Record<string, unknown>)
+        : [];
+
+    const known = [p1, p2, ...threadValues].filter((c) =>
+      this.looksLikeSelectedProduct(c),
+    ) as NikeSelectedProduct[];
+
+    // The colorway the customer actually opened always wins.
+    const exact = known.find(matchesUrl);
+    if (exact) return exact;
+
+    if (known.length) {
+      if (urlStyleColor) {
+        this.logger.warn(
+          `[nike] no styleColor match for ${urlStyleColor} — using page default ` +
+            `${known[0].styleColor ?? 'unknown'}; price may be another colorway`,
+        );
+      }
+      return known[0];
     }
 
-    // Deep fallback
-    const found = this.deepFind(root, 0);
+    // Deep fallback — prefer a styleColor match before taking the first hit, since the
+    // recommendation carousel is also shaped like a selectedProduct.
+    const candidates: NikeSelectedProduct[] = [];
+    this.deepCollect(root, 0, candidates);
+    const found = candidates.find(matchesUrl) ?? candidates[0] ?? null;
     if (found) {
-      this.logger.log('[nike] selectedProduct found via deep search');
+      this.logger.log(
+        `[nike] selectedProduct found via deep search styleColor=${found.styleColor ?? 'unknown'} candidates=${candidates.length}`,
+      );
     } else {
       const topKeys = Object.keys(root).join(', ');
       const ppKeys = Object.keys(
@@ -481,30 +554,37 @@ export class NikeAdapter implements ScraperAdapter {
     return found;
   }
 
-  private deepFind(obj: unknown, depth: number): NikeSelectedProduct | null {
-    if (depth > 8 || obj == null || typeof obj !== 'object') return null;
+  /**
+   * Recursively searches the entire __NEXT_DATA__ tree for every object that looks like a
+   * Nike selectedProduct (handles any app version / path variation), so the caller can pick
+   * the one matching the requested styleColor rather than whichever node came first.
+   */
+  private deepCollect(
+    obj: unknown,
+    depth: number,
+    out: NikeSelectedProduct[],
+  ): void {
+    if (depth > 8 || obj == null || typeof obj !== 'object') return;
+    if (out.length >= DEEP_CANDIDATE_LIMIT) return;
     if (Array.isArray(obj)) {
-      for (const item of obj) {
-        const r = this.deepFind(item, depth + 1);
-        if (r) return r;
-      }
-      return null;
+      for (const item of obj) this.deepCollect(item, depth + 1, out);
+      return;
     }
     const o = obj as Record<string, unknown>;
-    if (this.looksLikeSelectedProduct(o)) return o as NikeSelectedProduct;
+    if (this.looksLikeSelectedProduct(o)) {
+      out.push(o as NikeSelectedProduct);
+      return;
+    }
     if (
       'selectedProduct' in o &&
       this.looksLikeSelectedProduct(o.selectedProduct)
     ) {
-      return o.selectedProduct as NikeSelectedProduct;
+      out.push(o.selectedProduct as NikeSelectedProduct);
+      return;
     }
     for (const val of Object.values(o)) {
-      if (val && typeof val === 'object') {
-        const r = this.deepFind(val, depth + 1);
-        if (r) return r;
-      }
+      if (val && typeof val === 'object') this.deepCollect(val, depth + 1, out);
     }
-    return null;
   }
 
   private looksLikeSelectedProduct(obj: unknown): boolean {

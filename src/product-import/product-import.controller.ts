@@ -42,7 +42,7 @@ export class ProductImportController {
   @ApiOperation({
     summary: 'Create product from manually entered details',
     description:
-      'Used when the product URL is from an unsupported retailer. Creates the product synchronously and returns it immediately with status `completed`. Requires login so the request can be attributed to the submitting customer for admin order placement.',
+      'Used when the product URL is from an unsupported retailer, or when the automatic scrape failed. The customer supplies the link plus whatever basic info they have (title, photos, notes) — **no price**: the request lands in the admin manual-import queue and admin prices it when placing the order. Creates the product synchronously and returns it immediately with status `completed` and `awaitingQuote: true`; unpriced products are excluded from the public catalog feed. Requires login so the request can be attributed to the submitting customer.',
   })
   async createManual(
     @CurrentUser() user: JwtPayload,

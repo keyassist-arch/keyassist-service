@@ -249,7 +249,10 @@ export class ProductImportService {
         }
       }
       // Manual products (GENERIC or MANUAL_IMPORT_SOURCES) are not re-scraped; return directly.
-      if (existing.source === ProductSource.GENERIC || MANUAL_IMPORT_SOURCES.has(existing.source)) {
+      if (
+        existing.source === ProductSource.GENERIC ||
+        MANUAL_IMPORT_SOURCES.has(existing.source)
+      ) {
         return existing.product
           ? {
               status: 'completed' as const,
@@ -544,10 +547,14 @@ export class ProductImportService {
       );
     }
 
+    // No price from the customer → store 0.00 USD and let admin quote it from the
+    // manual-import queue. Do not invent a currency here: `buildProductFromScrape`
+    // FX-converts price into USD, so a wrong currency silently divides the amount
+    // (e.g. 2000 tagged NGN became USD 1.37).
     const scraped = {
       title: dto.title,
-      price: dto.price.toFixed(2),
-      currency: dto.currency,
+      price: dto.price != null ? dto.price.toFixed(2) : '0.00',
+      currency: dto.price != null ? (dto.currency ?? 'USD') : 'USD',
       images: dto.imageUrls ?? [],
       description: dto.description,
       brand: dto.brand,

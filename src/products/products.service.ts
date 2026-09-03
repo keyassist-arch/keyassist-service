@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import {
@@ -334,9 +334,15 @@ export class ProductsService {
     });
   }
 
-  /** Public catalog snippet (e.g. home page); `limit` should be pre-clamped by the controller. */
+  /**
+   * Public catalog snippet (e.g. home page); `limit` should be pre-clamped by the controller.
+   * Unpriced rows (`salePrice` 0) are customer manual-entry requests still waiting on an admin
+   * quote — they stay out of the storefront feed but remain reachable by direct link and in
+   * `GET /admin/products`.
+   */
   async findRecentForPublic(limit: number): Promise<Product[]> {
     return this.products.find({
+      where: { salePrice: MoreThan('0') },
       order: { createdAt: 'DESC' },
       take: limit,
     });
@@ -355,7 +361,7 @@ export class ProductsService {
     // 1. Same-category products (highest relevance)
     if (product.categoryId) {
       const sameCat = await this.products.find({
-        where: { categoryId: product.categoryId },
+        where: { categoryId: product.categoryId, salePrice: MoreThan('0') },
         order: { createdAt: 'DESC' },
         take: limit,
       });
@@ -378,6 +384,7 @@ export class ProductsService {
         const nameMatches = await this.products
           .createQueryBuilder('p')
           .where('p.id != :id', { id: product.id })
+          .andWhere('p.sale_price > 0')
           .andWhere(`(${kwConditions.join(' OR ')})`, kwParams)
           .orderBy('p.created_at', 'DESC')
           .take(limit)
@@ -546,6 +553,11 @@ export class ProductsService {
       asin: p.asin ?? null,
       originalPrice: p.originalPrice,
       salePrice: p.salePrice,
+      /**
+       * `true` when no price is known yet — a customer manual-entry request the admin has not
+       * quoted. Render "Price on request" rather than the 0.00 in `salePrice`.
+       */
+      awaitingQuote: parseFloat(p.salePrice) <= 0,
       currency: p.currency,
       markupPercent: p.markupPercent,
       images: p.images,

@@ -9,66 +9,71 @@ export type MarketplaceEstimate = {
   confidence: 'high' | 'medium' | 'low';
 };
 
+/** Agreed flat US sales-tax rate applied to the item cost of US-sourced goods. */
+export const US_SALES_TAX_RATE = 0.0825;
+
 /**
  * Per-marketplace tax + domestic shipping estimates to our US warehouse.
  *
  * TAX NOTES:
  * Despite early assumptions about a Delaware (no-sales-tax) warehouse, in practice
  * most major marketplaces collect sales tax as marketplace facilitators regardless
- * of destination state. Rates below reflect observed real-world averages.
- * They are ESTIMATES — the actual rate varies by product category and destination
- * state. When an adapter can read the real tax from a product page or checkout
- * simulation, pass taxAmountUsd to LandedCostQuoteDto to bypass this estimate.
+ * of destination state. Every US retailer therefore quotes at the agreed flat
+ * `US_SALES_TAX_RATE` (8.25%); sellers with no US retail leg (Shein ex-China, Jumia,
+ * Key Assist's own stock) stay at 0. The rate is an ESTIMATE — the real figure varies
+ * by product category and destination state, so when an adapter reads the actual tax
+ * off a product page or checkout simulation, pass `taxAmountUsd` to
+ * LandedCostQuoteDto and it overrides this entirely.
  *
- * US weighted-average sales tax ≈ 8.6%. Marketplace-specific notes inline.
+ * Tax is billed as part of item cost (COGS), not as a logistics line.
  */
 export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
   {
     [ProductSource.AMAZON]: {
       // Marketplace facilitator — collects tax in all 45 tax states.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.APPLE]: {
       // Apple collects tax as a direct seller; rate varies by state and product.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.NIKE]: {
       // Nike.com collects tax in all US states; confirmed in practice.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.CONVERSE]: {
       // Converse.com (Nike subsidiary) — same tax behaviour.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.ZARA]: {
       // Zara US collects sales tax as a direct retailer.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.STOCKX]: {
       // StockX charges a buyer processing fee (built into displayed price); tax varies.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 13.95,
       confidence: 'medium',
     },
     [ProductSource.GOAT]: {
       // GOAT charges buyer fees; tax collected on top in taxable states.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 12.5,
       confidence: 'medium',
     },
     [ProductSource.EBAY]: {
-      // eBay marketplace facilitator; observed ~7.5%.
-      taxRate: 0.075,
+      // eBay marketplace facilitator — collects tax in all tax states.
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 9.99,
       confidence: 'medium',
     },
@@ -85,31 +90,31 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       confidence: 'low',
     },
     [ProductSource.ETSY]: {
-      // Etsy marketplace facilitator; observed ~8%.
-      taxRate: 0.08,
+      // Etsy marketplace facilitator — collects tax in all tax states.
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 6.5,
       confidence: 'medium',
     },
     [ProductSource.BACK_MARKET]: {
       // Refurbished electronics — tax varies; free shipping typical.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.WALMART]: {
       // Walmart marketplace facilitator — collects tax in all tax states.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.REEBELO]: {
       // Refurbished goods; tax varies by state.
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 0,
       confidence: 'medium',
     },
     [ProductSource.GENERIC]: {
-      taxRate: 0.088,
+      taxRate: US_SALES_TAX_RATE,
       domesticShippingUsd: 9.99,
       confidence: 'low',
     },

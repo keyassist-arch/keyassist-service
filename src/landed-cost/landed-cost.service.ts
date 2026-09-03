@@ -34,17 +34,10 @@ export type CartLandedCostOpts = {
 
 /**
  * Box / warehouse packaging & handling fee per shipment (USD).
- * Matches the "Box / Handling Fee — Updated warehouse packaging fee" line
- * on the current Kingz invoice format.
+ * Matches the "Box / Handling Fee — Updated warehouse packaging fee" line on the Kingz
+ * invoice. Billed inside the import & delivery fee, never as its own invoice line.
  */
 const DOMESTIC_HANDLING_FEE_USD = 6.0;
-
-/**
- * Flat estimated-tax charge (USD), replacing the old per-marketplace percentage
- * estimate (8.8% of price). Kept simple and predictable rather than scaling with
- * price; real observed tax (`taxAmountUsd`) still overrides this when known.
- */
-const FLAT_TAX_USD = 5;
 
 const FX_BUFFER_RATE = 0;
 const RISK_BUFFER_RATE = 0;
@@ -76,11 +69,14 @@ export class LandedCostService {
       heightIn: weightRule.heightIn,
     };
 
-    // ── 1. Source marketplace costs ──────────────────────────────────────────
+    // ── 1. Item cost (COGS) — goods + US sales tax ───────────────────────────
     const productSubtotal = round(productPriceUsd * dto.quantity);
-    // Prefer an actual tax amount from the scraper/checkout over the flat estimate.
+    // Prefer an actual tax amount from the scraper/checkout over the rate estimate.
     const marketplaceTax =
-      dto.taxAmountUsd != null ? round(dto.taxAmountUsd) : FLAT_TAX_USD;
+      dto.taxAmountUsd != null
+        ? round(dto.taxAmountUsd)
+        : round(productSubtotal * estimate.taxRate);
+    const itemCost = round(productSubtotal + marketplaceTax);
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -115,11 +111,14 @@ export class LandedCostService {
       : 0;
 
     // ── 6. Grand total ───────────────────────────────────────────────────────
-    const logisticsCost =
-      marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + insuranceUsd;
+    // Invoice lines: item cost (COGS, sales tax folded in) + import & delivery
+    // (box/handling fee folded in) + service fee + insurance when applicable.
+    const importAndDelivery = round(
+      marketplaceShipping + domesticHandling + internationalShipping,
+    );
     const totalUsd = round(
-      productSubtotal + logisticsCost + fxBuffer + riskBuffer + serviceCharge - discount,
+      itemCost + importAndDelivery + insuranceUsd +
+        fxBuffer + riskBuffer + serviceCharge - discount,
     );
 
     // ── 7. Currency conversion ───────────────────────────────────────────────
@@ -137,15 +136,9 @@ export class LandedCostService {
     }
 
     // ── 8. Breakdown lines ───────────────────────────────────────────────────
-    const importAndDelivery =
-      marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + insuranceUsd;
     const breakdown = buildBreakdown({
-      productSubtotal, importAndDelivery,
-      shippingService: shippingService as ShippingServiceType,
+      itemCost, importAndDelivery,
       destination: destination as ShippingDestination,
-      internationalShipping,
-      domesticHandling,
       insuranceUsd,
       serviceCharge, discount,
       totalUsd,
@@ -163,9 +156,12 @@ export class LandedCostService {
       marketplaceConfidence: estimate.confidence,
       productSubtotalUsd: productSubtotal,
       marketplaceTaxUsd: marketplaceTax,
+      taxRate: dto.taxAmountUsd != null ? 0 : estimate.taxRate,
+      itemCostUsd: itemCost,
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
       internationalShippingUsd: internationalShipping,
+      importAndDeliveryUsd: importAndDelivery,
       insuranceUsd,
       fxBufferUsd: fxBuffer,
       riskBufferUsd: riskBuffer,
@@ -194,10 +190,13 @@ export class LandedCostService {
     const { destination, shippingService, category, insurance = false } = opts;
     const weightRule = CATEGORY_WEIGHT_RULES[category];
 
-    // ── 1. Source marketplace costs ──────────────────────────────────────────
+    // ── 1. Item cost (COGS) — goods + US sales tax ───────────────────────────
     const productSubtotal = round(lines.reduce((s, l) => s + l.priceUsd * l.qty, 0));
 
-    const marketplaceTax = FLAT_TAX_USD;
+    // Tax is per line: a mixed cart can hold US-taxed goods next to untaxed ones
+    // (Shein ships ex-China, Jumia has no US leg).
+    let taxableSubtotal = 0;
+    let marketplaceTax = 0;
     const seenMarketplaces = new Set<ProductSource>();
     let marketplaceShipping = 0;
     let lowestConfidence: 'high' | 'medium' | 'low' = 'high';
@@ -205,6 +204,9 @@ export class LandedCostService {
 
     for (const line of lines) {
       const est = MARKETPLACE_ESTIMATES[line.marketplace];
+      const lineSubtotal = line.priceUsd * line.qty;
+      marketplaceTax += lineSubtotal * est.taxRate;
+      if (est.taxRate > 0) taxableSubtotal += lineSubtotal;
       if (!seenMarketplaces.has(line.marketplace)) {
         marketplaceShipping += est.domesticShippingUsd;
         seenMarketplaces.add(line.marketplace);
@@ -213,6 +215,8 @@ export class LandedCostService {
         lowestConfidence = est.confidence;
       }
     }
+    marketplaceTax = round(marketplaceTax);
+    const itemCost = round(productSubtotal + marketplaceTax);
     marketplaceShipping = round(marketplaceShipping);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -253,11 +257,14 @@ export class LandedCostService {
         : 0;
 
     // ── 6. Grand total ───────────────────────────────────────────────────────
-    const logisticsCost =
-      marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + insuranceUsd;
+    // Invoice lines: item cost (COGS, sales tax folded in) + import & delivery
+    // (box/handling fee folded in) + service fee + insurance when applicable.
+    const importAndDelivery = round(
+      marketplaceShipping + domesticHandling + internationalShipping,
+    );
     const totalUsd = round(
-      productSubtotal + logisticsCost + fxBuffer + riskBuffer + serviceCharge - discount,
+      itemCost + importAndDelivery + insuranceUsd +
+        fxBuffer + riskBuffer + serviceCharge - discount,
     );
 
     // Use the marketplace with the highest subtotal for the single `marketplace` field
@@ -265,15 +272,9 @@ export class LandedCostService {
       l.priceUsd * l.qty > best.priceUsd * best.qty ? l : best,
     ).marketplace;
 
-    const importAndDelivery =
-      marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + insuranceUsd;
     const breakdown = buildBreakdown({
-      productSubtotal, importAndDelivery,
-      shippingService,
+      itemCost, importAndDelivery,
       destination,
-      internationalShipping,
-      domesticHandling,
       insuranceUsd,
       serviceCharge, discount,
       totalUsd,
@@ -293,9 +294,17 @@ export class LandedCostService {
       marketplaceConfidence: lowestConfidence,
       productSubtotalUsd: productSubtotal,
       marketplaceTaxUsd: marketplaceTax,
+      // Effective rate across taxable lines only — equals US_SALES_TAX_RATE for an
+      // all-US cart, lower once an untaxed line (Shein, Jumia) is mixed in.
+      taxRate:
+        taxableSubtotal > 0
+          ? Math.round((marketplaceTax / taxableSubtotal) * 10_000) / 10_000
+          : 0,
+      itemCostUsd: itemCost,
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
       internationalShippingUsd: internationalShipping,
+      importAndDeliveryUsd: importAndDelivery,
       insuranceUsd,
       fxBufferUsd: fxBuffer,
       riskBufferUsd: riskBuffer,
@@ -416,13 +425,16 @@ function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * The agreed customer invoice: item cost (COGS, sales tax folded in), import &
+ * delivery (box/handling fee folded in), service fee, then insurance only when the
+ * customer opted in. Every component amount stays on the response object for anyone
+ * who needs to itemise further.
+ */
 function buildBreakdown(parts: {
-  productSubtotal: number;
+  itemCost: number;
   importAndDelivery: number;
-  shippingService: ShippingServiceType;
   destination: ShippingDestination;
-  internationalShipping: number;
-  domesticHandling: number;
   insuranceUsd: number;
   serviceCharge: number;
   discount: number;
@@ -432,17 +444,12 @@ function buildBreakdown(parts: {
   const dest = parts.destination === 'outside_lagos' ? 'outside Lagos' : 'Lagos';
   const lines: string[] = [];
 
-  // Three-line breakdown — keeps the UI simple and trustworthy
-  lines.push(`Product: ${fmt(parts.productSubtotal)}`);
-  lines.push(`Import & Delivery (${dest}): ${fmt(parts.importAndDelivery)}`);
-  lines.push(`  incl. intl cargo: ${fmt(parts.internationalShipping)}`);
-  if (parts.domesticHandling > 0) {
-    lines.push(`  incl. box/handling fee: ${fmt(parts.domesticHandling)}`);
-  }
+  lines.push(`Item cost (COGS): ${fmt(parts.itemCost)}`);
+  lines.push(`Import & delivery fee (${dest}): ${fmt(parts.importAndDelivery)}`);
+  lines.push(`Service fee: ${fmt(parts.serviceCharge)}`);
   if (parts.insuranceUsd > 0) {
-    lines.push(`  incl. cargo insurance: ${fmt(parts.insuranceUsd)}`);
+    lines.push(`Insurance: ${fmt(parts.insuranceUsd)}`);
   }
-  lines.push(`Service Fee: ${fmt(parts.serviceCharge)}`);
 
   if (parts.discount > 0) {
     lines.push(`Loyalty discount: -${fmt(parts.discount)}`);

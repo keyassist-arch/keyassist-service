@@ -20,19 +20,35 @@ export class ManualProductImportDto {
   @MaxLength(500)
   title: string;
 
-  @ApiProperty({ description: 'Supplier price (numeric)', example: 29.99 })
+  /**
+   * Customers are not asked for a price — admin quotes the request from the queue
+   * (`POST /admin/manual-imports/:id/order`). Only admin-side tooling should send this.
+   * Omitted price stores 0.00 USD, which also keeps the row out of the public catalog
+   * until it is priced.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Supplier price (numeric). Optional — leave unset for customer submissions; admin prices the request when placing the order.',
+    example: 29.99,
+  })
+  @IsOptional()
   @IsNumber()
   @IsPositive()
-  price: number;
+  price?: number;
 
-  @ApiProperty({ description: 'ISO 4217 currency code', example: 'NGN' })
+  @ApiPropertyOptional({
+    description:
+      'ISO 4217 currency code for `price`. Ignored when `price` is omitted.',
+    example: 'USD',
+  })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @IsISO4217CurrencyCode()
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.toUpperCase() : value,
   )
-  currency: string;
+  currency?: string;
 
   @ApiPropertyOptional({ maxLength: 200 })
   @IsOptional()
@@ -40,7 +56,10 @@ export class ManualProductImportDto {
   @MaxLength(200)
   brand?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Free-text details for the admin — size, colour, quantity, anything the link does not say.',
+  })
   @IsOptional()
   @IsString()
   description?: string;
