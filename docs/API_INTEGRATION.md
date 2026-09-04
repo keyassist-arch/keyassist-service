@@ -960,48 +960,44 @@ Two endpoints cover pricing before checkout. Use **`POST /landed-cost/quote`** f
 
 ```json
 {
-  "marketplace": "stockx",
-  "category": "sneakers",
+  "marketplace": "amazon",
+  "category": "generic",
   "quantity": 1,
-  "estimatedWeightLbs": 2.5,
+  "estimatedWeightLbs": 2.0,
   "marketplaceConfidence": "high",
 
-  "productSubtotalUsd": 220.00,
-  "marketplaceTaxUsd": 0.00,
-  "marketplaceShippingUsd": 13.95,
-  "domesticHandlingUsd": 10.00,
-  "internationalShippingUsd": 75.00,
+  "productSubtotalUsd": 250.00,
+  "marketplaceTaxUsd": 20.63,
+  "marketplaceShippingUsd": 0.00,
+  "domesticHandlingUsd": 6.00,
+  "boxHandlingFeeUsd": 6.00,
+  "cargoInsuranceUsd": 7.50,
+  "internationalShippingUsd": 11.00,
+  "importAndDeliveryUsd": 29.50,
 
-  "customsDutyUsd": 63.79,
-  "customsVatUsd": 27.81,
-  "customsClearingFeeUsd": 25.00,
+  "customsDutyUsd": 0.00,
+  "customsVatUsd": 0.00,
+  "customsClearingFeeUsd": 0.00,
 
-  "fxBufferUsd": 10.89,
-  "riskBufferUsd": 26.13,
+  "fxBufferUsd": 0.00,
+  "riskBufferUsd": 0.00,
 
-  "serviceChargeUsd": 44.00,
+  "serviceChargeUsd": 25.00,
   "discountUsd": 0.00,
 
-  "totalUsd": 516.57,
-  "displayCurrency": "NGN",
-  "totalDisplay": 803407.65,
+  "totalUsd": 325.13,
+  "displayCurrency": "USD",
+  "totalDisplay": 325.13,
 
   "breakdown": [
-    "Product subtotal: $220.00",
-    "Domestic (marketplace → warehouse): $13.95",
-    "Warehouse handling: $10.00",
-    "International shipping (Kingz):",
-    "  2.50 billable lbs × $5.00/lb = $12.50",
-    "  ...",
-    "Nigeria customs duty: $63.79",
-    "Nigeria VAT: $27.81",
-    "Customs clearing fee: $25.00",
-    "FX buffer (2.5%): $10.89",
-    "Risk buffer (6%): $26.13",
-    "Service charge (20%): $44.00",
+    "Product: $250.00",
+    "Import & Delivery (Lagos): $29.50",
+    "  incl. intl cargo: $11.00",
+    "  incl. box/handling fee: $6.00",
+    "  incl. cargo insurance: $7.50",
+    "Service Fee: $25.00",
     "─────────────────────────────",
-    "Estimated total (USD): $516.57",
-    "Estimated total (NGN): 803407.65"
+    "Estimated total (USD): $325.13"
   ]
 }
 ```
@@ -1010,22 +1006,16 @@ Two endpoints cover pricing before checkout. Use **`POST /landed-cost/quote`** f
 
 | Field | What it covers |
 |-------|----------------|
-| `marketplaceTaxUsd` | Estimated US sales tax at the source marketplace. `0` for marketplaces that ship to our Delaware warehouse (no sales tax state) or handle tax separately (StockX, GOAT). |
-| `marketplaceShippingUsd` | Shipping cost from the source marketplace/seller **to our warehouse** (e.g. $13.95 for StockX, $0 for Nike/Apple free shipping). |
-| `domesticHandlingUsd` | Our warehouse receiving and processing fee ($10 flat per order). |
-| `internationalShippingUsd` | Kingz International Logistics: **our warehouse → customer** in Nigeria. Calculated using Kingz rates from the DB, dimensional weight, and the category's estimated package size. |
-| `customsDutyUsd` | Nigeria import duty on CIF value (product + tax + domestic shipping + warehouse handling + Kingz). Rates: 5% electronics, 20% clothing/sneakers/TV, 15% accessories, 0% books. |
-| `customsVatUsd` | Nigeria VAT (7.5%) on (CIF + duty). |
-| `customsClearingFeeUsd` | Flat customs agent fee per category ($20–$80). |
-| `fxBufferUsd` | 2.5% buffer on total cost to absorb exchange-rate movement between quote and purchase. |
-| `riskBufferUsd` | 6% operational buffer covering seller price changes, cart expiry, and carrier fluctuations. |
-| `serviceChargeUsd` | Our 20% service charge on the product subtotal. |
+| `productSubtotalUsd` | Original product cost ($250.00). |
+| `marketplaceTaxUsd` | Standard 8.25% product tax ($20.63). |
+| `importAndDeliveryUsd` | Bundled logistics & handling ($29.50) covering international cargo, box/handling, and insurance. |
+| `serviceChargeUsd` | Standard 10% platform service fee on product subtotal ($25.00). |
 | `discountUsd` | 20% loyalty discount when `productSubtotalUsd > $1000`. Subtracted from total. |
-| `marketplaceConfidence` | How reliable the tax + domestic-shipping estimate is: `high` (we have hard data), `medium` (approximated), `low` (generic fallback). Show a disclaimer in the UI when `low`. |
+| `totalUsd` | Total amount ($325.13). |
 
 **UI guidance:**
 
-- Show the `breakdown` array line-by-line on an "Estimated cost" accordion or modal before the user places the order.
+- Render the simplified 3-line breakdown: **Product**, **Import & Delivery**, and **Service Fee**.
 - Label `totalDisplay` in the user's preferred currency. Always label it "Estimated total" — confirmed totals come from the order after checkout.
 - When `marketplaceConfidence` is `"low"`, add a note: "Marketplace estimates are approximate. Final cost may vary slightly."
 - The `landedCost` object you send to `POST /orders` must use the **same** `destination`, `shippingService`, and `category` values shown in this quote.

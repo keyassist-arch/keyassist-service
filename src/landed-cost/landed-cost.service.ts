@@ -4,7 +4,12 @@ import { Repository } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { CurrencyService } from '../currency/currency.service';
-import { SERVICE_CHARGE_RATE, DISCOUNT_RATE, DISCOUNT_THRESHOLD_USD } from '../common/utils/pricing.util';
+import {
+  SERVICE_CHARGE_RATE,
+  PRODUCT_TAX_RATE,
+  DISCOUNT_RATE,
+  DISCOUNT_THRESHOLD_USD,
+} from '../common/utils/pricing.util';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
 import { NIGERIA_CUSTOMS_RATES } from './rules/customs-rates';
@@ -24,8 +29,15 @@ export type CartLandedCostOpts = {
   category: ProductCategory;
 };
 
-/** Flat warehouse receiving/processing fee per shipment (USD) */
-const DOMESTIC_HANDLING_FEE_USD = 8;
+/** Flat box packaging and warehouse handling fee per shipment (USD) */
+const BOX_HANDLING_FEE_USD = 6.0;
+const DOMESTIC_HANDLING_FEE_USD = 6.0;
+
+/** Cargo insurance rate (3% of product subtotal, e.g. $7.50 on $250) */
+const CARGO_INSURANCE_RATE = 0.03;
+
+/** Base last-mile handling & customs clearance fee */
+const BASE_IMPORT_CLEARANCE_USD = 5.0;
 
 // Buffers removed — the 10% service charge provides sufficient gross margin
 // to absorb minor price drift and FX movement without charging users twice.
@@ -38,13 +50,13 @@ const RISK_BUFFER_RATE = 0;
  * Outside-Lagos adds a flat premium for last-mile delivery.
  */
 const CARGO_BANDS_LAGOS: Array<{ maxLbs: number; rateUsd: number }> = [
-  { maxLbs: 2,   rateUsd: 18 },
-  { maxLbs: 5,   rateUsd: 35 },
-  { maxLbs: 10,  rateUsd: 60 },
-  { maxLbs: 20,  rateUsd: 100 },
+  { maxLbs: 2,   rateUsd: 11 },
+  { maxLbs: 5,   rateUsd: 25 },
+  { maxLbs: 10,  rateUsd: 50 },
+  { maxLbs: 20,  rateUsd: 90 },
   { maxLbs: Infinity, rateUsd: 0 }, // per-lb fallback below
 ];
-const CARGO_RATE_PER_LB_HEAVY_LAGOS = 5.5;      // > 20 lbs
+const CARGO_RATE_PER_LB_HEAVY_LAGOS = 5.0;      // > 20 lbs
 const CARGO_OUTSIDE_LAGOS_PREMIUM = 15;
 
 function cargoRate(weightLbs: number, destination: ShippingDestination): number {
@@ -77,15 +89,19 @@ export class LandedCostService {
 
     // ── 1. Source marketplace costs ──────────────────────────────────────────
     const productSubtotal = round(productPriceUsd * dto.quantity);
-    const marketplaceTax = round(productSubtotal * estimate.taxRate);
+    const taxRate = estimate.taxRate > 0 ? estimate.taxRate : PRODUCT_TAX_RATE;
+    const marketplaceTax = round(productSubtotal * taxRate);
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
-    // ── 2. Logistics ─────────────────────────────────────────────────────────
-    const domesticHandling = DOMESTIC_HANDLING_FEE_USD;
+    // ── 2. Logistics & Handling ──────────────────────────────────────────────
+    const boxHandlingFee = BOX_HANDLING_FEE_USD;
+    const domesticHandling = boxHandlingFee;
+    const cargoInsurance = round(productSubtotal * CARGO_INSURANCE_RATE);
     const internationalShipping = cargoRate(weight * dto.quantity, destination as ShippingDestination);
+    const importClearance = BASE_IMPORT_CLEARANCE_USD;
 
     // ── 3. Customs (product subtotal basis — no CIF pyramiding) ─────────────
-    const customsDuty = round(productSubtotal * customsRule.combinedRate);
+    const customsDuty = round(productSubtotal * (customsRule?.combinedRate ?? 0));
     const customsVat = 0;
     const customsClearingFee = 0;
 
@@ -99,15 +115,22 @@ export class LandedCostService {
       ? round(productSubtotal * DISCOUNT_RATE)
       : 0;
 
-    // ── 6. Grand total ───────────────────────────────────────────────────────
-    const logisticsCost =
-      marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + customsDuty;
-    const totalUsd = round(
-      productSubtotal + logisticsCost + fxBuffer + riskBuffer + serviceCharge - discount,
+    // ── 6. Import & Delivery Total ───────────────────────────────────────────
+    const importAndDelivery = round(
+      internationalShipping +
+      boxHandlingFee +
+      cargoInsurance +
+      importClearance +
+      marketplaceShipping +
+      customsDuty,
     );
 
-    // ── 7. Currency conversion ───────────────────────────────────────────────
+    // ── 7. Grand total ───────────────────────────────────────────────────────
+    const totalUsd = round(
+      productSubtotal + marketplaceTax + importAndDelivery + fxBuffer + riskBuffer + serviceCharge - discount,
+    );
+
+    // ── 8. Currency conversion ───────────────────────────────────────────────
     let totalDisplay = totalUsd;
     const targetCurrency = (displayCurrency ?? 'USD').toUpperCase();
     if (targetCurrency !== 'USD') {
@@ -121,16 +144,20 @@ export class LandedCostService {
       }
     }
 
-    // ── 8. Breakdown lines ───────────────────────────────────────────────────
-    const importAndDelivery =
-      marketplaceTax + marketplaceShipping + domesticHandling + internationalShipping + customsDuty;
+    // ── 9. Breakdown lines ───────────────────────────────────────────────────
     const breakdown = buildBreakdown({
-      productSubtotal, importAndDelivery,
+      productSubtotal,
+      importAndDelivery,
       shippingService: shippingService as ShippingServiceType,
       destination: destination as ShippingDestination,
       internationalShipping,
-      serviceCharge, discount,
-      totalUsd, totalDisplay, targetCurrency,
+      boxHandlingFee,
+      cargoInsurance,
+      serviceCharge,
+      discount,
+      totalUsd,
+      totalDisplay,
+      targetCurrency,
     });
 
     this.logger.log(
@@ -147,7 +174,10 @@ export class LandedCostService {
       marketplaceTaxUsd: marketplaceTax,
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
+      boxHandlingFeeUsd: boxHandlingFee,
+      cargoInsuranceUsd: cargoInsurance,
       internationalShippingUsd: internationalShipping,
+      importAndDeliveryUsd: importAndDelivery,
       customsDutyUsd: customsDuty,
       customsVatUsd: customsVat,
       customsClearingFeeUsd: customsClearingFee,
@@ -190,7 +220,8 @@ export class LandedCostService {
 
     for (const line of lines) {
       const est = MARKETPLACE_ESTIMATES[line.marketplace];
-      marketplaceTax += line.priceUsd * line.qty * est.taxRate;
+      const taxRate = est.taxRate > 0 ? est.taxRate : PRODUCT_TAX_RATE;
+      marketplaceTax += line.priceUsd * line.qty * taxRate;
       if (!seenMarketplaces.has(line.marketplace)) {
         marketplaceShipping += est.domesticShippingUsd;
         seenMarketplaces.add(line.marketplace);
@@ -202,14 +233,17 @@ export class LandedCostService {
     marketplaceTax = round(marketplaceTax);
     marketplaceShipping = round(marketplaceShipping);
 
-    // ── 2. Logistics ─────────────────────────────────────────────────────────
-    const domesticHandling = DOMESTIC_HANDLING_FEE_USD;
+    // ── 2. Logistics & Handling ──────────────────────────────────────────────
+    const boxHandlingFee = BOX_HANDLING_FEE_USD;
+    const domesticHandling = boxHandlingFee;
+    const cargoInsurance = round(productSubtotal * CARGO_INSURANCE_RATE);
     const totalQty = lines.reduce((s, l) => s + l.qty, 0);
     const totalWeight = weightRule.weightLbs * totalQty;
     const internationalShipping = cargoRate(totalWeight, destination);
+    const importClearance = BASE_IMPORT_CLEARANCE_USD;
 
     // ── 3. Customs (product subtotal basis — no CIF pyramiding) ─────────────
-    const customsDuty = round(productSubtotal * customsRule.combinedRate);
+    const customsDuty = round(productSubtotal * (customsRule?.combinedRate ?? 0));
     const customsVat = 0;
     const customsClearingFee = 0;
 
@@ -224,12 +258,19 @@ export class LandedCostService {
         ? round(productSubtotal * DISCOUNT_RATE)
         : 0;
 
-    // ── 6. Grand total ───────────────────────────────────────────────────────
-    const logisticsCost =
-      marketplaceTax + marketplaceShipping + domesticHandling +
-      internationalShipping + customsDuty;
+    // ── 6. Import & Delivery Total ───────────────────────────────────────────
+    const importAndDelivery = round(
+      internationalShipping +
+      boxHandlingFee +
+      cargoInsurance +
+      importClearance +
+      marketplaceShipping +
+      customsDuty,
+    );
+
+    // ── 7. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
-      productSubtotal + logisticsCost + fxBuffer + riskBuffer + serviceCharge - discount,
+      productSubtotal + marketplaceTax + importAndDelivery + fxBuffer + riskBuffer + serviceCharge - discount,
     );
 
     // Use the marketplace with the highest subtotal for the single `marketplace` field
@@ -237,15 +278,19 @@ export class LandedCostService {
       l.priceUsd * l.qty > best.priceUsd * best.qty ? l : best,
     ).marketplace;
 
-    const importAndDelivery =
-      marketplaceTax + marketplaceShipping + domesticHandling + internationalShipping + customsDuty;
     const breakdown = buildBreakdown({
-      productSubtotal, importAndDelivery,
+      productSubtotal,
+      importAndDelivery,
       shippingService,
       destination,
       internationalShipping,
-      serviceCharge, discount,
-      totalUsd, totalDisplay: totalUsd, targetCurrency: 'USD',
+      boxHandlingFee,
+      cargoInsurance,
+      serviceCharge,
+      discount,
+      totalUsd,
+      totalDisplay: totalUsd,
+      targetCurrency: 'USD',
     });
 
     this.logger.log(
@@ -263,7 +308,10 @@ export class LandedCostService {
       marketplaceTaxUsd: marketplaceTax,
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
+      boxHandlingFeeUsd: boxHandlingFee,
+      cargoInsuranceUsd: cargoInsurance,
       internationalShippingUsd: internationalShipping,
+      importAndDeliveryUsd: importAndDelivery,
       customsDutyUsd: customsDuty,
       customsVatUsd: customsVat,
       customsClearingFeeUsd: customsClearingFee,
@@ -341,6 +389,8 @@ function buildBreakdown(parts: {
   shippingService: ShippingServiceType;
   destination: ShippingDestination;
   internationalShipping: number;
+  boxHandlingFee?: number;
+  cargoInsurance?: number;
   serviceCharge: number;
   discount: number;
   totalUsd: number;
@@ -351,10 +401,18 @@ function buildBreakdown(parts: {
   const dest = parts.destination === 'outside_lagos' ? 'outside Lagos' : 'Lagos';
   const lines: string[] = [];
 
-  // Three-line breakdown — keeps the UI simple and trustworthy
+  // Simplified UI breakdown — clean, transparent, minimal
   lines.push(`Product: ${fmt(parts.productSubtotal)}`);
   lines.push(`Import & Delivery (${dest}): ${fmt(parts.importAndDelivery)}`);
-  lines.push(`  incl. intl cargo: ${fmt(parts.internationalShipping)}`);
+  if (parts.internationalShipping > 0) {
+    lines.push(`  incl. intl cargo: ${fmt(parts.internationalShipping)}`);
+  }
+  if (parts.boxHandlingFee && parts.boxHandlingFee > 0) {
+    lines.push(`  incl. box/handling fee: ${fmt(parts.boxHandlingFee)}`);
+  }
+  if (parts.cargoInsurance && parts.cargoInsurance > 0) {
+    lines.push(`  incl. cargo insurance: ${fmt(parts.cargoInsurance)}`);
+  }
   lines.push(`Service Fee: ${fmt(parts.serviceCharge)}`);
 
   if (parts.discount > 0) {

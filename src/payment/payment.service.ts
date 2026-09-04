@@ -970,4 +970,108 @@ export class PaymentService {
       `[payment] step=myaza_webhook_paid_marked orderId=${orderId} status=${status}`,
     );
   }
+
+  async verifyPayment(dto: {
+    orderId: string;
+    userId: string;
+    sessionId?: string;
+    reference?: string;
+  }) {
+    const order = await this.ordersService.findById(dto.orderId);
+    if (order.userId !== dto.userId) {
+      throw new BadRequestException('Order not found');
+    }
+
+    if (order.status === OrderStatus.PAID) {
+      return {
+        success: true,
+        status: OrderStatus.PAID,
+        order: this.ordersService.toResponse(order),
+      };
+    }
+
+    const sessionId = dto.sessionId || order.stripeCheckoutSessionId;
+    const paystackRef = dto.reference || order.paystackReference;
+
+    // 1. Verify Stripe session if present or if order was initialized with Stripe
+    if (sessionId || order.paymentProvider === PaymentProvider.STRIPE) {
+      const sid = sessionId || order.stripeCheckoutSessionId;
+      if (sid) {
+        const stripe = this.getStripe();
+        try {
+          const session = await stripe.checkout.sessions.retrieve(sid, {
+            expand: ['payment_intent'],
+          });
+          if (
+            session.payment_status === 'paid' ||
+            session.status === 'complete'
+          ) {
+            await this.handleStripeCheckoutSessionCompleted(session);
+            const updated = await this.ordersService.findById(dto.orderId);
+            return {
+              success: true,
+              status: updated.status,
+              order: this.ordersService.toResponse(updated),
+            };
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[payment] step=verify_stripe_failed orderId=${dto.orderId} sessionId=${sid} err=${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+
+    // 2. Verify Paystack reference if present
+    if (paystackRef || order.paymentProvider === PaymentProvider.PAYSTACK) {
+      const ref = paystackRef || order.paystackReference;
+      if (ref) {
+        try {
+          const { data } = await axios.get<{
+            status: boolean;
+            data?: {
+              status?: string;
+              reference?: string;
+              metadata?: { orderId?: string };
+              channel?: string;
+              authorization?: {
+                brand?: string;
+                card_type?: string;
+                last4?: string;
+                bank?: string;
+                channel?: string;
+              };
+            };
+          }>(
+            `https://api.paystack.co/transaction/verify/${encodeURIComponent(ref)}`,
+            {
+              headers: {
+                Authorization: `Bearer ${this.paystackSecret()}`,
+              },
+            },
+          );
+          if (data?.status && data.data?.status === 'success') {
+            await this.handlePaystackChargeSuccess(data.data);
+            const updated = await this.ordersService.findById(dto.orderId);
+            return {
+              success: true,
+              status: updated.status,
+              order: this.ordersService.toResponse(updated),
+            };
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[payment] step=verify_paystack_failed orderId=${dto.orderId} ref=${ref} err=${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+
+    const currentOrder = await this.ordersService.findById(dto.orderId);
+    return {
+      success: currentOrder.status === OrderStatus.PAID,
+      status: currentOrder.status,
+      order: this.ordersService.toResponse(currentOrder),
+    };
+  }
 }

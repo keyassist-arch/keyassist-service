@@ -27,6 +27,7 @@ import { UsersService } from '../users/users.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { CapturePaypalPaymentDto } from './dto/capture-paypal-payment.dto';
+import { VerifyPaymentDto } from './dto/verify-payment.dto';
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -86,6 +87,24 @@ export class PaymentController {
   ) {
     const u = await this.usersService.findById(user.sub);
     return this.paymentService.initializePayment(dto, user.sub, u.email);
+  }
+
+  @Post('verify')
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
+  @ApiOperation({
+    summary: 'Verify Stripe, Paystack, or pending order payment status upon return',
+  })
+  @UseGuards(JwtAuthGuard)
+  async verifyPayment(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: VerifyPaymentDto,
+  ) {
+    return this.paymentService.verifyPayment({
+      orderId: dto.orderId,
+      userId: user.sub,
+      sessionId: dto.sessionId,
+      reference: dto.reference,
+    });
   }
 
   @Post('paypal/capture')

@@ -16,7 +16,10 @@ export interface LandedCostBreakdown {
 
   // ── Logistics costs (USD) ───────────────────────────────────────────────────
   domesticHandlingUsd: number;
+  boxHandlingFeeUsd?: number;
+  cargoInsuranceUsd?: number;
   internationalShippingUsd: number;
+  importAndDeliveryUsd: number;
 
   // ── Customs (USD) ───────────────────────────────────────────────────────────
   customsDutyUsd: number;
