@@ -1,9 +1,0 @@
-1. how do we handle discounted products on the platforms
-2. what's your relationship with kingz logistics, is there a way to move to a more robust shipping company so we accurately calculate shipping before checkout
-3. what's the average shipping fee from marketplace to warehouse you've paid for before (lowest and highest)
-4. mark shien as manual import
-
-5 per pound within lagos (6) outside lagos
-- phones, shoes, clothes (light weight products should be 15%)
- heavy (20%)
- marketplace to warehouse (goat 15)

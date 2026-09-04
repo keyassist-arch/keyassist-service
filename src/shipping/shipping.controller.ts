@@ -7,8 +7,8 @@ export class ShippingController {
   constructor(private readonly shippingService: ShippingService) {}
 
   @Post('quote')
-  quote(@Body() dto: ShippingQuoteDto) {
-    const result = this.shippingService.calculate(dto);
+  async quote(@Body() dto: ShippingQuoteDto) {
+    const result = await this.shippingService.calculate(dto);
     return {
       carrier: 'Kingz International Logistics',
       service: dto.service,

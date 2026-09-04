@@ -1,6 +1,6 @@
 # Adapter → Frontend Contract
 
-Compiled from the GOAT, Amazon, Apple, Zara, StockX, eBay, Nike, and Etsy adapter changes.  
+Compiled from the GOAT, Amazon, Apple, Zara, StockX, eBay, Nike, Etsy, Reebelo, Walmart, and Back Market adapter changes.  
 This document describes every new API field and the UI behaviour each one requires.
 
 ---
@@ -729,7 +729,276 @@ Etsy products are sold by independent shops. Display `brand` (= shop name) as a 
 
 ---
 
-## 12. `available` flag on `configurationPrices` rows
+## 11. Reebelo — condition-graded refurbished electronics
+
+### What the adapter now returns
+
+```jsonc
+{
+  "price": "75.48",              // from selected SKU; converted from cents
+  "currency": "USD",
+  "brand": "Samsung",
+  "asin": "sku-abc-123",          // Reebelo-internal SKU ID
+  "availability": "in_stock",
+  "variants": [
+    { "name": "Grade", "options": ["Fair", "Good", "Excellent"] },
+    { "name": "Storage", "options": ["64 GB", "128 GB"] }
+  ],
+  "configurationPrices": [
+    {
+      "label": "Fair · 64 GB",
+      "originalPrice": "65.00",
+      "sku": "sku-abc-123",
+      "variantAxis": "Grade",
+      "optionValue": "Fair",
+      "variantSelections": { "Grade": "Fair", "Storage": "64 GB" },
+      "available": true,
+      "metadata": { "source": "reebelo", "skuId": "sku-abc-123", "offerId": "off-456", "featured": false }
+    },
+    {
+      "label": "Good · 64 GB",
+      "originalPrice": "75.48",
+      "sku": "sku-def-456",
+      "optionValue": "Good",
+      "variantSelections": { "Grade": "Good", "Storage": "64 GB" },
+      "available": true,
+      "metadata": { "source": "reebelo", "skuId": "sku-def-456", "offerId": "off-789", "featured": true }
+    }
+    // ... one row per available variant combination
+  ],
+  "metadata": {
+    "source": "reebelo",
+    "productId": "prod-123",
+    "psku": "PSKU-001",
+    "category": "Smartphones",
+    "vendor": "TechResale Inc.",
+    "buyerProtectionFeeCents": 199,
+    "store": "us"
+  },
+  "description": "Unlocked Samsung Galaxy...\n\nCondition Guide:\nGrade A: Like New\nGrade B: Good\n\nWarranty: 12 month(s)"
+}
+```
+
+**Before this change:** Reebelo was not supported.  
+**After:** Condition-graded refurbished products with per-variant pricing are fully captured.
+
+### Required UI behaviour
+
+1. **Variant selector** — render axes from `variants[]` in the order given (Grade → Storage → Color). Each axis is a row of labelled buttons.
+
+2. **Price per combination** — look up `configurationPrices` using `variantSelections`:
+
+   ```ts
+   const activePrice = product.configurationPrices?.find(r =>
+     Object.entries(selectedVariants).every(
+       ([axis, value]) => r.variantSelections?.[axis] === value,
+     ),
+   );
+   ```
+
+3. **All rows are available** — Reebelo only emits rows for in-stock combinations. Every row has `available: true`. If a combination is absent from `configurationPrices`, it is out of stock — disable that option.
+
+4. **No promotional pricing** — `compareAtPrice`, `discount`, `savingsAmount`, and `dealType` are never present. Render a standard price block with no strikethrough or discount badge.
+
+5. **Condition/warranty in description** — the `description` field may include `Condition Guide:` and `Warranty:` sections. Frontends may parse these for dedicated condition or warranty badges.
+
+6. **Header price** — defaults to `product.price` (the cheapest available variant). Updates to the selected combination's `originalPrice` on user selection.
+
+   ```
+   Grade:   [Fair $65] [Good $75.48] [Excellent $89.99]
+
+   Storage: [64 GB] [128 GB]
+
+   Price:   $75.48
+   ```
+
+7. **Buyer protection** — `metadata.buyerProtectionFeeCents` indicates a per-order fee applied by Reebelo. The frontend may display this as a line item during checkout or note it in the price summary.
+
+---
+
+## 12. Walmart — promotional pricing with variant map
+
+### What the adapter now returns
+
+```jsonc
+{
+  "price": "249.99",
+  "currency": "USD",
+  "compareAtPrice": "329.99",     // wasPrice or listPrice
+  "discount": "-24%",             // computed from compareAtPrice − price
+  "savingsAmount": "80.00",       // from savingsAmount.price
+  "brand": "Mainstays",
+  "asin": "3KC5Z5T7NHGU",         // Walmart usItemId
+  "availability": "in_stock",
+  "variants": [
+    { "name": "Color", "options": ["Black", "White"] },
+    { "name": "Size",  "options": ["Twin", "Full", "Queen", "King"] }
+  ],
+  "configurationPrices": [
+    {
+      "label": "Black · Twin",
+      "originalPrice": "249.99",
+      "sku": "3KC5Z5T7NHGU",
+      "variantAxis": "Color",
+      "optionValue": "Black",
+      "variantSelections": { "Color": "Black", "Size": "Twin" },
+      "currency": "USD",
+      "available": true,
+      "metadata": { "source": "walmart", "walmartProductId": "3KC5Z5T7NHGU", "usItemId": "3KC5Z5T7NHGU" }
+    },
+    {
+      "label": "Black · Queen",
+      "originalPrice": "299.99",
+      "sku": "4MD6A6U8OIHV",
+      "variantSelections": { "Color": "Black", "Size": "Queen" },
+      "available": true,
+      "metadata": { "source": "walmart", "walmartProductId": "4MD6A6U8OIHV", "usItemId": "4MD6A6U8OIHV" }
+    }
+    // ... one row per variantsMap entry
+  ],
+  "metadata": {
+    "source": "walmart",
+    "upc": "000000123456",
+    "model": "12345",
+    "offerId": "some-offer-id"
+  }
+}
+```
+
+**Before this change:** Walmart was not supported.  
+**After:** Full per-variant pricing, promotional display, and stock status are captured.
+
+### Required UI behaviour
+
+1. **Variant selector** — render axes from `variants[]`. Each axis is a labelled button row.
+
+2. **Price per combination** — look up `configurationPrices` using `variantSelections` (multi-axis match, same pattern as §11):
+
+   ```ts
+   const activePrice = product.configurationPrices?.find(r =>
+     Object.entries(selectedVariants).every(
+       ([axis, value]) => r.variantSelections?.[axis] === value,
+     ),
+   );
+   ```
+
+   When a variant combination is absent from `configurationPrices`, it is unavailable — disable or hide that option.
+
+3. **Sale rendering** — when `compareAtPrice` is present and greater than `price`:
+
+   ```
+   ~~$329.99~~   $249.99   -24%
+   You save: $80.00
+   ```
+
+   Same strikethrough + discount badge + savings line pattern as Amazon (§5) and eBay (§8).
+
+4. **No `dealType`** — Walmart does not return a promotional banner label. Render only the strikethrough and badges.
+
+5. **Header price** — updates to the selected combination's `originalPrice` on selection. Defaults to `product.price`.
+
+6. **Stock indicator** — `configurationPrices[].available` reflects the variant's `availabilityStatus`:
+   - `true` = selectable
+   - `false` = greyed-out, non-selectable
+
+---
+
+## 13. Back Market — refurbished marketplace with condition/storage/color
+
+### What the adapter now returns
+
+```jsonc
+{
+  "price": "429.00",
+  "currency": "USD",
+  "compareAtPrice": "599.00",       // priceWhenNew (retail reference)
+  "discount": "-40%",               // discount.rate from selected offer
+  "savingsAmount": "170.00",        // computed: compareAtPrice − price
+  "brand": "Apple",
+  "variants": [
+    { "name": "Condition", "options": ["Fair ($429.00)", "Good ($449.00)", "Very Good ($489.00)", "Excellent ($529.00)"] },
+    { "name": "Storage",   "options": ["128 GB ($429.00)", "256 GB ($459.00)"] },
+    { "name": "Color",     "options": ["Sky Blue", "Space Black"] }
+  ],
+  "description": "Factory unlocked iPhone...\n\nCondition: Very Good\nWarranty: 12 months\nShipping: Free\nSold by: TechResale"
+}
+```
+
+Key differences from every other adapter:
+
+- **No `configurationPrices`** — variant option labels embed the price in parentheses. The top-level `price` always reflects the currently selected offer.
+- **No `metadata`** — Back Market does not return a metadata object.
+- **No `asin`** — Back Market does not expose a marketplace item ID.
+- **No `availability`** — out-of-stock variants are filtered out of `variants[].options` entirely.
+
+### Required UI behaviour
+
+1. **Variant selector** — render axes in order: Condition → Storage → Color.
+   - **Condition** options include price in the label (e.g. `"Very Good ($489.00)"`). Render as a grade/quality selector — each grade is a button showing its label.
+   - **Storage** options may also include price (e.g. `"256 GB ($459.00)"`).
+   - **Color** options are label-only (no price in text).
+
+2. **Price from option labels** — since there are no `configurationPrices` rows, parse the selected variant's embedded price if needed for display:
+
+   ```ts
+   function parsePriceFromLabel(label: string): string | null {
+     const match = label.match(/\(([^)]+)\)$/);
+     return match ? match[1].replace(/[$,]/g, '') : null;
+   }
+   ```
+
+   The top-level `product.price` already reflects the cheapest available offer's price. On variant selection, the frontend may need to extract the per-grade price from the selected option's label and update the displayed price.
+
+3. **Sale rendering** — when `compareAtPrice` is present:
+
+   ```
+   ~~$599.00~~   $429.00   -40%
+   You save: $170.00
+   ```
+
+   Same pattern as §12, §5, and §8.
+
+4. **Condition badge** — parse from `description`:
+
+   ```
+   Condition: Very Good
+   ```
+
+   Render as a labelled badge near the variant selector. Normalised labels:
+
+   | Raw | Display |
+   |---|---|
+   | `VERY_GOOD` | Very Good |
+   | `GOOD` | Good |
+   | `FAIR` | Fair |
+   | `EXCELLENT` | Excellent |
+   | `PREMIUM` | Premium |
+
+5. **Free shipping badge** — when `description` includes `"Shipping: Free"`, show a ✓ Free shipping indicator.
+
+6. **Merchant attribution** — `description` includes `"Sold by: {merchantName}"`. Display as a "Sold by" line.
+
+7. **Warranty display** — `description` includes `"Warranty: {text}"`. Optionally display as a warranty badge.
+
+   ```
+   Condition:   [Fair $429] [Good $449] [Very Good $489] [Excellent $529]
+                                                              ↑ selected
+
+   Storage:     [128 GB $429] [256 GB $459]
+
+   Color:       [Sky Blue] [Space Black]
+
+                ~~$599.00~~   $489.00   -40%
+                You save: $170.00
+
+                Condition: Very Good    Warranty: 12 months
+                ✓ Free shipping
+                Sold by: TechResale
+   ```
+
+---
+
+## 15. `available` flag on `configurationPrices` rows
 
 All adapters that emit `configurationPrices` rows now set `available: boolean`:
 
@@ -741,34 +1010,31 @@ All adapters that emit `configurationPrices` rows now set `available: boolean`:
 
 ---
 
-## 13. Field availability by source
+## 16. Field availability by source
 
-| Field | GOAT | Amazon | Apple | Zara | StockX | eBay | Nike | Etsy |
-|---|---|---|---|---|---|---|---|---|
-| `variants` | Size | (from twister) | Storage, Color, Carrier | Color, Size | Size | — (single item) | Fit¹, Width², Size, Color | per `<select>` variation axes |
-| `configurationPrices` | per-size ask | per-ASIN (price lookup needed) | per-Storage×Color SKU | per-size (OOS flag) | per-size (price lookup needed) | — | per-Fit-group + per-size within group | per-option when delta ≠ 0 |
-| `compareAtPrice` | — | list price | — | was-price on sale | — | list price | `initialPrice` when > `currentPrice` | `priceSpecification` or DOM strikethrough |
-| `discount` | — | savings % | — | — | — | "60% off" text | `discountPercentage`% off | computed % off |
-| `savingsAmount` | — | computed | — | — | — | computed | — | computed |
-| `dealType` | — | deal badge | — | — | — | — | — | — |
-| `asin` | — | ASIN | — | — | — | item ID | styleColor | listing ID |
-| `metadata.carrierLinkMap` | — | — | Storage×Color×Carrier → URL | — | — | — | — | — |
-| `metadata.priceSource` | — | — | — | — | `"lowest-ask"` \| `"retail-reference"` | — | — | — |
-| `metadata.styleId` | — | — | — | — | style ID string | — | — | — |
-| `metadata.freeShipping` | — | — | — | — | — | — | — | yes (boolean) |
-| `metadata.scarcity` | — | — | — | — | — | — | — | "Only N left" text \| null |
-| `metadata.rating` | — | — | — | — | — | — | — | `{ value, count }` \| undefined |
-| `metadata.shopName` | — | — | — | — | — | — | — | shop name string |
-| `configurationPrices[].available` | yes | yes | yes | yes | yes (always `true`) | — | yes | yes (always `true`) |
-| `configurationPrices[].displayLabel` | yes | — | — | — | — | — | — | — |
-| `configurationPrices[].variantAxis` + `optionValue` | yes (Size) | — | — | yes (Size) | yes (Size) | — | yes (Fit or Size) | yes (variation name) |
-| `configurationPrices[].variantSelections` | — | yes (multi-dim) | yes (Storage×Color) | — | — | — | yes (Fit or Width×Size) | — |
-| `configurationPrices[].metadata.priceNeedsLookup` | — | yes (non-current ASIN) | — | — | yes (when no live ask) | — | — | — |
-| `configurationPrices[].metadata.sizeEU` / `sizeUK` | — | — | — | — | yes | — | — | — |
-| `configurationPrices[].metadata.pdpUrl` | — | — | — | — | — | — | yes (Fit rows only) | — |
-| `configurationPrices[].metadata.isSelectedGroup` | — | — | — | — | — | — | yes (Fit rows only) | — |
-| `configurationPrices[].metadata.gtin` | — | — | — | — | — | — | yes (Size rows) | — |
-| `configurationPrices[].metadata.priceModifier` | — | — | — | — | — | — | — | yes (delta in currency units) |
+| Field | GOAT | Amazon | Apple | Zara | StockX | eBay | Nike | Etsy | Reebelo | Walmart | Back Market |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `variants` | Size | (from twister) | Storage, Color, Carrier | Color, Size | Size | — (single item) | Fit¹, Width², Size, Color | per `<select>` variation axes | Grade, Storage, Color | Size, Color, Width | Condition, Storage, Color (prices in labels) |
+| `configurationPrices` | per-size ask | per-ASIN (price lookup needed) | per-Storage×Color SKU | per-size (OOS flag) | per-size (price lookup needed) | — | per-Fit-group + per-size within group | per-option when delta ≠ 0 | per-availableVariant | per-variantsMap entry | — |
+| `compareAtPrice` | — | list price | — | was-price on sale | — | list price | `initialPrice` when > `currentPrice` | `priceSpecification` or DOM strikethrough | — | `wasPrice` or `listPrice` | `priceWhenNew` (if > current) |
+| `discount` | — | savings % | — | — | — | "60% off" text | `discountPercentage`% off | computed % off | — | computed % | `discount.rate` |
+| `savingsAmount` | — | computed | — | — | — | computed | — | computed | — | `savingsAmount.price` | computed |
+| `dealType` | — | deal badge | — | — | — | — | — | — | — | — | — |
+| `asin` | — | ASIN | — | — | — | item ID | styleColor | listing ID | SKU ID | `usItemId` | — |
+| `availability` | — | — | — | — | — | — | — | — | `in_stock` / `out_of_stock` | `in_stock` / `out_of_stock` / `unknown` | — |
+| `metadata` | — | — | carrierLinkMap | — | styleId, priceSource | — | — | freeShipping, scarcity, rating, shopName | productId, psku, category, vendor, buyerProtectionFeeCents, store | upc, model, offerId | — |
+| `configurationPrices[].available` | yes | yes | yes | yes | yes (always `true`) | — | yes | yes (always `true`) | yes (always `true`) | mapped from `availabilityStatus` | N/A |
+| `configurationPrices[].displayLabel` | yes | — | — | — | — | — | — | — | — | — | N/A |
+| `configurationPrices[].variantAxis` + `optionValue` | yes (Size) | — | — | yes (Size) | yes (Size) | — | yes (Fit or Size) | yes (variation name) | yes | yes | N/A |
+| `configurationPrices[].variantSelections` | — | yes (multi-dim) | yes (Storage×Color) | — | — | — | yes (Fit or Width×Size) | — | yes (multi-axis) | yes (multi-axis) | N/A |
+| `configurationPrices[].metadata.priceNeedsLookup` | — | yes (non-current ASIN) | — | — | yes (when no live ask) | — | — | — | — | — | N/A |
+| `configurationPrices[].metadata.sizeEU` / `sizeUK` | — | — | — | — | yes | — | — | — | — | — | N/A |
+| `configurationPrices[].metadata.pdpUrl` | — | — | — | — | — | — | yes (Fit rows only) | — | — | — | N/A |
+| `configurationPrices[].metadata.isSelectedGroup` | — | — | — | — | — | — | yes (Fit rows only) | — | — | — | N/A |
+| `configurationPrices[].metadata.gtin` | — | — | — | — | — | — | yes (Size rows) | — | — | — | N/A |
+| `configurationPrices[].metadata.priceModifier` | — | — | — | — | — | — | — | yes (delta in currency units) | — | — | N/A |
+| `configurationPrices[].metadata.skuId` / `offerId` | — | — | — | — | — | — | — | — | yes (Reebelo SKU + offer) | — | N/A |
+| `configurationPrices[].metadata.walmartProductId` / `usItemId` | — | — | — | — | — | — | — | — | — | yes (Walmart IDs) | N/A |
 
 ¹ `Fit` axis only present on multi-group products (kids sizing tiers, men's+women's split).  
 ² `Width` axis only present on adult products with `sizeFitSections` (Regular/Wide/X-Wide).

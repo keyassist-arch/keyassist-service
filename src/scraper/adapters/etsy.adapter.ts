@@ -306,7 +306,7 @@ export class EtsyAdapter implements ScraperAdapter {
         };
       });
 
-      return this.buildProduct(bundle, url);
+      return await this.buildProduct(bundle, url);
     } catch (err) {
       this.logger.error(
         `EtsyAdapter: scrape failed for ${url} — ${(err as Error).message}`,
@@ -514,7 +514,16 @@ export class EtsyAdapter implements ScraperAdapter {
       images: images.slice(0, 20),
       brand,
       description: descParts.join('\n\n') || undefined,
-      asin: listingId,
+      sku: listingId,
+      ...(rating?.ratingValue != null
+        ? {
+            rating: {
+              value: rating.ratingValue,
+              reviewCount:
+                rating.reviewCount != null ? Number(rating.reviewCount) : undefined,
+            },
+          }
+        : {}),
       variants,
       ...(configurationPrices.length ? { configurationPrices } : {}),
       availability,
@@ -524,9 +533,6 @@ export class EtsyAdapter implements ScraperAdapter {
         shopName: brand,
         freeShipping,
         scarcity: bundle.scarcityText ?? undefined,
-        rating: rating
-          ? { value: rating.ratingValue, count: rating.reviewCount }
-          : undefined,
       },
     };
   }

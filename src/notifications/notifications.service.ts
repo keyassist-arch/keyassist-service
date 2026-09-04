@@ -1,32 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
+import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
-  private readonly resend: Resend | null;
+  private readonly mailerSend: MailerSend | null;
   /** Resolved once at construction — config is immutable at runtime. */
-  private readonly fromAddress: string;
+  private readonly fromSender: Sender;
 
   constructor(private readonly config: ConfigService) {
-    const apiKey = this.config.get<string>('RESEND_API_KEY');
-    this.resend = apiKey ? new Resend(apiKey) : null;
-    this.fromAddress = this.resolveResendFrom();
+    const apiKey = this.config.get<string>('MAILERSEND_API_KEY');
+    this.mailerSend = apiKey ? new MailerSend({ apiKey }) : null;
+    this.fromSender = this.resolveFromSender();
   }
 
-  /**
-   * Send a transactional email.
-   *
-   * @param idempotencyKey - Optional deduplication key (e.g. BullMQ job ID).
-   *   Resend honours this header so a retried job doesn't deliver duplicate emails.
-   */
+  /** Send a transactional email via MailerSend. */
   async sendEmail(opts: {
     to: string;
     subject: string;
     text: string;
     html?: string;
-    idempotencyKey?: string;
   }): Promise<void> {
     if (!opts.to?.trim()) {
       this.logger.warn(
@@ -35,41 +29,39 @@ export class NotificationsService {
       return;
     }
 
-    if (!this.resend) {
+    if (!this.mailerSend) {
       this.logger.warn(
-        `[notify] email skipped (no RESEND_API_KEY): "${opts.subject}" → ${opts.to}`,
+        `[notify] email skipped (no MAILERSEND_API_KEY): "${opts.subject}" → ${opts.to}`,
       );
       return;
     }
 
-    const { data, error } = await this.resend.emails.send(
-      {
-        from: this.fromAddress,
-        to: opts.to,
-        subject: opts.subject,
-        text: opts.text,
-        html: opts.html ?? buildHtmlEmail(opts.subject, opts.text),
-      },
-      opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
-    );
+    const emailParams = new EmailParams()
+      .setFrom(this.fromSender)
+      .setTo([new Recipient(opts.to)])
+      .setReplyTo(this.fromSender)
+      .setSubject(opts.subject)
+      .setHtml(opts.html ?? buildHtmlEmail(opts.subject, opts.text))
+      .setText(opts.text);
 
-    if (error) {
+    try {
+      const response = await this.mailerSend.email.send(emailParams);
+      const headers = response.headers as Record<string, string> | undefined;
+      const messageId = headers?.['x-message-id'] ?? 'n/a';
+      this.logger.log(
+        `[notify] email sent id=${messageId} to=${opts.to} subject="${opts.subject}"`,
+      );
+    } catch (error: unknown) {
+      const message = extractMailerSendError(error);
       this.logger.error(
-        `[notify] Resend error: ${error.message} (to=${opts.to} subject="${opts.subject}")`,
+        `[notify] MailerSend error: ${message} (to=${opts.to} subject="${opts.subject}")`,
       );
-      // Preserve the Resend error as the cause so callers and BullMQ
+      // Preserve the MailerSend error as the cause so callers and BullMQ
       // retry logic see the full chain, not just a re-wrapped message.
-      throw Object.assign(
-        new Error(`Email delivery failed: ${error.message}`),
-        {
-          cause: error,
-        },
-      );
+      throw Object.assign(new Error(`Email delivery failed: ${message}`), {
+        cause: error,
+      });
     }
-
-    this.logger.log(
-      `[notify] email sent id=${data?.id ?? 'n/a'} to=${opts.to} subject="${opts.subject}"`,
-    );
   }
 
   /** SMS is not yet wired to a provider. */
@@ -78,34 +70,93 @@ export class NotificationsService {
   }
 
   /**
-   * Resend requires a verified domain for custom `from` addresses.
-   * Use their onboarding sender in dev / when `RESEND_SANDBOX` is set.
+   * Send a WhatsApp text message via the Meta Cloud API.
+   * No-ops with a warning when META_WHATSAPP_TOKEN / META_WHATSAPP_PHONE_NUMBER_ID
+   * aren't configured yet, mirroring the sendSms stub above.
    */
-  private resolveResendFrom(): string {
-    const nodeEnv = this.config.get<string>('NODE_ENV') ?? 'development';
-    const explicit = this.config
-      .get<string>('RESEND_SANDBOX')
-      ?.trim()
-      .toLowerCase();
-
-    let useOnboarding: boolean;
-    if (explicit === 'true' || explicit === '1') {
-      useOnboarding = true;
-    } else if (explicit === 'false' || explicit === '0') {
-      useOnboarding = false;
-    } else {
-      useOnboarding = nodeEnv !== 'production';
+  async sendWhatsApp(to: string, body: string): Promise<void> {
+    if (!to?.trim()) {
+      this.logger.warn('[notify] sendWhatsApp skipped — empty recipient');
+      return;
     }
 
-    if (useOnboarding) {
-      return 'KeyAssist <onboarding@resend.dev>';
-    }
-    return (
-      this.config.get<string>('RESEND_FROM')?.trim() ||
-      this.config.get<string>('MAIL_FROM')?.trim() ||
-      'KeyAssist <onboarding@resend.dev>'
+    const token = this.config.get<string>('META_WHATSAPP_TOKEN');
+    const phoneNumberId = this.config.get<string>(
+      'META_WHATSAPP_PHONE_NUMBER_ID',
     );
+    if (!token || !phoneNumberId) {
+      this.logger.warn(
+        `[notify] WhatsApp channel not configured (no META_WHATSAPP_TOKEN/META_WHATSAPP_PHONE_NUMBER_ID) — message not sent to ${to}`,
+      );
+      return;
+    }
+
+    const apiVersion =
+      this.config.get<string>('META_WHATSAPP_API_VERSION') ?? 'v21.0';
+    const to_e164 = to.trim().replace(/^\+/, '').replace(/[^\d]/g, '');
+
+    const res = await fetch(
+      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: to_e164,
+          type: 'text',
+          text: { body },
+        }),
+      },
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      this.logger.error(
+        `[notify] WhatsApp send failed (${res.status}) to=${to}: ${errText}`,
+      );
+      throw new Error(`WhatsApp delivery failed: ${res.status} ${errText}`);
+    }
+
+    this.logger.log(`[notify] WhatsApp message sent to=${to}`);
   }
+
+  /**
+   * MailerSend requires a verified domain for the `from` address — trial
+   * accounts get a `trial-xxxxx.mlsender.net` sender to use instead.
+   */
+  private resolveFromSender(): Sender {
+    const raw =
+      this.config.get<string>('MAILERSEND_FROM')?.trim() ||
+      this.config.get<string>('MAIL_FROM')?.trim() ||
+      'Unified Commerce <no-reply@unifiedcommerce.ng>';
+    return parseFromAddress(raw);
+  }
+}
+
+/** Parses `"Name <email@domain>"` or a bare `"email@domain"` into a MailerSend Sender. */
+function parseFromAddress(raw: string): Sender {
+  const match = raw.match(/^\s*(.+?)\s*<([^<>]+)>\s*$/);
+  if (match) {
+    return new Sender(match[2].trim(), match[1].trim());
+  }
+  return new Sender(raw.trim());
+}
+
+function extractMailerSendError(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const body = (error as { body?: { message?: string; errors?: unknown } })
+      .body;
+    if (body?.message) {
+      return body.message;
+    }
+    if ('message' in error && typeof (error as Error).message === 'string') {
+      return (error as Error).message;
+    }
+  }
+  return String(error);
 }
 
 // ---------------------------------------------------------------------------

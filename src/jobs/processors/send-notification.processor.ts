@@ -82,7 +82,7 @@ export class SendNotificationProcessor extends WorkerHost {
   @OnWorkerEvent('stalled')
   onStalled(jobId: string, prev: string): void {
     this.logger.warn(
-      `[job:notify] worker=stalled jobId=${jobId} prevState=${prev} — check Resend API latency`,
+      `[job:notify] worker=stalled jobId=${jobId} prevState=${prev} — check MailerSend API latency`,
     );
   }
 
@@ -96,9 +96,6 @@ export class SendNotificationProcessor extends WorkerHost {
       subject: job.data.subject,
       text: job.data.text,
       html: job.data.html,
-      // Use the job ID as idempotency key — Resend deduplicates on this so a
-      // BullMQ retry after a transient failure never delivers the email twice.
-      idempotencyKey: job.id ? String(job.id) : undefined,
     });
     this.logger.log(
       `[job:notify] step=sent type=${job.data.type} to=${maskEmail(job.data.toEmail)}`,

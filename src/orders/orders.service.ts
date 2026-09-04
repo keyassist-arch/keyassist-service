@@ -17,15 +17,20 @@ import type { PaymentMethodDetails } from '../payment/types/payment-method-detai
 import { OrderStatus } from '../common/enums/order-status.enum';
 import { CartService } from '../cart/cart.service';
 import { ProductsService } from '../products/products.service';
-import { ScraperService } from '../scraper/scraper.service';
 import { UsersService } from '../users/users.service';
-import { ShippingAddress } from '../users/entities/user.entity';
+import { ShippingAddress, User } from '../users/entities/user.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { QUEUE_SEND_NOTIFICATION } from '../jobs/queue.constants';
+import { QUEUE_SEND_NOTIFICATION, QUEUE_VERIFY_PRICE } from '../jobs/queue.constants';
 import type { SendNotificationJob } from '../jobs/processors/send-notification.processor';
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { LandedCostService } from '../landed-cost/landed-cost.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
+import { ProductSource } from '../common/enums/product-source.enum';
+import type {
+  ShippingDestination,
+  ShippingService as ShippingServiceType,
+} from '../shipping/utils/kingz-rates';
+import type { ProductCategory } from '../landed-cost/rules/category-weights';
 
 @Injectable()
 export class OrdersService {
@@ -39,10 +44,11 @@ export class OrdersService {
     private readonly dataSource: DataSource,
     private readonly cartService: CartService,
     private readonly productsService: ProductsService,
-    private readonly scraper: ScraperService,
     private readonly usersService: UsersService,
     @InjectQueue(QUEUE_SEND_NOTIFICATION)
     private readonly notifyQueue: Queue<SendNotificationJob>,
+    @InjectQueue(QUEUE_VERIFY_PRICE)
+    private readonly verifyPriceQueue: Queue<{ productId: string }>,
     private readonly orderRealtime: OrderRealtimeService,
     private readonly landedCostService: LandedCostService,
     private readonly emailTemplates: EmailTemplateService,
@@ -69,38 +75,130 @@ export class OrdersService {
             );
           })();
 
-    // Scrape all cart items in parallel — each scrape is 5-30 s, sequential adds up fast.
+    // Use cached prices from the DB — avoids a 5-30 s scrape per item at checkout.
+    // Background verify-price jobs are enqueued after the order is saved so prices
+    // stay fresh for fulfillment without blocking the user.
     const lines = await Promise.all(
       cart.items.map(async (line) => {
         const product = await this.productsService.findById(line.productId);
         this.logger.log(
-          `[order] step=price_refresh productId=${line.productId} qty=${line.quantity}`,
-        );
-        const scraped = await this.scraper.scrape(
-          product.sourceUrl,
-          product.source,
-        );
-        const refreshed = await this.productsService.refreshPriceFromScrape(
-          product,
-          scraped,
+          `[order] step=price_from_cache productId=${line.productId} qty=${line.quantity} lastScrapedAt=${product.lastScrapedAt?.toISOString() ?? 'never'}`,
         );
         const unitPrice = this.productsService.resolveVariantPrice(
-          refreshed,
+          product,
           line.variantSelection,
         );
         return {
-          productId: refreshed.id,
-          title: refreshed.title,
+          productId: product.id,
+          title: product.title,
           price: unitPrice,
-          currency: refreshed.currency,
-          source: refreshed.source,
+          currency: product.currency,
+          source: product.source,
           qty: line.quantity,
-          images: refreshed.images,
+          images: product.images,
           variant: line.variantSelection,
         };
       }),
     );
 
+    const order = await this.placeOrder(userId, lines, dto.landedCost, shipping, user, {
+      cartIdToClear: cart.id,
+    });
+    return this.toResponse(order);
+  }
+
+  /**
+   * Places an order on behalf of `targetUserId` from an explicit item list rather
+   * than the user's live cart — used by admin-initiated order placement (e.g. for
+   * manually-imported products the customer couldn't check out themselves). The
+   * resulting order is identical in shape/state to a customer-created one (status
+   * PENDING, payable via the normal /payments/initialize flow).
+   */
+  async createForUserFromItems(
+    targetUserId: string,
+    items: {
+      productId: string;
+      quantity: number;
+      variantSelection?: Record<string, string> | null;
+    }[],
+    landedCost: {
+      destination: ShippingDestination;
+      shippingService: ShippingServiceType;
+      category?: ProductCategory;
+      insurance?: boolean;
+    },
+    shippingAddress?: ShippingAddress,
+  ) {
+    if (!items.length) {
+      throw new BadRequestException('At least one item is required');
+    }
+    const user = await this.usersService.findById(targetUserId);
+    const shipping: ShippingAddress = shippingAddress
+      ? shippingAddress
+      : user.defaultShippingAddress
+        ? user.defaultShippingAddress
+        : (() => {
+            throw new BadRequestException(
+              'Customer has no default shipping address; provide one explicitly',
+            );
+          })();
+
+    const lines = await Promise.all(
+      items.map(async (item) => {
+        const product = await this.productsService.findById(item.productId);
+        const unitPrice = this.productsService.resolveVariantPrice(
+          product,
+          item.variantSelection,
+        );
+        return {
+          productId: product.id,
+          title: product.title,
+          price: unitPrice,
+          currency: product.currency,
+          source: product.source,
+          qty: item.quantity,
+          images: product.images,
+          variant: item.variantSelection ?? null,
+        };
+      }),
+    );
+
+    const order = await this.placeOrder(targetUserId, lines, landedCost, shipping, user);
+    this.logger.log(
+      `[order] step=admin_created orderId=${order.id} targetUserId=${targetUserId}`,
+    );
+    return this.toResponse(order);
+  }
+
+  /**
+   * Shared core for order placement: computes landed-cost pricing, locks/checks
+   * stock, persists the Order + OrderItem rows in a transaction, then fires the
+   * post-creation side effects (verify-price queue, confirmation email, realtime
+   * update). `createFromCart` and `createForUserFromItems` both fan into this so
+   * pricing/transaction/notification logic exists in exactly one place.
+   */
+  private async placeOrder(
+    userId: string,
+    lines: {
+      productId: string;
+      title: string;
+      price: string;
+      currency: string;
+      source: ProductSource;
+      qty: number;
+      images: string[];
+      variant?: Record<string, string> | null;
+    }[],
+    landedCost: {
+      destination: ShippingDestination;
+      shippingService: ShippingServiceType;
+      category?: ProductCategory;
+      insurance?: boolean;
+    },
+    shipping: ShippingAddress,
+    user: User,
+    opts: { cartIdToClear?: string } = {},
+  ): Promise<Order> {
     const currency = 'USD';
     const subtotal = lines.reduce(
       (acc, l) => acc + parseFloat(l.price) * l.qty,
@@ -114,19 +212,19 @@ export class OrdersService {
         qty: l.qty,
       })),
       {
-        destination: dto.landedCost.destination,
-        shippingService: dto.landedCost.shippingService,
-        category: dto.landedCost.category ?? 'generic',
+        destination: landedCost.destination,
+        shippingService: landedCost.shippingService,
+        category: landedCost.category ?? 'generic',
+        insurance: landedCost.insurance ?? false,
       },
     );
 
-    const fees = lc.serviceChargeUsd;
     const total = lc.totalUsd;
 
     this.logger.log(
       `[order] step=transaction_begin userId=${userId} subtotal=${subtotal.toFixed(2)} ` +
         `serviceCharge=${lc.serviceChargeUsd.toFixed(2)} discount=${lc.discountUsd.toFixed(2)} ` +
-        `shipping=${lc.internationalShippingUsd.toFixed(2)} customs=${(lc.customsDutyUsd + lc.customsVatUsd + lc.customsClearingFeeUsd).toFixed(2)} ` +
+        `shipping=${lc.internationalShippingUsd.toFixed(2)} ` +
         `total=${total.toFixed(2)} currency=${currency}`,
     );
 
@@ -156,7 +254,8 @@ export class OrdersService {
         marketplaceTax: lc.marketplaceTaxUsd.toFixed(2),
         marketplaceShipping: lc.marketplaceShippingUsd.toFixed(2),
         domesticHandling: lc.domesticHandlingUsd.toFixed(2),
-        customsTotal: (lc.customsDutyUsd + lc.customsVatUsd + lc.customsClearingFeeUsd).toFixed(2),
+        customsTotal: '0.00',
+        insurance: lc.insuranceUsd.toFixed(2),
         fxBuffer: lc.fxBufferUsd.toFixed(2),
         riskBuffer: lc.riskBufferUsd.toFixed(2),
         pricingBreakdown: lc.breakdown,
@@ -182,7 +281,9 @@ export class OrdersService {
           ),
         );
       }
-      await em.delete(CartItem, { cartId: cart.id });
+      if (opts.cartIdToClear) {
+        await em.delete(CartItem, { cartId: opts.cartIdToClear });
+      }
       // Attach items in-memory — avoids a second DB round-trip inside the transaction.
       o.items = savedItems;
       return o;
@@ -195,6 +296,24 @@ export class OrdersService {
     this.logger.log(
       `[order] step=created orderId=${order.id} userId=${userId} total=${order.total} ${order.currency}`,
     );
+
+    // Enqueue a background price-verify job for each purchased product so the catalog
+    // stays fresh for fulfillment. Fire-and-forget — never block the checkout response.
+    const seenProducts = new Set<string>();
+    for (const l of lines) {
+      if (seenProducts.has(l.productId)) continue;
+      seenProducts.add(l.productId);
+      this.verifyPriceQueue
+        .add('verify', { productId: l.productId }, {
+          jobId: `post-checkout-${l.productId}`,
+          delay: 0,
+        })
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `[order] step=verify_price_enqueue_failed orderId=${order.id} productId=${l.productId}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
 
     const confirmTpl = this.emailTemplates.orderConfirmation({
       orderId: order.id,
@@ -219,7 +338,7 @@ export class OrdersService {
       `[order] step=realtime_emitted orderId=${order.id} status=${order.status}`,
     );
 
-    return this.toResponse(order);
+    return order;
   }
 
   async listForUser(userId: string, query?: { status?: string }) {
@@ -270,6 +389,34 @@ export class OrdersService {
     return this.toResponse(o);
   }
 
+  /**
+   * Self-serve cancel — only while the order hasn't been paid yet, so no
+   * money has moved and there's nothing to refund. Once PAID or later,
+   * customers go through the existing disputes/support flow instead.
+   */
+  async cancelOrder(userId: string, orderId: string) {
+    const o = await this.orders.findOne({
+      where: { id: orderId, userId },
+      relations: ['items', 'trackingEvents'],
+    });
+    if (!o) {
+      throw new NotFoundException('Order not found');
+    }
+    if (o.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Only unpaid orders can be cancelled (current status: ${o.status})`,
+      );
+    }
+    o.status = OrderStatus.CANCELLED;
+    await this.orders.save(o);
+    this.logger.log(`[order] step=cancelled_by_user orderId=${o.id} userId=${userId}`);
+    this.orderRealtime.emitOrderUpdate(userId, {
+      orderId: o.id,
+      status: o.status,
+    });
+    return this.toResponse(o);
+  }
+
   async findById(orderId: string): Promise<Order> {
     const o = await this.orders.findOne({
       where: { id: orderId },
@@ -279,6 +426,15 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
     return o;
+  }
+
+  async findByCheckoutId(checkoutId: string): Promise<Order | null> {
+    return this.orders
+      .createQueryBuilder('o')
+      .where(`o.payment_method_details @> :val::jsonb`, {
+        val: JSON.stringify({ checkoutId }),
+      })
+      .getOne();
   }
 
   async setStripeCheckoutSession(
@@ -345,9 +501,11 @@ export class OrdersService {
       `[order] step=mark_paid_begin orderId=${orderId} provider=${input.provider}`,
     );
     const updated = await this.dataSource.transaction(async (em) => {
+      // Lock only the Order row here — `FOR UPDATE` combined with the `items`
+      // relation's LEFT JOIN is rejected by Postgres ("cannot be applied to
+      // the nullable side of an outer join"). Items are loaded separately below.
       const o = await em.findOne(Order, {
         where: { id: orderId },
-        relations: ['items'],
         lock: { mode: 'pessimistic_write' },
       });
       if (!o || o.status !== OrderStatus.PENDING) {
@@ -362,6 +520,8 @@ export class OrdersService {
         }
         return o ?? null;
       }
+      const items = await em.find(OrderItem, { where: { orderId: o.id } });
+
       o.status = OrderStatus.PAID;
       o.paymentProvider = input.provider;
       if (input.paystackReference != null) {
@@ -379,7 +539,7 @@ export class OrdersService {
       await em.save(o);
 
       const prodRepo = em.getRepository(Product);
-      for (const item of o.items ?? []) {
+      for (const item of items) {
         if (!item.productId) {
           continue;
         }
@@ -446,6 +606,7 @@ export class OrdersService {
       parseFloat(o.domesticHandling  || '0') +
       parseFloat(o.shippingFee       || '0') +
       parseFloat(o.customsTotal      || '0') +
+      parseFloat(o.insurance         || '0') +
       parseFloat(o.fxBuffer          || '0') +
       parseFloat(o.riskBuffer        || '0')
     ).toFixed(2);
@@ -474,6 +635,7 @@ export class OrdersService {
       marketplaceShipping: o.marketplaceShipping,
       domesticHandling: o.domesticHandling,
       customsTotal: o.customsTotal,
+      insurance: o.insurance,
       fxBuffer: o.fxBuffer,
       riskBuffer: o.riskBuffer,
       pricingBreakdown: o.pricingBreakdown ?? [],

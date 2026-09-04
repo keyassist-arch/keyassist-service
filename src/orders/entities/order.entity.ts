@@ -88,6 +88,16 @@ export class Order {
   })
   customsTotal: string;
 
+  /** Optional Kingz cargo insurance (3% of item cost). 0 unless the customer opted in. */
+  @Column({
+    name: 'insurance',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0',
+  })
+  insurance: string;
+
   @Column({
     name: 'fx_buffer',
     type: 'decimal',

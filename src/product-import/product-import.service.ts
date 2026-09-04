@@ -249,7 +249,10 @@ export class ProductImportService {
         }
       }
       // Manual products (GENERIC or MANUAL_IMPORT_SOURCES) are not re-scraped; return directly.
-      if (existing.source === ProductSource.GENERIC || MANUAL_IMPORT_SOURCES.has(existing.source)) {
+      if (
+        existing.source === ProductSource.GENERIC ||
+        MANUAL_IMPORT_SOURCES.has(existing.source)
+      ) {
         return existing.product
           ? {
               status: 'completed' as const,
@@ -445,6 +448,8 @@ export class ProductImportService {
             /** Safe for clients; internal detail stays in DB only */
             message:
               'We could not import this product. Check the URL or try again later.',
+            requiresManualEntry: true,
+            sourceUrl: row.sourceUrl,
           }
         : {}),
       ...(row.status !== ImportStatus.FAILED && row.product
@@ -496,7 +501,10 @@ export class ProductImportService {
     return this.buildImportStatusPayload(row);
   }
 
-  async createManualProduct(dto: ManualProductImportDto) {
+  async createManualProduct(
+    dto: ManualProductImportDto,
+    requestedByUserId: string,
+  ) {
     let normalized: string;
     try {
       normalized = normalizeProductUrl(dto.sourceUrl);
@@ -510,6 +518,19 @@ export class ProductImportService {
     });
 
     if (existing?.status === ImportStatus.COMPLETED && existing.product) {
+      // Re-attribute an already-completed-but-not-yet-ordered row to the latest
+      // requester so admin can act on it. If it's already been ordered, leave the
+      // requester as-is — that request is fulfilled; a repeat purchase is a
+      // separate flow (ordinary cart/checkout), not the manual-import queue.
+      if (existing.orderId == null) {
+        existing.requestedByUserId = requestedByUserId;
+        existing.dismissedAt = null;
+        existing.dismissReason = null;
+        await this.imports.save(existing);
+        this.logger.log(
+          `[import] step=manual_resubmit_reopened importId=${existing.id} requestedByUserId=${requestedByUserId}`,
+        );
+      }
       return {
         status: 'completed' as const,
         product: this.productsService.toResponse(existing.product),
@@ -526,10 +547,14 @@ export class ProductImportService {
       );
     }
 
+    // No price from the customer → store 0.00 USD and let admin quote it from the
+    // manual-import queue. Do not invent a currency here: `buildProductFromScrape`
+    // FX-converts price into USD, so a wrong currency silently divides the amount
+    // (e.g. 2000 tagged NGN became USD 1.37).
     const scraped = {
       title: dto.title,
-      price: dto.price,
-      currency: dto.currency,
+      price: dto.price != null ? dto.price.toFixed(2) : '0.00',
+      currency: dto.price != null ? (dto.currency ?? 'USD') : 'USD',
       images: dto.imageUrls ?? [],
       description: dto.description,
       brand: dto.brand,
@@ -539,12 +564,14 @@ export class ProductImportService {
     let importRow: ImportedProduct;
     if (existing && existing.status === ImportStatus.FAILED) {
       existing.errorMessage = null;
+      existing.requestedByUserId = requestedByUserId;
       importRow = existing;
     } else {
       importRow = this.imports.create({
         sourceUrl: normalized,
         source: ProductSource.GENERIC,
         status: ImportStatus.QUEUED,
+        requestedByUserId,
       });
     }
 

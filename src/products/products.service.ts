@@ -1,7 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import {
   Product,
   ProductConfigurationPrice,
@@ -14,6 +15,8 @@ import { ScrapedProduct } from '../scraper/interfaces/scraped-product.interface'
 import { parsePriceToDecimalString } from '../scraper/utils/normalize-price.util';
 import { slugifyTitle } from '../common/utils/slugify.util';
 import { CurrencyService } from '../currency/currency.service';
+import { AdminCreateProductDto } from './dto/admin-create-product.dto';
+import { AdminUpdateProductDto } from './dto/admin-update-product.dto';
 
 @Injectable()
 export class ProductsService {
@@ -62,9 +65,7 @@ export class ProductsService {
     markupPercent?: string,
   ): Promise<Partial<Product>> {
     const sourceCurrency = (scraped.currency || 'USD').toUpperCase();
-    const rawOrig =
-      parsePriceToDecimalString(scraped.price) ??
-      (typeof scraped.price === 'number' ? scraped.price.toFixed(2) : '0');
+    const rawOrig = parsePriceToDecimalString(scraped.price) ?? '0';
 
     const orig = await this.toUsd(parseFloat(rawOrig), sourceCurrency);
 
@@ -106,6 +107,8 @@ export class ProductsService {
       dealType: scraped.dealType ?? null,
       asin: scraped.asin ?? null,
       metadata: scraped.metadata ?? null,
+      observedTaxAmountUsd:
+        scraped.taxAmountUsd != null ? scraped.taxAmountUsd.toFixed(2) : null,
       lastScrapedAt: new Date(),
       lastVerifiedAt: new Date(),
     };
@@ -214,6 +217,74 @@ export class ProductsService {
     await this.imports.save(importRow);
   }
 
+  /**
+   * Admin-authored product, no scrape involved. `sourceUrl` is synthesized since the column is
+   * NOT NULL + unique — hand-entered products aren't tied to a retailer URL to rescrape.
+   */
+  async createManual(dto: AdminCreateProductDto): Promise<Product> {
+    const slug = await this.allocateUniqueSlug(dto.title);
+    const originalPrice = dto.originalPrice.toFixed(2);
+    const markupPercent = '0.00';
+    const product = this.products.create({
+      sourceUrl: `internal://admin/${randomUUID()}`,
+      source: ProductSource.KEYASSIST,
+      title: dto.title,
+      slug,
+      description: dto.description ?? null,
+      brand: dto.brand ?? null,
+      originalPrice,
+      currency: 'USD',
+      markupPercent,
+      salePrice: this.salePrice(originalPrice, markupPercent),
+      images: dto.images ?? [],
+      variants: (dto.variants ?? []) as ProductVariant[],
+      configurationPrices: (dto.configurationPrices ?? []) as ProductConfigurationPrice[],
+      availability: dto.availability ?? null,
+      compareAtPrice:
+        dto.compareAtPrice != null ? dto.compareAtPrice.toFixed(2) : null,
+      stockQuantity: dto.stockQuantity ?? null,
+      categoryId: dto.categoryId ?? null,
+      rescrapeEnabled: false,
+      lastScrapedAt: null,
+      lastVerifiedAt: null,
+    });
+    return this.products.save(product);
+  }
+
+  async updateManual(id: string, dto: AdminUpdateProductDto): Promise<Product> {
+    const product = await this.findById(id);
+
+    if (dto.title !== undefined && dto.title !== product.title) {
+      product.title = dto.title;
+      product.slug = await this.allocateUniqueSlug(dto.title, product.id);
+    }
+    if (dto.description !== undefined) product.description = dto.description ?? null;
+    if (dto.brand !== undefined) product.brand = dto.brand ?? null;
+    if (dto.originalPrice !== undefined) {
+      const originalPrice = dto.originalPrice.toFixed(2);
+      product.originalPrice = originalPrice;
+      product.salePrice = this.salePrice(originalPrice, product.markupPercent);
+    }
+    if (dto.images !== undefined) product.images = [...dto.images];
+    if (dto.variants !== undefined) {
+      product.variants = JSON.parse(JSON.stringify(dto.variants)) as ProductVariant[];
+    }
+    if (dto.configurationPrices !== undefined) {
+      product.configurationPrices = JSON.parse(
+        JSON.stringify(dto.configurationPrices),
+      ) as ProductConfigurationPrice[];
+    }
+    if (dto.stockQuantity !== undefined) product.stockQuantity = dto.stockQuantity ?? null;
+    if (dto.categoryId !== undefined) product.categoryId = dto.categoryId ?? null;
+    if (dto.availability !== undefined) product.availability = dto.availability ?? null;
+    if (dto.compareAtPrice !== undefined) {
+      product.compareAtPrice =
+        dto.compareAtPrice != null ? dto.compareAtPrice.toFixed(2) : null;
+    }
+
+    return this.products.save(product);
+  }
+
   async findById(id: string): Promise<Product> {
     const p = await this.products.findOne({ where: { id } });
     if (!p) {
@@ -242,6 +313,10 @@ export class ProductsService {
     await this.products.update({ id }, { rescrapeEnabled: false });
   }
 
+  async updateObservedTax(id: string, taxAmountUsd: number): Promise<void> {
+    await this.products.update({ id }, { observedTaxAmountUsd: taxAmountUsd.toFixed(2) });
+  }
+
   async remove(id: string): Promise<void> {
     const product = await this.findById(id);
     await this.imports.update(
@@ -259,9 +334,15 @@ export class ProductsService {
     });
   }
 
-  /** Public catalog snippet (e.g. home page); `limit` should be pre-clamped by the controller. */
+  /**
+   * Public catalog snippet (e.g. home page); `limit` should be pre-clamped by the controller.
+   * Unpriced rows (`salePrice` 0) are customer manual-entry requests still waiting on an admin
+   * quote — they stay out of the storefront feed but remain reachable by direct link and in
+   * `GET /admin/products`.
+   */
   async findRecentForPublic(limit: number): Promise<Product[]> {
     return this.products.find({
+      where: { salePrice: MoreThan('0') },
       order: { createdAt: 'DESC' },
       take: limit,
     });
@@ -280,7 +361,7 @@ export class ProductsService {
     // 1. Same-category products (highest relevance)
     if (product.categoryId) {
       const sameCat = await this.products.find({
-        where: { categoryId: product.categoryId },
+        where: { categoryId: product.categoryId, salePrice: MoreThan('0') },
         order: { createdAt: 'DESC' },
         take: limit,
       });
@@ -303,6 +384,7 @@ export class ProductsService {
         const nameMatches = await this.products
           .createQueryBuilder('p')
           .where('p.id != :id', { id: product.id })
+          .andWhere('p.sale_price > 0')
           .andWhere(`(${kwConditions.join(' OR ')})`, kwParams)
           .orderBy('p.created_at', 'DESC')
           .take(limit)
@@ -407,45 +489,49 @@ export class ProductsService {
   }
 
   /**
-   * Returns the correct unit price for a product given the buyer's variant selection.
-   * Looks up `configurationPrices` by `variantSelections` (multi-axis) then by
-   * `variantAxis`+`optionValue` (single-axis). Falls back to `salePrice` when there
-   * is no match or no selection.
+   * Finds the `configurationPrices` row that matches the given variant selection.
+   * Multi-axis (variantSelections) takes priority; single-axis (variantAxis+optionValue) is fallback.
+   */
+  resolveVariantRow(
+    product: Product,
+    variantSelection: Record<string, string>,
+  ): ProductConfigurationPrice | null {
+    const rows = product.configurationPrices ?? [];
+    const entries = Object.entries(variantSelection);
+    if (!entries.length || !rows.length) return null;
+
+    for (const row of rows) {
+      if (row.variantSelections) {
+        if (entries.every(([axis, value]) => row.variantSelections![axis] === value)) {
+          return row;
+        }
+      }
+    }
+
+    if (entries.length === 1) {
+      const [axis, value] = entries[0];
+      for (const row of rows) {
+        if (row.variantAxis === axis && row.optionValue === value) return row;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Returns the correct unit sale price (markup applied) for a product given the buyer's
+   * variant selection. Falls back to `salePrice` when there is no match or no selection.
    */
   resolveVariantPrice(
     product: Product,
     variantSelection?: Record<string, string> | null,
   ): string {
-    const rows = product.configurationPrices ?? [];
-    if (!variantSelection || !rows.length) return product.salePrice;
-
-    const entries = Object.entries(variantSelection);
-    if (!entries.length) return product.salePrice;
-
-    // Multi-axis: variantSelections must match ALL selected axes.
-    for (const row of rows) {
-      if (row.variantSelections) {
-        if (
-          entries.every(
-            ([axis, value]) => row.variantSelections![axis] === value,
-          )
-        ) {
-          return row.originalPrice;
-        }
-      }
+    if (!variantSelection || !Object.keys(variantSelection).length) {
+      return product.salePrice;
     }
-
-    // Single-axis fallback: variantAxis + optionValue.
-    if (entries.length === 1) {
-      const [axis, value] = entries[0];
-      for (const row of rows) {
-        if (row.variantAxis === axis && row.optionValue === value) {
-          return row.originalPrice;
-        }
-      }
-    }
-
-    return product.salePrice;
+    const row = this.resolveVariantRow(product, variantSelection);
+    if (!row) return product.salePrice;
+    return this.salePrice(row.originalPrice, product.markupPercent);
   }
 
   toResponse(p: Product) {
@@ -467,6 +553,11 @@ export class ProductsService {
       asin: p.asin ?? null,
       originalPrice: p.originalPrice,
       salePrice: p.salePrice,
+      /**
+       * `true` when no price is known yet — a customer manual-entry request the admin has not
+       * quoted. Render "Price on request" rather than the 0.00 in `salePrice`.
+       */
+      awaitingQuote: parseFloat(p.salePrice) <= 0,
       currency: p.currency,
       markupPercent: p.markupPercent,
       images: p.images,
@@ -490,13 +581,14 @@ export class ProductsService {
         return {
           label: row.label,
           originalPrice: row.originalPrice,
-          salePrice: row.originalPrice,
+          // Apply the same markup as the main product so per-variant prices stay consistent.
+          salePrice: this.salePrice(row.originalPrice, p.markupPercent),
           partNumber: row.partNumber,
           sku: row.sku,
           variantAxis: row.variantAxis,
           optionValue: row.optionValue,
           variantSelections,
-          currency: row.currency,
+          currency: row.currency ?? p.currency,
           available: row.available,
           displayLabel: row.displayLabel,
           metadata: row.metadata,
@@ -509,6 +601,7 @@ export class ProductsService {
       dealType: p.dealType ?? null,
       metadata: p.metadata ?? null,
       stockQuantity: p.stockQuantity,
+      categoryId: p.categoryId ?? null,
       lastScrapedAt: p.lastScrapedAt,
       lastVerifiedAt: p.lastVerifiedAt,
     };

@@ -52,7 +52,7 @@ export class CartController {
     @Param('itemId', ParseUUIDPipe) itemId: string,
     @Body() dto: UpdateCartItemDto,
   ) {
-    return this.cartService.updateQuantity(user.sub, itemId, dto.quantity);
+    return this.cartService.updateItem(user.sub, itemId, dto.quantity, dto.variantSelection);
   }
 
   @Delete('items/:itemId')

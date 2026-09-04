@@ -1,9 +1,17 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import axios from 'axios';
 import Stripe from 'stripe';
 import { OrdersService } from '../orders/orders.service';
+import { UsersService } from '../users/users.service';
 import { OrderStatus } from '../common/enums/order-status.enum';
 import { PaymentProvider } from '../common/enums/payment-provider.enum';
 import {
@@ -14,6 +22,7 @@ import {
 import { amountToMinorUnits } from './utils/amount-minor-units.util';
 import { paystackChargeToMethodDetails } from './utils/paystack-payment-method.util';
 import { stripePaymentMethodToDetails } from './utils/stripe-payment-method.util';
+import { SavedPaymentMethod } from './entities/saved-payment-method.entity';
 
 type MyazaSessionPayload = {
   id?: string;
@@ -61,6 +70,9 @@ export class PaymentService {
   constructor(
     private readonly config: ConfigService,
     private readonly ordersService: OrdersService,
+    private readonly usersService: UsersService,
+    @InjectRepository(SavedPaymentMethod)
+    private readonly savedMethods: Repository<SavedPaymentMethod>,
   ) {}
 
   private isDisabled(flagName: string): boolean {
@@ -386,38 +398,20 @@ export class PaymentService {
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not payable in current state');
     }
-    const { baseUrl, sessionsPath, apiKey, chain, token, webhookUrl } =
+    const { baseUrl, sessionsPath, apiKey, chain, token, expiresInMinutes, webhookUrl } =
       this.myazaConfig();
     const sessionUrl = this.myazaSessionUrl(baseUrl, sessionsPath);
     void dto;
     const tokenUpper = token.trim().toUpperCase();
-    // Orders are always priced in USD — send USD as the local currency so Myaza
-    // converts against the correct base amount regardless of the user's locale.
-    const localCurrency = 'USD';
-
-    const quoteChain =
-      this.config.get<string>('MYAZA_QUOTE_CHAIN')?.trim() || chain;
-
-    const quotedAmount = await this.fetchMyazaQuote(
-      apiKey,
-      baseUrl,
-      quoteChain,
-      token,
-      order.total,
-      localCurrency,
-    );
-    this.logger.log(
-      `[payment] step=myaza_quote orderId=${order.id} chain=${quoteChain} ` +
-        `token=${token} localAmount=${order.total} localCurrency=${localCurrency} ` +
-        `quotedAmount=${quotedAmount ?? 'unavailable'}`,
-    );
+    const localCurrency = order.currency.toUpperCase();
 
     const body: Record<string, unknown> = {
       localAmount: order.total,
       localCurrency,
-      ...(quotedAmount ? { amount: quotedAmount } : {}),
       chain,
       token,
+      expirySeconds: expiresInMinutes * 60,
+      label: `Order ${order.id}`,
       ...(webhookUrl ? { webhookUrl } : {}),
     };
     const headers = this.buildMyazaRequestHeaders(apiKey);
@@ -444,7 +438,7 @@ export class PaymentService {
         if (status === 404) {
           throw new BadRequestException(
             'Myaza returned 404 for the session URL. ' +
-              'Set MYAZA_BASE_URL to the API host only (e.g. https://api.myaza.io) and, ' +
+              'Set MYAZA_BASE_URL to the API host only (e.g. https://business.myaza.app for production, https://api.myaza.io for dev) and, ' +
               'if Myaza changed their API, set MYAZA_SESSIONS_PATH to the path they document for creating sessions.',
           );
         }
@@ -480,7 +474,7 @@ export class PaymentService {
         depositAddress,
         chain: payload?.chain ?? chain,
         token: payload?.symbol || payload?.token || token,
-        amount: payload?.amount || payload?.amountExpected || order.total,
+        amount: payload?.amount || payload?.amountExpected || null,
       },
     });
     const responsePayload = {
@@ -493,7 +487,7 @@ export class PaymentService {
         payload?.qrCode || payload?.qrCodeDataUrl || payload?.qrCodeUrl || null,
       chain: payload?.chain ?? chain,
       token: payload?.symbol || payload?.token || token,
-      amount: payload?.amount || payload?.amountExpected || order.total,
+      amount: payload?.amount || payload?.amountExpected || null,
       status: payload?.status ?? 'pending',
       expiresAt: payload?.expiresAt ?? null,
       createdAt: payload?.createdAt ?? null,
@@ -520,6 +514,9 @@ export class PaymentService {
     }
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not payable in current state');
+    }
+    if (dto.savedMethodId) {
+      return this.initPaypalWithSavedMethod(orderId, userId, dto.savedMethodId, order);
     }
     const returnUrl =
       dto.paypalReturnUrl ?? this.config.get<string>('PAYPAL_RETURN_URL');
@@ -654,6 +651,9 @@ export class PaymentService {
     }
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException('Order is not payable in current state');
+    }
+    if (dto.savedMethodId) {
+      return this.initStripeWithSavedMethod(orderId, userId, dto.savedMethodId, order);
     }
     const successUrl =
       dto.stripeSuccessUrl ??
@@ -855,6 +855,38 @@ export class PaymentService {
     });
   }
 
+  /**
+   * Confirms orders paid via a saved card (`initStripeWithSavedMethod`), which
+   * creates a PaymentIntent directly rather than a Checkout Session. Those
+   * PaymentIntents carry `metadata.orderId`; Checkout Session PaymentIntents
+   * don't, so this is a no-op for the `checkout.session.completed` flow above.
+   */
+  async handleStripePaymentIntentSucceeded(
+    paymentIntent: Stripe.PaymentIntent,
+  ) {
+    const orderId = paymentIntent.metadata?.orderId;
+    if (!orderId) {
+      return;
+    }
+
+    const stripe = this.getStripe();
+    const pm =
+      typeof paymentIntent.payment_method === 'string'
+        ? await stripe.paymentMethods.retrieve(paymentIntent.payment_method)
+        : (paymentIntent.payment_method ?? null);
+
+    const method = stripePaymentMethodToDetails(pm);
+
+    this.logger.log(
+      `[payment] step=stripe_payment_intent_apply orderId=${orderId} paymentIntentId=${paymentIntent.id}`,
+    );
+    await this.ordersService.markOrderPaid(orderId, {
+      provider: PaymentProvider.STRIPE,
+      stripePaymentIntentId: paymentIntent.id,
+      paymentMethodDetails: method,
+    });
+  }
+
   async capturePaypalOrder(
     orderId: string,
     userId: string,
@@ -922,6 +954,311 @@ export class PaymentService {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Saved payment methods (card vault)
+  // ---------------------------------------------------------------------------
+
+  private async getOrCreateStripeCustomer(
+    userId: string,
+    email: string,
+  ): Promise<string> {
+    const user = await this.usersService.findById(userId);
+    if (user.stripeCustomerId) {
+      return user.stripeCustomerId;
+    }
+    const stripe = this.getStripe();
+    const customer = await stripe.customers.create({
+      email,
+      metadata: { userId },
+    });
+    await this.usersService.setStripeCustomerId(userId, customer.id);
+    return customer.id;
+  }
+
+  async createStripeSetupIntent(
+    userId: string,
+    email: string,
+  ): Promise<{ clientSecret: string }> {
+    this.assertMethodAvailable(PaymentProvider.STRIPE);
+    const customerId = await this.getOrCreateStripeCustomer(userId, email);
+    const stripe = this.getStripe();
+    const intent = await stripe.setupIntents.create({
+      customer: customerId,
+      usage: 'off_session',
+      automatic_payment_methods: { enabled: true },
+    });
+    if (!intent.client_secret) {
+      throw new BadRequestException('Failed to create Stripe SetupIntent');
+    }
+    return { clientSecret: intent.client_secret };
+  }
+
+  async confirmStripeSetup(
+    userId: string,
+    setupIntentId: string,
+  ): Promise<SavedPaymentMethod> {
+    const stripe = this.getStripe();
+    const intent = await stripe.setupIntents.retrieve(setupIntentId, {
+      expand: ['payment_method'],
+    });
+    if (intent.status !== 'succeeded') {
+      throw new BadRequestException(
+        `SetupIntent is not succeeded (status: ${intent.status})`,
+      );
+    }
+    const pmRaw = intent.payment_method;
+    const pm: Stripe.PaymentMethod =
+      typeof pmRaw === 'string'
+        ? await stripe.paymentMethods.retrieve(pmRaw)
+        : (pmRaw as Stripe.PaymentMethod);
+    if (!pm) {
+      throw new BadRequestException('No payment method attached to SetupIntent');
+    }
+    const existing = await this.savedMethods.findOne({
+      where: { userId, stripePaymentMethodId: pm.id },
+    });
+    if (existing) return existing;
+    const details = stripePaymentMethodToDetails(pm);
+    const customerId =
+      typeof intent.customer === 'string'
+        ? intent.customer
+        : (intent.customer as Stripe.Customer | null)?.id ?? null;
+    const saved = this.savedMethods.create({
+      userId,
+      provider: PaymentProvider.STRIPE,
+      type: pm.type,
+      label: details?.label ?? pm.type,
+      brand: (details?.brand as string) ?? null,
+      last4: (details?.last4 as string) ?? null,
+      expiryMonth: pm.card?.exp_month ?? null,
+      expiryYear: pm.card?.exp_year ?? null,
+      stripePaymentMethodId: pm.id,
+      stripeCustomerId: customerId,
+      isDefault: false,
+    });
+    return this.savedMethods.save(saved);
+  }
+
+  async createPaypalSetupToken(
+    userId: string,
+    returnUrl?: string,
+    cancelUrl?: string,
+  ): Promise<{ setupTokenId: string; approvalUrl: string }> {
+    this.assertMethodAvailable(PaymentProvider.PAYPAL);
+    void userId;
+    const vaultReturnUrl =
+      returnUrl ?? this.config.get<string>('PAYPAL_VAULT_RETURN_URL');
+    const vaultCancelUrl =
+      cancelUrl ?? this.config.get<string>('PAYPAL_VAULT_CANCEL_URL');
+    if (!vaultReturnUrl || !vaultCancelUrl) {
+      throw new BadRequestException(
+        'Set PAYPAL_VAULT_RETURN_URL and PAYPAL_VAULT_CANCEL_URL (or pass returnUrl / cancelUrl)',
+      );
+    }
+    const token = await this.paypalAccessToken();
+    const { data } = await axios.post<{
+      id?: string;
+      links?: Array<{ rel?: string; href?: string }>;
+    }>(
+      `${this.paypalBaseUrl()}/v3/vault/setup-tokens`,
+      {
+        payment_source: {
+          paypal: {
+            usage_type: 'MERCHANT',
+            experience_context: {
+              return_url: vaultReturnUrl,
+              cancel_url: vaultCancelUrl,
+            },
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    const setupTokenId = data?.id;
+    const approvalUrl = data?.links?.find((l) => l.rel === 'approve')?.href;
+    if (!setupTokenId || !approvalUrl) {
+      throw new BadRequestException('PayPal vault setup-token creation failed');
+    }
+    return { setupTokenId, approvalUrl };
+  }
+
+  async confirmPaypalVault(
+    userId: string,
+    setupTokenId: string,
+  ): Promise<SavedPaymentMethod> {
+    const token = await this.paypalAccessToken();
+    const { data } = await axios.post<{
+      id?: string;
+      payment_source?: { paypal?: { email_address?: string } };
+    }>(
+      `${this.paypalBaseUrl()}/v3/vault/payment-tokens`,
+      { payment_source: { token: { id: setupTokenId, type: 'SETUP_TOKEN' } } },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    const paymentTokenId = data?.id;
+    const paypalEmail = data?.payment_source?.paypal?.email_address ?? null;
+    if (!paymentTokenId) {
+      throw new BadRequestException('PayPal vault payment-token creation failed');
+    }
+    const existing = await this.savedMethods.findOne({
+      where: { userId, paypalPaymentTokenId: paymentTokenId },
+    });
+    if (existing) return existing;
+    const label = paypalEmail ? `PayPal (${paypalEmail})` : 'PayPal';
+    const saved = this.savedMethods.create({
+      userId,
+      provider: PaymentProvider.PAYPAL,
+      type: 'paypal',
+      label,
+      paypalPaymentTokenId: paymentTokenId,
+      paypalEmail,
+      isDefault: false,
+    });
+    return this.savedMethods.save(saved);
+  }
+
+  async listSavedMethods(userId: string): Promise<SavedPaymentMethod[]> {
+    return this.savedMethods.find({
+      where: { userId },
+      order: { isDefault: 'DESC', createdAt: 'ASC' },
+    });
+  }
+
+  async deleteSavedMethod(userId: string, methodId: string): Promise<void> {
+    const method = await this.savedMethods.findOne({
+      where: { id: methodId, userId },
+    });
+    if (!method) {
+      throw new NotFoundException('Saved payment method not found');
+    }
+    if (method.provider === PaymentProvider.STRIPE && method.stripePaymentMethodId) {
+      try {
+        await this.getStripe().paymentMethods.detach(method.stripePaymentMethodId);
+      } catch (err) {
+        this.logger.warn(
+          `[vault] stripe detach failed pm=${method.stripePaymentMethodId}: ${String(err)}`,
+        );
+      }
+    }
+    if (method.provider === PaymentProvider.PAYPAL && method.paypalPaymentTokenId) {
+      try {
+        const ppToken = await this.paypalAccessToken();
+        await axios.delete(
+          `${this.paypalBaseUrl()}/v3/vault/payment-tokens/${encodeURIComponent(method.paypalPaymentTokenId)}`,
+          { headers: { Authorization: `Bearer ${ppToken}` } },
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[vault] paypal delete-token failed id=${method.paypalPaymentTokenId}: ${String(err)}`,
+        );
+      }
+    }
+    await this.savedMethods.remove(method);
+  }
+
+  async setDefaultSavedMethod(
+    userId: string,
+    methodId: string,
+  ): Promise<SavedPaymentMethod> {
+    const method = await this.savedMethods.findOne({
+      where: { id: methodId, userId },
+    });
+    if (!method) {
+      throw new NotFoundException('Saved payment method not found');
+    }
+    await this.savedMethods.update({ userId, isDefault: true }, { isDefault: false });
+    method.isDefault = true;
+    return this.savedMethods.save(method);
+  }
+
+  private async initStripeWithSavedMethod(
+    orderId: string,
+    userId: string,
+    methodId: string,
+    order: Awaited<ReturnType<OrdersService['findById']>>,
+  ) {
+    const method = await this.savedMethods.findOne({
+      where: { id: methodId, userId },
+    });
+    if (!method?.stripePaymentMethodId || !method.stripeCustomerId) {
+      throw new BadRequestException('Saved Stripe payment method not found');
+    }
+    const stripe = this.getStripe();
+    const currency = order.currency.toLowerCase();
+    const amount = amountToMinorUnits(order.total, order.currency);
+    const pi = await stripe.paymentIntents.create({
+      amount,
+      currency,
+      customer: method.stripeCustomerId,
+      payment_method: method.stripePaymentMethodId,
+      confirm: false,
+      metadata: { orderId: order.id, userId },
+    });
+    await this.ordersService.setPendingCheckoutReference(order.id, userId, {
+      provider: PaymentProvider.STRIPE,
+      checkoutId: pi.id,
+      stripeCheckoutSessionId: null as unknown as string,
+      details: { stripePaymentIntentId: pi.id },
+    });
+    return {
+      provider: PaymentProvider.STRIPE,
+      paymentIntentId: pi.id,
+      clientSecret: pi.client_secret,
+    };
+  }
+
+  private async initPaypalWithSavedMethod(
+    orderId: string,
+    userId: string,
+    methodId: string,
+    order: Awaited<ReturnType<OrdersService['findById']>>,
+  ) {
+    const method = await this.savedMethods.findOne({
+      where: { id: methodId, userId },
+    });
+    if (!method?.paypalPaymentTokenId) {
+      throw new BadRequestException('Saved PayPal payment method not found');
+    }
+    const token = await this.paypalAccessToken();
+    const currencyCode = (order.currency || 'USD').toUpperCase();
+    const { data } = await axios.post<{ id?: string }>(
+      `${this.paypalBaseUrl()}/v2/checkout/orders`,
+      {
+        intent: 'CAPTURE',
+        purchase_units: [
+          {
+            reference_id: order.id,
+            amount: { currency_code: currencyCode, value: order.total },
+            custom_id: order.id,
+          },
+        ],
+        payment_source: { paypal: { vault_id: method.paypalPaymentTokenId } },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'PayPal-Request-Id': `vault-${orderId}`,
+        },
+      },
+    );
+    const paypalOrderId = data?.id;
+    if (!paypalOrderId) {
+      throw new BadRequestException('PayPal vault order creation failed');
+    }
+    return this.capturePaypalOrder(orderId, userId, paypalOrderId);
+  }
+
   async handleMyazaPaymentSuccess(data: {
     reference?: string;
     status?: string;
@@ -933,12 +1270,24 @@ export class PaymentService {
     amount?: string;
     symbol?: string;
     id?: string;
+    label?: string;
     metadata?: { orderId?: string };
   }) {
-    const orderId = data.metadata?.orderId || data.reference;
     const status = (data.status || '').toLowerCase();
+
+    // Resolve orderId: Myaza sends the session id (stored as checkoutId), not our internal orderId.
+    // Fall back to metadata or reference for any future Myaza webhook shape changes.
+    let orderId = data.metadata?.orderId || data.reference || null;
+    if (!orderId && data.id) {
+      const order = await this.ordersService.findByCheckoutId(data.id);
+      if (order) {
+        orderId = order.id;
+      }
+    }
+
     this.logger.log(
       `[payment] step=myaza_webhook_received orderId=${orderId ?? 'missing'} ` +
+        `myazaSessionId=${data.id ?? 'missing'} ` +
         `status=${status || 'missing'} payload=${this.safeJson(data)}`,
     );
     if (

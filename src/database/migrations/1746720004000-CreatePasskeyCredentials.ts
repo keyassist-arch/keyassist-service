@@ -3,7 +3,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class CreatePasskeyCredentials1746720004000 implements MigrationInterface {
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
-      CREATE TABLE "passkey_credentials" (
+      CREATE TABLE IF NOT EXISTS "passkey_credentials" (
         "id"            uuid          NOT NULL DEFAULT uuid_generate_v4(),
         "user_id"       uuid          NOT NULL,
         "credential_id" varchar       NOT NULL,
@@ -22,11 +22,11 @@ export class CreatePasskeyCredentials1746720004000 implements MigrationInterface
       )
     `);
     await queryRunner.query(`
-      CREATE INDEX "idx_passkey_credentials_user" ON "passkey_credentials" ("user_id")
+      CREATE INDEX IF NOT EXISTS "idx_passkey_credentials_user" ON "passkey_credentials" ("user_id")
     `);
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP TABLE "passkey_credentials"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "passkey_credentials"`);
   }
 }

@@ -12,6 +12,7 @@ import { User } from '../users/entities/user.entity';
 import { Refund } from '../reconciliation/entities/refund.entity';
 import { CustomerIssue } from '../reconciliation/entities/customer-issue.entity';
 import { ShippingRates } from '../shipping/entities/shipping-rates.entity';
+import { SavedPaymentMethod } from '../payment/entities/saved-payment-method.entity';
 import { AddProductRescrapeEnabled1743130800000 } from './migrations/1743130800000-AddProductRescrapeEnabled';
 import { ClearProductFkOnFailedImports1743200000000 } from './migrations/1743200000000-ClearProductFkOnFailedImports';
 import { AddProductSourceShein1743280000000 } from './migrations/1743280000000-AddProductSourceShein';
@@ -25,6 +26,17 @@ import { AddReconciliationTables1743800000000 } from './migrations/1743800000000
 import { AddOrderDiscount1746720000000 } from './migrations/1746720000000-AddOrderDiscount';
 import { AddOrderShippingFee1746720001000 } from './migrations/1746720001000-AddOrderShippingFee';
 import { CreateShippingRates1746720002000 } from './migrations/1746720002000-CreateShippingRates';
+import { CreateSavedProducts1746720003000 } from './migrations/1746720003000-CreateSavedProducts';
+import { CreatePasskeyCredentials1746720004000 } from './migrations/1746720004000-CreatePasskeyCredentials';
+import { AddOrderLandedCostColumns1746720005000 } from './migrations/1746720005000-AddOrderLandedCostColumns';
+import { CreateCategories1746720006000 } from './migrations/1746720006000-CreateCategories';
+import { AddProductAsin1780272000000 } from './migrations/1780272000000-AddProductAsin';
+import { AddSavedPaymentMethods1780800000000 } from './migrations/1780800000000-AddSavedPaymentMethods';
+import { AddUserAdminPermissions1782300000000 } from './migrations/1782300000000-AddUserAdminPermissions';
+import { DropWannaBuyTables1784000000000 } from './migrations/1784000000000-DropWannaBuyTables';
+import { AddImportedProductAttribution1784911137000 } from './migrations/1784911137000-AddImportedProductAttribution';
+import { AddShippingInsuranceAndFixDimDivisor1786724439000 } from './migrations/1786724439000-AddShippingInsuranceAndFixDimDivisor';
+import { AddOrderInsurance1786724440000 } from './migrations/1786724440000-AddOrderInsurance';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -45,6 +57,7 @@ export default new DataSource({
     Refund,
     CustomerIssue,
     ShippingRates,
+    SavedPaymentMethod,
   ],
   migrations: [
     AddProductRescrapeEnabled1743130800000,
@@ -60,6 +73,17 @@ export default new DataSource({
     AddOrderDiscount1746720000000,
     AddOrderShippingFee1746720001000,
     CreateShippingRates1746720002000,
+    CreateSavedProducts1746720003000,
+    CreatePasskeyCredentials1746720004000,
+    AddOrderLandedCostColumns1746720005000,
+    CreateCategories1746720006000,
+    AddProductAsin1780272000000,
+    AddSavedPaymentMethods1780800000000,
+    AddUserAdminPermissions1782300000000,
+    DropWannaBuyTables1784000000000,
+    AddImportedProductAttribution1784911137000,
+    AddShippingInsuranceAndFixDimDivisor1786724439000,
+    AddOrderInsurance1786724440000,
   ],
   synchronize: false,
 });

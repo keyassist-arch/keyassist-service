@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
@@ -60,7 +61,7 @@ export class LandedCostQuoteDto {
 
   @ApiPropertyOptional({
     enum: PRODUCT_CATEGORIES,
-    description: 'Product category for weight/customs estimation. Defaults to "generic".',
+    description: 'Product category for weight estimation. Defaults to "generic".',
   })
   @IsEnum(PRODUCT_CATEGORIES)
   @IsOptional()
@@ -97,4 +98,23 @@ export class LandedCostQuoteDto {
   @IsString()
   @IsOptional()
   displayCurrency?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Actual marketplace tax in USD scraped from the product page or checkout simulation. ' +
+      'When provided this bypasses the per-marketplace estimate so the quote reflects the real tax.',
+  })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  taxAmountUsd?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Opt in to Kingz cargo insurance (3% of item cost). Lagos destinations only.',
+    default: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  insurance?: boolean;
 }

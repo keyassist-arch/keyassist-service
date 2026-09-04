@@ -166,7 +166,7 @@ class EnvironmentVariables {
   @IsOptional()
   MYAZA_QUOTE_CHAIN?: string;
 
-  /** Override URL for the POS sessions quote endpoint (default: https://secureapi.gridlog.io/api/v1/pos/sessions/quote) */
+  /** Override URL for the POS sessions quote endpoint (default: {MYAZA_BASE_URL}/api/v1/pos/sessions/quote) */
   @IsString()
   @IsOptional()
   MYAZA_QUOTE_URL?: string;
@@ -190,25 +190,16 @@ class EnvironmentVariables {
 
   @IsString()
   @IsOptional()
-  RESEND_API_KEY?: string;
+  MAILERSEND_API_KEY?: string;
 
-  /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain in production */
+  /** e.g. "Acme <orders@yourdomain.com>" — must use a verified domain (or the trial sender) */
   @IsString()
   @IsOptional()
-  RESEND_FROM?: string;
+  MAILERSEND_FROM?: string;
 
   @IsString()
   @IsOptional()
   MAIL_FROM?: string;
-
-  /**
-   * `true` / `1` — always send from Resend onboarding address (no verified domain).
-   * `false` / `0` — use RESEND_FROM / MAIL_FROM even in development.
-   * Unset — use onboarding outside production; use RESEND_FROM in production.
-   */
-  @IsString()
-  @IsOptional()
-  RESEND_SANDBOX?: string;
 
   /** Password-reset email links: https://your-app/reset-password?token=... */
   @IsString()
@@ -266,6 +257,30 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   SCRAPE_DO_TOKEN?: string;
+
+  /**
+   * RapidAPI key (from https://rapidapi.com — "X-RapidAPI-Key"). When set, GOAT/StockX/Amazon
+   * adapters call their subscribed RapidAPI listing first, falling back to scrape.do/Playwright
+   * on failure or incomplete data.
+   */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_KEY?: string;
+
+  /** RapidAPI host for the subscribed GOAT listing, e.g. `goat5.p.rapidapi.com`. */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_GOAT_HOST?: string;
+
+  /** RapidAPI host for the subscribed StockX listing, e.g. `stockx1.p.rapidapi.com`. */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_STOCKX_HOST?: string;
+
+  /** RapidAPI host for the subscribed Amazon listing, e.g. `real-time-amazon-data.p.rapidapi.com`. */
+  @IsString()
+  @IsOptional()
+  RAPIDAPI_AMAZON_HOST?: string;
 
   /** Playwright BCP 47 locale (avoids wrong storefront HTML e.g. ko-KR vs en-US) */
   @IsString()
@@ -406,6 +421,60 @@ class EnvironmentVariables {
   @Min(0)
   @IsOptional()
   DEFAULT_MARKUP_PERCENT = 10;
+
+  /**
+   * `true` / `1` — block checkout (POST /orders) until the user has
+   * verified their phone via WhatsApp OTP. Defaults to off so checkout isn't blocked before a
+   * WhatsApp provider is actually configured below.
+   */
+  @IsString()
+  @IsOptional()
+  PHONE_VERIFICATION_REQUIRED?: string;
+
+  /** Meta WhatsApp Cloud API permanent access token. Unset = sendWhatsApp() logs and no-ops. */
+  @IsString()
+  @IsOptional()
+  META_WHATSAPP_TOKEN?: string;
+
+  /** Meta WhatsApp Cloud API phone number ID (the sender), from the Meta App Dashboard. */
+  @IsString()
+  @IsOptional()
+  META_WHATSAPP_PHONE_NUMBER_ID?: string;
+
+  /** Graph API version to call, e.g. "v21.0". Defaults to "v21.0". */
+  @IsString()
+  @IsOptional()
+  META_WHATSAPP_API_VERSION?: string;
+
+  /** S3-compatible endpoint for the object storage bucket (product image uploads). */
+  @IsString()
+  @IsOptional()
+  STORAGE_ENDPOINT?: string;
+
+  /** Object storage region. Defaults to "auto" (Railway/Tigris buckets don't use AWS regions). */
+  @IsString()
+  @IsOptional()
+  STORAGE_REGION?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_BUCKET?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_ACCESS_KEY_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  STORAGE_SECRET_ACCESS_KEY?: string;
+
+  /**
+   * Public base URL of this API (no trailing slash) — used to build product image URLs
+   * served via `GET /uploads/:key`. Falls back to `RAILWAY_PUBLIC_DOMAIN` when unset.
+   */
+  @IsString()
+  @IsOptional()
+  API_PUBLIC_URL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

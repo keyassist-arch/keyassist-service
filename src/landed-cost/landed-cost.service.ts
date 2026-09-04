@@ -4,68 +4,48 @@ import { Repository } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { CurrencyService } from '../currency/currency.service';
+import { ShippingService } from '../shipping/shipping.service';
+import { CartService } from '../cart/cart.service';
+import { ProductsService } from '../products/products.service';
 import {
-  SERVICE_CHARGE_RATE,
+  computePlatformFee,
   PRODUCT_TAX_RATE,
   DISCOUNT_RATE,
   DISCOUNT_THRESHOLD_USD,
 } from '../common/utils/pricing.util';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
-import { NIGERIA_CUSTOMS_RATES } from './rules/customs-rates';
 import type { LandedCostBreakdown } from './interfaces/landed-cost-breakdown.interface';
 import type { LandedCostQuoteDto } from './dto/landed-cost-quote.dto';
+import type { LandedCostCartQuoteDto } from './dto/landed-cost-cart-quote.dto';
 import type { ShippingDestination, ShippingService as ShippingServiceType } from '../shipping/utils/kingz-rates';
 
 export type CartLineInput = {
   priceUsd: number;
   marketplace: ProductSource;
   qty: number;
+  weightLbs?: number;
+  dimensions?: { lengthIn: number; widthIn: number; heightIn: number };
+  category?: ProductCategory;
+  isTV?: boolean;
 };
 
 export type CartLandedCostOpts = {
   destination: ShippingDestination;
   shippingService: ShippingServiceType;
   category: ProductCategory;
+  insurance?: boolean;
 };
 
-/** Flat box packaging and warehouse handling fee per shipment (USD) */
-const BOX_HANDLING_FEE_USD = 6.0;
+/**
+ * Box / warehouse packaging & handling fee per shipment (USD).
+ * Matches the "Box / Handling Fee — Updated warehouse packaging fee" line on the Kingz
+ * invoice. Billed inside the import & delivery fee, never as its own invoice line.
+ */
 const DOMESTIC_HANDLING_FEE_USD = 6.0;
 
-/** Cargo insurance rate (3% of product subtotal, e.g. $7.50 on $250) */
-const CARGO_INSURANCE_RATE = 0.03;
-
-/** Base last-mile handling & customs clearance fee */
-const BASE_IMPORT_CLEARANCE_USD = 5.0;
-
-// Buffers removed — the 10% service charge provides sufficient gross margin
-// to absorb minor price drift and FX movement without charging users twice.
 const FX_BUFFER_RATE = 0;
 const RISK_BUFFER_RATE = 0;
-
-/**
- * Simplified air cargo weight bands (USA → Nigeria).
- * Assumes freight-forwarder consolidation economics, not express courier pricing.
- * Outside-Lagos adds a flat premium for last-mile delivery.
- */
-const CARGO_BANDS_LAGOS: Array<{ maxLbs: number; rateUsd: number }> = [
-  { maxLbs: 2,   rateUsd: 11 },
-  { maxLbs: 5,   rateUsd: 25 },
-  { maxLbs: 10,  rateUsd: 50 },
-  { maxLbs: 20,  rateUsd: 90 },
-  { maxLbs: Infinity, rateUsd: 0 }, // per-lb fallback below
-];
-const CARGO_RATE_PER_LB_HEAVY_LAGOS = 5.0;      // > 20 lbs
-const CARGO_OUTSIDE_LAGOS_PREMIUM = 15;
-
-function cargoRate(weightLbs: number, destination: ShippingDestination): number {
-  const band = CARGO_BANDS_LAGOS.find((b) => weightLbs <= b.maxLbs);
-  const base = band && band.rateUsd > 0
-    ? band.rateUsd
-    : Math.round(weightLbs * CARGO_RATE_PER_LB_HEAVY_LAGOS * 100) / 100;
-  return destination === 'outside_lagos' ? base + CARGO_OUTSIDE_LAGOS_PREMIUM : base;
-}
 
 @Injectable()
 export class LandedCostService {
@@ -75,6 +55,9 @@ export class LandedCostService {
     @InjectRepository(Product)
     private readonly products: Repository<Product>,
     private readonly currencyService: CurrencyService,
+    private readonly shippingService: ShippingService,
+    private readonly cartService: CartService,
+    private readonly productsService: ProductsService,
   ) {}
 
   async quote(dto: LandedCostQuoteDto): Promise<LandedCostBreakdown> {
@@ -83,54 +66,68 @@ export class LandedCostService {
 
     const estimate = MARKETPLACE_ESTIMATES[marketplace];
     const weightRule = CATEGORY_WEIGHT_RULES[category];
-    const customsRule = NIGERIA_CUSTOMS_RATES[category];
 
     const weight = dto.weightLbs ?? weightRule.weightLbs;
+    const dims = dto.dimensions ?? {
+      lengthIn: weightRule.lengthIn,
+      widthIn: weightRule.widthIn,
+      heightIn: weightRule.heightIn,
+    };
 
-    // ── 1. Source marketplace costs ──────────────────────────────────────────
+    // ── 1. Item cost (COGS) — goods + US sales tax ───────────────────────────
     const productSubtotal = round(productPriceUsd * dto.quantity);
     const taxRate = estimate.taxRate > 0 ? estimate.taxRate : PRODUCT_TAX_RATE;
-    const marketplaceTax = round(productSubtotal * taxRate);
+    // Prefer an actual tax amount from the scraper/checkout over the rate estimate.
+    const marketplaceTax =
+      dto.taxAmountUsd != null
+        ? round(dto.taxAmountUsd)
+        : round(productSubtotal * taxRate);
+    const itemCost = round(productSubtotal + marketplaceTax);
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
-    // ── 2. Logistics & Handling ──────────────────────────────────────────────
-    const boxHandlingFee = BOX_HANDLING_FEE_USD;
-    const domesticHandling = boxHandlingFee;
-    const cargoInsurance = round(productSubtotal * CARGO_INSURANCE_RATE);
-    const internationalShipping = cargoRate(weight * dto.quantity, destination as ShippingDestination);
-    const importClearance = BASE_IMPORT_CLEARANCE_USD;
+    // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
+    const domesticHandling = DOMESTIC_HANDLING_FEE_USD;
+    const isTV = category === 'tv';
+    const kQuote = await this.shippingService.calculate({
+      weight: weight * dto.quantity,
+      length: dims.lengthIn,
+      width: dims.widthIn,
+      height: dims.heightIn * dto.quantity, // stack height for qty > 1
+      destination: destination as ShippingDestination,
+      service: shippingService === 'air' ? 'air' : 'ocean_small',
+      isTV,
+      bulkCommercial: false,
+      // Insurance is priced on item cost only, not the full landed value.
+      declaredValueUsd: productSubtotal,
+      insurance: dto.insurance ?? false,
+    });
+    // Keep freight and insurance as separate breakdown lines rather than
+    // folding insurance into the "all-inclusive" Kingz rate.
+    const insuranceUsd = kQuote.insuranceUsd;
+    const internationalShipping = kQuote.total - insuranceUsd;
 
-    // ── 3. Customs (product subtotal basis — no CIF pyramiding) ─────────────
-    const customsDuty = round(productSubtotal * (customsRule?.combinedRate ?? 0));
-    const customsVat = 0;
-    const customsClearingFee = 0;
-
-    // ── 4. Buffers (product subtotal basis only) ─────────────────────────────
+    // ── 3. Buffers (product subtotal basis only) ─────────────────────────────
     const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
 
-    // ── 5. Our margin ────────────────────────────────────────────────────────
-    const serviceCharge = round(productSubtotal * SERVICE_CHARGE_RATE);
+    // ── 4. Our margin ────────────────────────────────────────────────────────
+    const serviceCharge = computePlatformFee(productSubtotal);
     const discount = productSubtotal > DISCOUNT_THRESHOLD_USD
       ? round(productSubtotal * DISCOUNT_RATE)
       : 0;
 
-    // ── 6. Import & Delivery Total ───────────────────────────────────────────
+    // ── 5. Import & Delivery Total ───────────────────────────────────────────
     const importAndDelivery = round(
-      internationalShipping +
-      boxHandlingFee +
-      cargoInsurance +
-      importClearance +
-      marketplaceShipping +
-      customsDuty,
+      marketplaceShipping + domesticHandling + internationalShipping,
     );
 
-    // ── 7. Grand total ───────────────────────────────────────────────────────
+    // ── 6. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
-      productSubtotal + marketplaceTax + importAndDelivery + fxBuffer + riskBuffer + serviceCharge - discount,
+      itemCost + importAndDelivery + insuranceUsd +
+        fxBuffer + riskBuffer + serviceCharge - discount,
     );
 
-    // ── 8. Currency conversion ───────────────────────────────────────────────
+    // ── 7. Currency conversion ───────────────────────────────────────────────
     let totalDisplay = totalUsd;
     const targetCurrency = (displayCurrency ?? 'USD').toUpperCase();
     if (targetCurrency !== 'USD') {
@@ -144,20 +141,15 @@ export class LandedCostService {
       }
     }
 
-    // ── 9. Breakdown lines ───────────────────────────────────────────────────
+    // ── 8. Breakdown lines ───────────────────────────────────────────────────
     const breakdown = buildBreakdown({
-      productSubtotal,
+      itemCost,
       importAndDelivery,
-      shippingService: shippingService as ShippingServiceType,
       destination: destination as ShippingDestination,
-      internationalShipping,
-      boxHandlingFee,
-      cargoInsurance,
+      insuranceUsd,
       serviceCharge,
       discount,
       totalUsd,
-      totalDisplay,
-      targetCurrency,
     });
 
     this.logger.log(
@@ -172,15 +164,15 @@ export class LandedCostService {
       marketplaceConfidence: estimate.confidence,
       productSubtotalUsd: productSubtotal,
       marketplaceTaxUsd: marketplaceTax,
+      taxRate: dto.taxAmountUsd != null ? 0 : taxRate,
+      itemCostUsd: itemCost,
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
-      boxHandlingFeeUsd: boxHandlingFee,
-      cargoInsuranceUsd: cargoInsurance,
+      boxHandlingFeeUsd: domesticHandling,
+      cargoInsuranceUsd: insuranceUsd,
       internationalShippingUsd: internationalShipping,
       importAndDeliveryUsd: importAndDelivery,
-      customsDutyUsd: customsDuty,
-      customsVatUsd: customsVat,
-      customsClearingFeeUsd: customsClearingFee,
+      insuranceUsd,
       fxBufferUsd: fxBuffer,
       riskBufferUsd: riskBuffer,
       serviceChargeUsd: serviceCharge,
@@ -205,13 +197,13 @@ export class LandedCostService {
       throw new BadRequestException('Cannot compute landed cost for an empty cart');
     }
 
-    const { destination, shippingService, category } = opts;
-    const weightRule = CATEGORY_WEIGHT_RULES[category];
-    const customsRule = NIGERIA_CUSTOMS_RATES[category];
+    const { destination, shippingService, category, insurance = false } = opts;
 
-    // ── 1. Source marketplace costs ──────────────────────────────────────────
+    // ── 1. Item cost (COGS) — goods + US sales tax ───────────────────────────
     const productSubtotal = round(lines.reduce((s, l) => s + l.priceUsd * l.qty, 0));
 
+    // Tax is per line: a mixed cart can hold US-taxed goods next to untaxed ones
+    let taxableSubtotal = 0;
     let marketplaceTax = 0;
     const seenMarketplaces = new Set<ProductSource>();
     let marketplaceShipping = 0;
@@ -221,7 +213,9 @@ export class LandedCostService {
     for (const line of lines) {
       const est = MARKETPLACE_ESTIMATES[line.marketplace];
       const taxRate = est.taxRate > 0 ? est.taxRate : PRODUCT_TAX_RATE;
-      marketplaceTax += line.priceUsd * line.qty * taxRate;
+      const lineSubtotal = line.priceUsd * line.qty;
+      marketplaceTax += lineSubtotal * taxRate;
+      if (taxRate > 0) taxableSubtotal += lineSubtotal;
       if (!seenMarketplaces.has(line.marketplace)) {
         marketplaceShipping += est.domesticShippingUsd;
         seenMarketplaces.add(line.marketplace);
@@ -231,46 +225,52 @@ export class LandedCostService {
       }
     }
     marketplaceTax = round(marketplaceTax);
+    const itemCost = round(productSubtotal + marketplaceTax);
     marketplaceShipping = round(marketplaceShipping);
 
-    // ── 2. Logistics & Handling ──────────────────────────────────────────────
-    const boxHandlingFee = BOX_HANDLING_FEE_USD;
-    const domesticHandling = boxHandlingFee;
-    const cargoInsurance = round(productSubtotal * CARGO_INSURANCE_RATE);
+    // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
+    const domesticHandling = DOMESTIC_HANDLING_FEE_USD;
+    let totalWeight = 0;
+    let hasTV = false;
+    for (const line of lines) {
+      const lineWeightRule = CATEGORY_WEIGHT_RULES[line.category ?? category];
+      totalWeight += (line.weightLbs ?? lineWeightRule.weightLbs) * line.qty;
+      if (line.category === 'tv' || (!line.category && category === 'tv')) hasTV = true;
+    }
+    const kQuote = await this.shippingService.calculate({
+      weight: totalWeight,
+      destination,
+      service: shippingService === 'air' ? 'air' : 'ocean_small',
+      isTV: hasTV,
+      bulkCommercial: false,
+      // Insurance is priced on item cost only, not the full landed value.
+      declaredValueUsd: productSubtotal,
+      insurance,
+    });
+    const insuranceUsd = kQuote.insuranceUsd;
+    const internationalShipping = kQuote.total - insuranceUsd;
     const totalQty = lines.reduce((s, l) => s + l.qty, 0);
-    const totalWeight = weightRule.weightLbs * totalQty;
-    const internationalShipping = cargoRate(totalWeight, destination);
-    const importClearance = BASE_IMPORT_CLEARANCE_USD;
 
-    // ── 3. Customs (product subtotal basis — no CIF pyramiding) ─────────────
-    const customsDuty = round(productSubtotal * (customsRule?.combinedRate ?? 0));
-    const customsVat = 0;
-    const customsClearingFee = 0;
-
-    // ── 4. Buffers (product subtotal basis only) ─────────────────────────────
+    // ── 3. Buffers (product subtotal basis only) ─────────────────────────────
     const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
 
-    // ── 5. Margin ────────────────────────────────────────────────────────────
-    const serviceCharge = round(productSubtotal * SERVICE_CHARGE_RATE);
+    // ── 4. Margin ────────────────────────────────────────────────────────────
+    const serviceCharge = computePlatformFee(productSubtotal);
     const discount =
       productSubtotal > DISCOUNT_THRESHOLD_USD
         ? round(productSubtotal * DISCOUNT_RATE)
         : 0;
 
-    // ── 6. Import & Delivery Total ───────────────────────────────────────────
+    // ── 5. Import & Delivery Total ───────────────────────────────────────────
     const importAndDelivery = round(
-      internationalShipping +
-      boxHandlingFee +
-      cargoInsurance +
-      importClearance +
-      marketplaceShipping +
-      customsDuty,
+      marketplaceShipping + domesticHandling + internationalShipping,
     );
 
-    // ── 7. Grand total ───────────────────────────────────────────────────────
+    // ── 6. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
-      productSubtotal + marketplaceTax + importAndDelivery + fxBuffer + riskBuffer + serviceCharge - discount,
+      itemCost + importAndDelivery + insuranceUsd +
+        fxBuffer + riskBuffer + serviceCharge - discount,
     );
 
     // Use the marketplace with the highest subtotal for the single `marketplace` field
@@ -279,23 +279,19 @@ export class LandedCostService {
     ).marketplace;
 
     const breakdown = buildBreakdown({
-      productSubtotal,
+      itemCost,
       importAndDelivery,
-      shippingService,
       destination,
-      internationalShipping,
-      boxHandlingFee,
-      cargoInsurance,
+      insuranceUsd,
       serviceCharge,
       discount,
       totalUsd,
-      totalDisplay: totalUsd,
-      targetCurrency: 'USD',
     });
 
     this.logger.log(
       `[landed-cost] cart lines=${lines.length} category=${category} ` +
-      `destination=${destination} totalUsd=${totalUsd}`,
+      `destination=${destination} actualWeightLbs=${totalWeight.toFixed(2)} ` +
+      `billableWeightLbs=${kQuote.billableWeight} intlShipping=${internationalShipping} totalUsd=${totalUsd}`,
     );
 
     return {
@@ -306,15 +302,20 @@ export class LandedCostService {
       marketplaceConfidence: lowestConfidence,
       productSubtotalUsd: productSubtotal,
       marketplaceTaxUsd: marketplaceTax,
+      // Effective rate across taxable lines only — equals US_SALES_TAX_RATE for an
+      // all-US cart, lower once an untaxed line (Shein, Jumia) is mixed in.
+      taxRate:
+        taxableSubtotal > 0
+          ? Math.round((marketplaceTax / taxableSubtotal) * 10_000) / 10_000
+          : 0,
+      itemCostUsd: itemCost,
       marketplaceShippingUsd: marketplaceShipping,
       domesticHandlingUsd: domesticHandling,
-      boxHandlingFeeUsd: boxHandlingFee,
-      cargoInsuranceUsd: cargoInsurance,
+      boxHandlingFeeUsd: domesticHandling,
+      cargoInsuranceUsd: insuranceUsd,
       internationalShippingUsd: internationalShipping,
       importAndDeliveryUsd: importAndDelivery,
-      customsDutyUsd: customsDuty,
-      customsVatUsd: customsVat,
-      customsClearingFeeUsd: customsClearingFee,
+      insuranceUsd,
       fxBufferUsd: fxBuffer,
       riskBufferUsd: riskBuffer,
       serviceChargeUsd: serviceCharge,
@@ -324,6 +325,57 @@ export class LandedCostService {
       totalDisplay: totalUsd,
       breakdown,
     };
+  }
+
+  /**
+   * Preview quote for the checkout confirm step. Mirrors `OrdersService.placeOrder()`'s
+   * pricing step exactly (same price resolution, same `quoteForCartLines` aggregation)
+   * so what the customer previews here matches what the order is actually created with —
+   * unlike quoting a single cart line, which silently ignores the rest of the cart.
+   */
+  async quoteForUserCart(
+    userId: string,
+    opts: LandedCostCartQuoteDto,
+  ): Promise<LandedCostBreakdown> {
+    const cart = await this.cartService.getOrCreateCart(userId);
+    const items = (cart.items ?? []).filter((i) => i.product);
+    if (!items.length) {
+      throw new BadRequestException('Cart is empty');
+    }
+
+    const lines: CartLineInput[] = items.map((i) => ({
+      priceUsd: parseFloat(
+        this.productsService.resolveVariantPrice(i.product, i.variantSelection),
+      ),
+      marketplace: i.product.source,
+      qty: i.quantity,
+    }));
+
+    const breakdown = await this.quoteForCartLines(lines, {
+      destination: opts.destination,
+      shippingService: opts.shippingService,
+      category: opts.category ?? 'generic',
+      insurance: opts.insurance ?? false,
+    });
+
+    const targetCurrency = (opts.displayCurrency ?? 'USD').toUpperCase();
+    if (targetCurrency === 'USD') return breakdown;
+
+    try {
+      const totalDisplay = round(
+        await this.currencyService.convert(
+          breakdown.totalUsd,
+          'USD',
+          targetCurrency,
+        ),
+      );
+      return { ...breakdown, displayCurrency: targetCurrency, totalDisplay };
+    } catch (err) {
+      this.logger.warn(
+        `[landed-cost] currency conversion to ${targetCurrency} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return breakdown;
+    }
   }
 
   private async resolveInputs(dto: LandedCostQuoteDto): Promise<{
@@ -383,37 +435,31 @@ function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * The agreed customer invoice: item cost (COGS, sales tax folded in), import &
+ * delivery (box/handling fee folded in), service fee, then insurance only when the
+ * customer opted in. Every component amount stays on the response object for anyone
+ * who needs to itemise further.
+ */
 function buildBreakdown(parts: {
-  productSubtotal: number;
+  itemCost: number;
   importAndDelivery: number;
-  shippingService: ShippingServiceType;
   destination: ShippingDestination;
-  internationalShipping: number;
-  boxHandlingFee?: number;
-  cargoInsurance?: number;
+  insuranceUsd: number;
   serviceCharge: number;
   discount: number;
   totalUsd: number;
-  totalDisplay: number;
-  targetCurrency: string;
 }): string[] {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const dest = parts.destination === 'outside_lagos' ? 'outside Lagos' : 'Lagos';
   const lines: string[] = [];
 
-  // Simplified UI breakdown — clean, transparent, minimal
-  lines.push(`Product: ${fmt(parts.productSubtotal)}`);
-  lines.push(`Import & Delivery (${dest}): ${fmt(parts.importAndDelivery)}`);
-  if (parts.internationalShipping > 0) {
-    lines.push(`  incl. intl cargo: ${fmt(parts.internationalShipping)}`);
+  lines.push(`Item cost (COGS): ${fmt(parts.itemCost)}`);
+  lines.push(`Import & delivery fee (${dest}): ${fmt(parts.importAndDelivery)}`);
+  lines.push(`Service fee: ${fmt(parts.serviceCharge)}`);
+  if (parts.insuranceUsd > 0) {
+    lines.push(`Insurance: ${fmt(parts.insuranceUsd)}`);
   }
-  if (parts.boxHandlingFee && parts.boxHandlingFee > 0) {
-    lines.push(`  incl. box/handling fee: ${fmt(parts.boxHandlingFee)}`);
-  }
-  if (parts.cargoInsurance && parts.cargoInsurance > 0) {
-    lines.push(`  incl. cargo insurance: ${fmt(parts.cargoInsurance)}`);
-  }
-  lines.push(`Service Fee: ${fmt(parts.serviceCharge)}`);
 
   if (parts.discount > 0) {
     lines.push(`Loyalty discount: -${fmt(parts.discount)}`);
@@ -421,10 +467,6 @@ function buildBreakdown(parts: {
 
   lines.push(`─────────────────────────────`);
   lines.push(`Estimated total (USD): ${fmt(parts.totalUsd)}`);
-
-  if (parts.targetCurrency !== 'USD') {
-    lines.push(`Estimated total (${parts.targetCurrency}): ${parts.totalDisplay.toFixed(2)}`);
-  }
 
   return lines;
 }

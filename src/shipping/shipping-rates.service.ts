@@ -6,9 +6,9 @@ import { UpdateShippingRatesDto } from './dto/update-shipping-rates.dto';
 import {
   AIR_MINIMUM_LAGOS,
   AIR_MINIMUM_OUTSIDE_LAGOS,
-  AIR_RATE_LAGOS_PER_LB,
-  AIR_RATE_OUTSIDE_LAGOS_PER_LB,
+  AIR_RATE_PER_LB,
   BULK_COMMERCIAL_SURCHARGE,
+  CARGO_INSURANCE_RATE_LAGOS,
   DIM_DIVISOR,
   MIN_WEIGHT_LBS,
   OCEAN_SMALL_BOX_RATE,
@@ -25,11 +25,12 @@ export type ResolvedRates = {
   bulkCommercialSurcharge: number;
   tvClearingFee: number;
   oceanSmallBoxRate: number;
+  cargoInsuranceRateLagos: number;
 };
 
 const DEFAULTS: ResolvedRates = {
-  airRateLagosPerLb: AIR_RATE_LAGOS_PER_LB,
-  airRateOutsideLagosPerLb: AIR_RATE_OUTSIDE_LAGOS_PER_LB,
+  airRateLagosPerLb: AIR_RATE_PER_LB,
+  airRateOutsideLagosPerLb: AIR_RATE_PER_LB,
   dimDivisor: DIM_DIVISOR,
   airMinimumLagos: AIR_MINIMUM_LAGOS,
   airMinimumOutsideLagos: AIR_MINIMUM_OUTSIDE_LAGOS,
@@ -37,6 +38,7 @@ const DEFAULTS: ResolvedRates = {
   bulkCommercialSurcharge: BULK_COMMERCIAL_SURCHARGE,
   tvClearingFee: TV_CLEARING_FEE,
   oceanSmallBoxRate: OCEAN_SMALL_BOX_RATE,
+  cargoInsuranceRateLagos: CARGO_INSURANCE_RATE_LAGOS,
 };
 
 @Injectable()
@@ -89,6 +91,7 @@ export class ShippingRatesService implements OnModuleInit {
           bulkCommercialSurcharge: parseFloat(row.bulkCommercialSurcharge),
           tvClearingFee: parseFloat(row.tvClearingFee),
           oceanSmallBoxRate: parseFloat(row.oceanSmallBoxRate),
+          cargoInsuranceRateLagos: parseFloat(row.cargoInsuranceRateLagos),
         };
       } else {
         this.logger.warn(
@@ -125,6 +128,8 @@ export class ShippingRatesService implements OnModuleInit {
       result.tvClearingFee = String(dto.tvClearingFee);
     if (dto.oceanSmallBoxRate !== undefined)
       result.oceanSmallBoxRate = String(dto.oceanSmallBoxRate);
+    if (dto.cargoInsuranceRateLagos !== undefined)
+      result.cargoInsuranceRateLagos = String(dto.cargoInsuranceRateLagos);
     return result;
   }
 }

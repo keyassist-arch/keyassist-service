@@ -5,6 +5,7 @@ import { GenericAdapter } from './generic.adapter';
 import { PlaywrightService } from '../playwright.service';
 import { ScrapedProduct } from '../interfaces/scraped-product.interface';
 import { ScraperAdapter } from '../interfaces/scraper-adapter.interface';
+import { scrapeDoGet } from '../utils/scrape-do-client.util';
 
 // ─── GOAT JSON shapes (from __NEXT_DATA__) ────────────────────────────────────
 //
@@ -47,6 +48,7 @@ interface GoatExternalPicture {
 }
 
 interface GoatProductData {
+  id?: number;
   name?: string;
   brand?: string | { name?: string };
   brandName?: string;
@@ -225,75 +227,69 @@ function mergeGoatSizes(pt: GoatProductData): MergedGoatSize[] {
   });
 }
 
-/** Shape of GOAT's /product_variants/buy_bar_data XHR response */
-interface GoatBuyBarVariant {
-  size?: string | number;
-  sizeOption?: string | number;
-  lowestPriceCents?: number | { amount: number; currency?: string };
-  lowestAskCents?: number;
-  instantShipLowestPriceCents?: number;
+/**
+ * Shape of GOAT's /web-api/v1/product_variants/buy_bar_data response — a bare
+ * array of per-size/per-condition rows (not wrapped in `{ variants: [...] }`).
+ * `sizeOption` is an object, not a scalar — earlier code treated it as one and
+ * so silently matched zero rows.
+ */
+interface GoatBuyBarRow {
+  sizeOption?: { presentation?: string; value?: number };
+  shoeCondition?: string;
+  lowestPriceCents?: { amount: number; currency?: string } | number | null;
+  instantShipLowestPriceCents?: { amount: number; currency?: string } | number | null;
+  lastSoldPriceCents?: { amount: number; currency?: string } | number | null;
+  stockStatus?: string;
   available?: boolean;
-  inStock?: boolean;
-  currency?: string;
 }
 
-interface GoatBuyBarData {
-  productVariants?: GoatBuyBarVariant[];
-  variants?: GoatBuyBarVariant[];
+type GoatBuyBarData = GoatBuyBarRow[] | { productVariants?: GoatBuyBarRow[]; variants?: GoatBuyBarRow[] };
+
+function normalizeBuyBarRows(data: GoatBuyBarData): GoatBuyBarRow[] {
+  if (Array.isArray(data)) return data;
+  return data.productVariants ?? data.variants ?? [];
 }
 
 /**
- * After the XHR resolves, overlay per-size prices onto the merged size array.
- * Matches by presentation string first, then by numeric sizeOption value.
+ * After the XHR (or direct scrape.do) fetch resolves, overlay per-size prices
+ * onto the merged size array. Matches by numeric `sizeOption.value` first,
+ * then by presentation string.
  */
 function mergeXhrPricesIntoSizes(
   merged: MergedGoatSize[],
   xhrData: GoatBuyBarData,
 ): MergedGoatSize[] {
-  const variants = xhrData.productVariants ?? xhrData.variants ?? [];
-  if (!variants.length) return merged;
+  const rows = normalizeBuyBarRows(xhrData);
+  if (!rows.length) return merged;
 
-  const byPresentation = new Map<string, GoatBuyBarVariant>();
-  const byNumeric = new Map<number, GoatBuyBarVariant>();
+  const byPresentation = new Map<string, GoatBuyBarRow>();
+  const byNumeric = new Map<number, GoatBuyBarRow>();
 
-  for (const v of variants) {
-    const sz = v.size ?? v.sizeOption;
-    if (sz != null) {
-      byPresentation.set(String(sz), v);
-      const n = Number(sz);
-      if (!Number.isNaN(n)) byNumeric.set(n, v);
-    }
+  for (const row of rows) {
+    // Only "new, no defects" rows represent the standard lowest ask — a
+    // product can have separate used/defect rows for the same size.
+    if (row.shoeCondition && row.shoeCondition !== 'new_no_defects') continue;
+    const so = row.sizeOption;
+    if (!so) continue;
+    if (so.presentation != null) byPresentation.set(String(so.presentation), row);
+    if (typeof so.value === 'number' && !Number.isNaN(so.value)) byNumeric.set(so.value, row);
   }
 
   return merged.map((m) => {
-    const variant =
-      byPresentation.get(m.presentation) ??
-      (m.value != null ? byNumeric.get(m.value) : undefined);
-    if (!variant) return m;
+    const row =
+      (m.value != null ? byNumeric.get(m.value) : undefined) ??
+      byPresentation.get(m.presentation);
+    if (!row) return m;
 
-    const raw =
-      variant.lowestPriceCents ??
-      variant.lowestAskCents ??
-      variant.instantShipLowestPriceCents;
-    let cents = m.cents;
-    let currency = m.currency;
-
-    if (typeof raw === 'number' && raw > 0) {
-      cents = raw;
-      if (variant.currency) currency = variant.currency.toUpperCase();
-    } else if (raw != null && typeof raw === 'object' && 'amount' in raw) {
-      const o = raw as { amount: number; currency?: string };
-      if (o.amount > 0) {
-        cents = o.amount;
-        if (o.currency) currency = o.currency.toUpperCase();
-      }
-    }
+    const raw = row.lowestPriceCents ?? row.instantShipLowestPriceCents;
+    const pick = parseCentsField(raw);
+    if (!pick) return m;
 
     return {
       ...m,
-      cents,
-      currency,
-      available: variant.available ?? variant.inStock ?? m.available,
+      cents: pick.cents,
+      currency: pick.currency,
+      available: row.available ?? row.stockStatus !== 'out_of_stock',
     };
   });
 }
@@ -402,6 +398,30 @@ export class GoatAdapter implements ScraperAdapter {
     private readonly generic: GenericAdapter,
   ) {}
 
+  /**
+   * Fetch per-size lowest-ask prices directly through scrape.do rather than
+   * relying on the local browser to fire the buy_bar_data XHR itself: without
+   * a residential proxy, GOAT's API blocks that request when it originates
+   * from the scraper's own (datacenter) IP, whereas scrape.do's proxy pool
+   * can reach it. Always pin countryCode=US so prices come back in USD
+   * regardless of which country scrape.do happened to route the request
+   * through for the page fetch.
+   */
+  private async fetchBuyBarDataViaScrapeDo(productTemplateId: number): Promise<GoatBuyBarData | null> {
+    const token = this.config.get<string>('SCRAPE_DO_TOKEN')?.trim();
+    if (!token) return null;
+    try {
+      const buyBarUrl = `https://www.goat.com/web-api/v1/product_variants/buy_bar_data?productTemplateId=${productTemplateId}&countryCode=US`;
+      const { data } = await scrapeDoGet<GoatBuyBarData>(token, buyBarUrl, { super: 'true' });
+      return data ?? null;
+    } catch (e) {
+      this.logger.warn(
+        `GoatAdapter: buy_bar_data scrape.do fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+  }
+
   async scrape(url: string): Promise<ScrapedProduct> {
     const navTimeout = this.config.get<string>('SCRAPE_PROXY')?.trim() ? 90_000 : 45_000;
 
@@ -477,9 +497,17 @@ export class GoatAdapter implements ScraperAdapter {
         return this.generic.scrape(url);
       }
 
-      // If __NEXT_DATA__ had no per-size prices, overlay them from the XHR response.
+      // If __NEXT_DATA__ had no per-size prices, overlay them from the locally
+      // captured XHR response (works only when a residential SCRAPE_PROXY is set).
       if (!merged.some((m) => m.cents != null && m.cents > 0) && goatBuyBarData) {
         merged = mergeXhrPricesIntoSizes(merged, goatBuyBarData);
+      }
+
+      // Still nothing — fetch buy_bar_data directly through scrape.do, which
+      // reaches GOAT's API through its own proxy pool instead of ours.
+      if (!merged.some((m) => m.cents != null && m.cents > 0) && product.id != null) {
+        const fetched = await this.fetchBuyBarDataViaScrapeDo(product.id);
+        if (fetched) merged = mergeXhrPricesIntoSizes(merged, fetched);
       }
 
       const pricedSizes = merged.filter((m) => m.cents != null && m.cents > 0);

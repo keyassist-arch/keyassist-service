@@ -422,4 +422,39 @@ export class EmailTemplateService {
       }),
     };
   }
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
+
+  adminInvite(args: {
+    setPasswordUrl: string;
+    ttlLabel: string;
+    displayName?: string | null;
+  }): EmailTemplate {
+    const name = args.displayName?.trim();
+    const greeting = name ? `Hi ${name},` : 'Hi there,';
+    const subject = "You've been added as an admin";
+
+    const text =
+      `${greeting}\n\n` +
+      `You've been invited to the Unified Commerce admin panel.\n\n` +
+      `Set your password (valid for ${args.ttlLabel}):\n${args.setPasswordUrl}\n\n` +
+      `If you weren't expecting this, you can ignore this email.`;
+
+    const bodyHtml =
+      `<p style="margin:0 0 12px;">${esc(greeting)}</p>` +
+      `<p style="margin:0 0 12px;">You've been invited to the Unified Commerce admin panel.</p>` +
+      btn(args.setPasswordUrl, 'Set your password') +
+      `<p style="margin:16px 0 0;font-size:13px;color:#6b7280;">This link expires in <strong>${esc(args.ttlLabel)}</strong>.</p>` +
+      `<p style="margin:16px 0 0;font-size:13px;color:#6b7280;">If you weren't expecting this, you can ignore this email.</p>`;
+
+    return {
+      subject,
+      text,
+      html: layout({
+        preheader: 'Set your password to access the admin panel.',
+        heading: subject,
+        bodyHtml,
+      }),
+    };
+  }
 }

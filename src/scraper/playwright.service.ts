@@ -8,7 +8,7 @@ import {
 } from 'playwright';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import axios from 'axios';
+import { scrapeDoGet } from './utils/scrape-do-client.util';
 
 export type LoadPageOptions = {
   contextOverrides?: BrowserContextOptions;
@@ -86,6 +86,13 @@ const GEO_PROFILES: Record<string, Omit<GeoProfile, 'geoCode'>> = {
     acceptLanguage: 'en-AE,en;q=0.9,ar;q=0.6',
   },
 };
+
+/**
+ * Warn when open context count reaches this level. Each scrape job opens one
+ * context and closes it in a finally block — under normal operation the count
+ * stays at 1–3. A rising count means adapters are not closing their contexts.
+ */
+const CONTEXT_LEAK_WARN_THRESHOLD = 10;
 
 @Injectable()
 export class PlaywrightService implements OnModuleDestroy {
@@ -221,15 +228,11 @@ export class PlaywrightService implements OnModuleDestroy {
     const token = this.config.get<string>('SCRAPE_DO_TOKEN')?.trim();
     if (!token) return null;
     try {
-      const params = new URLSearchParams({ token, url, super: 'true', wait: String(wait) });
-      const { data: html } = await axios.get<string>(
-        `http://api.scrape.do/?${params.toString()}`,
-        {
-          timeout: 60_000,
-          maxContentLength: 10_000_000,
-          headers: { Accept: 'text/html' },
-          validateStatus: (s) => s >= 200 && s < 400,
-        },
+      const { data: html } = await scrapeDoGet<string>(
+        token,
+        url,
+        { super: 'true', wait: String(wait) },
+        { responseType: 'text' },
       );
       if (typeof html !== 'string' || html.length < 500) return null;
       return html;
@@ -238,6 +241,18 @@ export class PlaywrightService implements OnModuleDestroy {
         `[playwright] scrape.do fetch failed: ${e instanceof Error ? e.message : String(e)}`,
       );
       return null;
+    }
+  }
+
+  private checkContextLeak(): void {
+    if (!this.browser) return;
+    const open = this.browser.contexts().length;
+    this.logger.debug(`[playwright] openContexts=${open}`);
+    if (open >= CONTEXT_LEAK_WARN_THRESHOLD) {
+      this.logger.warn(
+        `[playwright] openContexts=${open} exceeds threshold=${CONTEXT_LEAK_WARN_THRESHOLD}` +
+          ` — adapters must close their context in a finally block`,
+      );
     }
   }
 
@@ -255,11 +270,29 @@ export class PlaywrightService implements OnModuleDestroy {
 
     const html = await this.fetchHtmlViaScrapeD0(url, scrapeDoWait);
     const context = await this.newScrapeContext(contextOverrides, url);
+    this.checkContextLeak();
     const page = await context.newPage();
 
     if (html) {
       this.logger.log(`[playwright] loadPage source=scrape.do url=${url.slice(0, 80)}`);
-      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      // Serve the pre-fetched HTML for the top-level navigation instead of
+      // page.setContent(): setContent() leaves the page on `about:blank`
+      // (origin "null"), which throws SecurityErrors on cookies/XHR/history
+      // APIs and silently breaks any client-side hydration or relative
+      // fetches (e.g. price XHRs) the page tries to run afterwards. Routing
+      // the real URL to fulfill with our HTML keeps the correct origin while
+      // still avoiding a second live fetch of the document itself.
+      await page.route(url, (route) =>
+        route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }),
+      );
+      await page.goto(url, gotoOptions).catch((e) => {
+        this.logger.warn(
+          `[playwright] scrape.do-fulfilled goto failed, content may be partial: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
+      await page.unroute(url).catch(() => undefined);
       return { page, context, source: 'scrape.do' };
     }
 

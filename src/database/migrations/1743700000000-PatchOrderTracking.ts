@@ -12,10 +12,17 @@ export class PatchOrderTracking1743700000000 implements MigrationInterface {
   name = 'PatchOrderTracking1743700000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // 1. Rename updated_at → created_at
+    // 1. Rename updated_at → created_at (only on existing DBs; fresh installs already have created_at)
     await queryRunner.query(`
-      ALTER TABLE "order_tracking"
-      RENAME COLUMN "updated_at" TO "created_at"
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'order_tracking' AND column_name = 'updated_at'
+        ) THEN
+          ALTER TABLE "order_tracking" RENAME COLUMN "updated_at" TO "created_at";
+        END IF;
+      END $$
     `);
 
     // 2. Make carrier and tracking_number nullable (they may already be nullable

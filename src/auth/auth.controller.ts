@@ -93,6 +93,6 @@ export class AuthController {
     @Body() _body: RefreshDto,
   ) {
     const u = req.user;
-    return this.authService.rotateRefresh(u.sub, u.email, u.role);
+    return this.authService.rotateRefresh(u.sub, u.email, u.role, u.permissions);
   }
 }

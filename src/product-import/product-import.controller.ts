@@ -5,10 +5,15 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { ProductImportService } from './product-import.service';
 import { ImportProductDto } from './dto/import-product.dto';
 import { ManualProductImportDto } from './dto/manual-product-import.dto';
@@ -30,16 +35,20 @@ export class ProductImportController {
     return this.productImportService.importByUrl(dto.url);
   }
 
-  @Public()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('manual')
   @ApiOperation({
     summary: 'Create product from manually entered details',
     description:
-      'Used when the product URL is from an unsupported retailer. Creates the product synchronously and returns it immediately with status `completed`.',
+      'Used when the product URL is from an unsupported retailer, or when the automatic scrape failed. The customer supplies the link plus whatever basic info they have (title, photos, notes) — **no price**: the request lands in the admin manual-import queue and admin prices it when placing the order. Creates the product synchronously and returns it immediately with status `completed` and `awaitingQuote: true`; unpriced products are excluded from the public catalog feed. Requires login so the request can be attributed to the submitting customer.',
   })
-  async createManual(@Body() dto: ManualProductImportDto) {
-    return this.productImportService.createManualProduct(dto);
+  async createManual(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ManualProductImportDto,
+  ) {
+    return this.productImportService.createManualProduct(dto, user.sub);
   }
 
   @Public()

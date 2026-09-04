@@ -2,13 +2,21 @@ import type { ProductConfigurationPrice } from '../../products/entities/product.
 
 export interface ScrapedProduct {
   title: string;
-  price: number | string;
+  price: string;
   currency: string;
   images: string[];
   description?: string;
   brand?: string;
   /** Marketplace-specific product identifier (e.g. Amazon ASIN). */
   asin?: string;
+  /** Generic product / listing SKU (non-Amazon adapters; use `asin` for Amazon). */
+  sku?: string;
+  /** Aggregate customer rating. */
+  rating?: { value: string | number; reviewCount?: number };
+  /** Primary seller shown on the PDP. */
+  seller?: { name: string; url?: string };
+  /** Structured product attributes, e.g. { "Storage": "256GB", "Color": "Black" }. */
+  specifications?: Record<string, string>;
   variants: { name: string; options: string[] }[];
   /**
    * Retailer “was” / list price when the PDP shows a markdown (e.g. Amazon strike price).
@@ -24,6 +32,12 @@ export interface ScrapedProduct {
   /** Adapter-specific extra data (e.g. Apple carrier→URL routing map). */
   metadata?: Record<string, unknown>;
   availability?: string;
+  /**
+   * Actual sales tax in USD as shown on the product page or checkout summary.
+   * When populated by an adapter, the landed-cost quote uses this directly
+   * instead of the per-marketplace flat-rate estimate.
+   */
+  taxAmountUsd?: number;
   /**
    * Full configuration lines from matrix-style PDPs (e.g. Apple: storage + color + carrier + price).
    * Folded into `description` for persistence when adapters set it.

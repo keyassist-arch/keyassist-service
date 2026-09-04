@@ -13,6 +13,7 @@ import { CartService } from '../cart/cart.service';
 import { LocalCartItemDto } from '../cart/dto/local-cart-item.dto';
 import { UsersService } from '../users/users.service';
 import { UserRole } from '../common/enums/role.enum';
+import { AdminPermission } from '../common/enums/admin-permission.enum';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
@@ -113,6 +114,9 @@ export class AuthService implements OnModuleInit {
     if (!user || !isValidPassword) {
       throw new UnauthorizedException('Invalid credentials');
     }
+    if (user.adminDisabledAt) {
+      throw new UnauthorizedException('This admin account has been disabled');
+    }
     if (!user.emailVerifiedAt) {
       let verificationEmailSent = false;
       try {
@@ -152,7 +156,12 @@ export class AuthService implements OnModuleInit {
         expiresIn: twoFactorTtl,
       };
     }
-    const tokens = await this.issueTokens(user.id, user.email, user.role);
+    const tokens = await this.issueTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.permissions,
+    );
     if (localCart?.length) {
       const cart = await this.cartService.mergeLocalCart(user.id, localCart);
       return { ...tokens, cart };
@@ -194,7 +203,12 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Invalid authenticator code');
     }
     this.logger.log(`[auth] step=login_2fa_ok userId=${user.id}`);
-    const tokens = await this.issueTokens(user.id, user.email, user.role);
+    const tokens = await this.issueTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.permissions,
+    );
     if (localCart?.length) {
       const cart = await this.cartService.mergeLocalCart(user.id, localCart);
       return { ...tokens, cart };
@@ -223,7 +237,12 @@ export class AuthService implements OnModuleInit {
       await this.usersService.markEmailVerified(user.id);
       this.logger.log(`[auth] step=email_verified userId=${user.id}`);
     }
-    const tokens = await this.issueTokens(user.id, user.email, user.role);
+    const tokens = await this.issueTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.permissions,
+    );
     if (localCart?.length) {
       const cart = await this.cartService.mergeLocalCart(user.id, localCart);
       return { ...tokens, cart };
@@ -252,29 +271,24 @@ export class AuthService implements OnModuleInit {
     };
   }
 
-  async rotateRefresh(userId: string, email: string, role: UserRole) {
-    return this.issueTokens(userId, email, role);
+  async rotateRefresh(
+    userId: string,
+    email: string,
+    role: UserRole,
+    permissions?: AdminPermission[],
+  ) {
+    return this.issueTokens(userId, email, role, permissions);
   }
 
   /**
    * Always returns the same message (do not reveal whether the email is registered).
-   * Sends Resend email when user exists and `RESEND_API_KEY` is set.
+   * Sends an email via MailerSend when user exists and `MAILERSEND_API_KEY` is set.
    */
   async requestPasswordReset(email: string): Promise<{ message: string }> {
     const user = await this.usersService.findByEmailInsensitive(email);
     if (user) {
       const ttl = this.config.get<string>('PASSWORD_RESET_TOKEN_EXPIRES', '1h');
-      const secret = this.passwordResetSecret();
-      const token = await this.jwt.signAsync(
-        {
-          sub: user.id,
-          purpose: PASSWORD_RESET_CLAIM,
-        } as PasswordResetJwtPayload,
-        {
-          secret,
-          expiresIn: ttl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
-        },
-      );
+      const token = await this.signPasswordResetToken(user.id, ttl);
       const baseUrl = this.frontendBaseUrl();
       const resetUrl = `${baseUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
       const tpl = this.emailTemplates.passwordReset({
@@ -384,6 +398,36 @@ export class AuthService implements OnModuleInit {
     });
   }
 
+  private async signPasswordResetToken(
+    userId: string,
+    ttl: string,
+  ): Promise<string> {
+    return this.jwt.signAsync(
+      {
+        sub: userId,
+        purpose: PASSWORD_RESET_CLAIM,
+      } as PasswordResetJwtPayload,
+      {
+        secret: this.passwordResetSecret(),
+        expiresIn: ttl as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`,
+      },
+    );
+  }
+
+  /**
+   * Issues a password-reset-purpose token for a freshly-created admin
+   * invite, so the invited admin lands on the existing `/reset-password`
+   * flow to set their own password. Returns the token and the TTL label
+   * used, so the caller can build the email link and copy.
+   */
+  async issueAdminInviteToken(
+    userId: string,
+  ): Promise<{ token: string; ttlLabel: string }> {
+    const ttl = this.config.get<string>('PASSWORD_RESET_TOKEN_EXPIRES', '1h');
+    const token = await this.signPasswordResetToken(userId, ttl);
+    return { token, ttlLabel: ttl };
+  }
+
   private passwordResetSecret(): string {
     const dedicated = this.config.get<string>('JWT_PASSWORD_RESET_SECRET');
     if (dedicated?.trim()) {
@@ -442,11 +486,16 @@ export class AuthService implements OnModuleInit {
     if (url?.trim()) {
       return url.trim();
     }
-    return 'http://localhost:3000';
+    return 'https://keyassistco.com';
   }
 
-  private async issueTokens(userId: string, email: string, role: UserRole) {
-    const payload: JwtPayload = { sub: userId, email, role };
+  private async issueTokens(
+    userId: string,
+    email: string,
+    role: UserRole,
+    permissions?: AdminPermission[],
+  ) {
+    const payload: JwtPayload = { sub: userId, email, role, permissions };
     const accessTtl = this.config.get<string>('JWT_ACCESS_EXPIRES', '15m');
     const refreshTtl = this.config.get<string>('JWT_REFRESH_EXPIRES', '7d');
     const [accessToken, refreshToken] = await Promise.all([

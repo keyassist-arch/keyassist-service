@@ -36,6 +36,8 @@ export type ProductConfigurationPrice = {
   currency?: string;
   /** `false` = show disabled / OOS in UI. */
   available?: boolean;
+  /** Stock count for this specific combination. Display-only today — checkout still enforces `Product.stockQuantity` only. */
+  stockQuantity?: number;
   /** Human-readable line (e.g. `9.5 — from USD 425.00`); omit to build from option + prices in the client. */
   displayLabel?: string;
   /** Store-specific fields (condition, retailer ids, etc.). */
@@ -149,6 +151,13 @@ export class Product {
   /** FK to the `categories` table. Null = uncategorised. */
   @Column({ type: 'uuid', nullable: true, name: 'category_id' })
   categoryId: string | null;
+
+  /**
+   * Actual sales tax in USD observed during the last scrape or checkout simulation.
+   * Null = unknown (landed-cost service falls back to the marketplace estimate rate).
+   */
+  @Column({ name: 'observed_tax_amount_usd', type: 'decimal', precision: 14, scale: 2, nullable: true })
+  observedTaxAmountUsd: string | null;
 
   @Column({ name: 'last_scraped_at', type: 'timestamptz', nullable: true })
   lastScrapedAt: Date | null;

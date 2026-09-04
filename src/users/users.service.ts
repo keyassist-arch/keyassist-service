@@ -6,14 +6,24 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { User, ShippingAddress } from './entities/user.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { TotpService } from '../totp/totp.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { isEnvFlagEnabled } from '../common/utils/env-flag.util';
+import { UserRole } from '../common/enums/role.enum';
+import { AdminPermission } from '../common/enums/admin-permission.enum';
 
 /** PostgreSQL unique-constraint violation code. */
 const PG_UNIQUE_VIOLATION = '23505';
+
+const PHONE_OTP_TTL_MS = 10 * 60 * 1000;
+const PHONE_OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const PHONE_OTP_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class UsersService {
@@ -21,6 +31,8 @@ export class UsersService {
     @InjectRepository(User)
     private readonly users: Repository<User>,
     private readonly totp: TotpService,
+    private readonly notifications: NotificationsService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(
@@ -63,6 +75,87 @@ export class UsersService {
     }
   }
 
+  /**
+   * Creates an ADMIN_STAFF account with no usable password — the invited
+   * admin sets their own via the password-reset flow (see
+   * `AuthService.issueAdminInviteToken`). `emailVerifiedAt` is set
+   * immediately since the super admin is vouching for the address.
+   */
+  async createAdminUser(args: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    permissions: AdminPermission[];
+  }): Promise<User> {
+    const normalizedEmail = args.email.trim().toLowerCase();
+    const existing = await this.users.findOne({
+      where: { email: normalizedEmail },
+    });
+    if (existing) {
+      throw new ConflictException('Email already registered');
+    }
+    // Random, never-communicated placeholder — unusable until reset.
+    const passwordHash = await bcrypt.hash(crypto.randomUUID(), 10);
+    const user = this.users.create({
+      firstName: args.firstName.trim(),
+      lastName: args.lastName.trim(),
+      email: normalizedEmail,
+      passwordHash,
+      role: UserRole.ADMIN_STAFF,
+      permissions: args.permissions,
+      emailVerifiedAt: new Date(),
+    });
+    try {
+      return await this.users.save(user);
+    } catch (err: unknown) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: string }).code === PG_UNIQUE_VIOLATION
+      ) {
+        throw new ConflictException('Email already registered');
+      }
+      throw err;
+    }
+  }
+
+  /** Admin users only (ADMIN_SUPER / ADMIN_STAFF), ordered newest first. */
+  async listAdminUsers(): Promise<User[]> {
+    return this.users
+      .createQueryBuilder('u')
+      .where('u.role IN (:...roles)', {
+        roles: [UserRole.ADMIN_SUPER, UserRole.ADMIN_STAFF],
+      })
+      .orderBy('u.createdAt', 'DESC')
+      .getMany();
+  }
+
+  /**
+   * Updates permissions and/or disabled state for an ADMIN_STAFF account.
+   * Refuses to touch ADMIN_SUPER rows — promotion/demotion of the top role
+   * stays a manual/DB action.
+   */
+  async patchAdminUser(
+    userId: string,
+    dto: { permissions?: AdminPermission[]; disabled?: boolean },
+  ): Promise<User> {
+    const user = await this.findById(userId);
+    if (user.role !== UserRole.ADMIN_STAFF) {
+      throw new BadRequestException('Only staff admin accounts can be edited here');
+    }
+    if (dto.permissions !== undefined) {
+      user.permissions = dto.permissions;
+    }
+    if (dto.disabled !== undefined) {
+      user.adminDisabledAt = dto.disabled ? new Date() : null;
+      if (dto.disabled) {
+        user.refreshTokenHash = null;
+      }
+    }
+    return this.users.save(user);
+  }
+
   async findByEmail(email: string): Promise<User | null> {
     return this.users.findOne({ where: { email } });
   }
@@ -91,6 +184,10 @@ export class UsersService {
     await this.users.update(userId, { refreshTokenHash: hash });
   }
 
+  async setStripeCustomerId(userId: string, customerId: string): Promise<void> {
+    await this.users.update(userId, { stripeCustomerId: customerId });
+  }
+
   async updatePassword(userId: string, plainPassword: string): Promise<void> {
     const passwordHash = await bcrypt.hash(plainPassword, 10);
     await this.users.update(userId, {
@@ -111,7 +208,14 @@ export class UsersService {
     if (dto.lastName !== undefined) {
       user.lastName = dto.lastName.trim();
     }
-    if (dto.phone !== undefined) user.phone = dto.phone;
+    if (dto.phone !== undefined) {
+      // Changing the number invalidates any prior verification — the new
+      // number hasn't been proven to belong to this user yet.
+      if (dto.phone !== user.phone) {
+        user.phoneVerifiedAt = null;
+      }
+      user.phone = dto.phone;
+    }
     if (dto.defaultShippingAddress !== undefined) {
       user.defaultShippingAddress =
         dto.defaultShippingAddress as ShippingAddress;
@@ -127,12 +231,31 @@ export class UsersService {
       email: user.email,
       emailVerified: !!user.emailVerifiedAt,
       phone: user.phone,
+      phoneVerified: !!user.phoneVerifiedAt,
+      phoneVerificationRequired: isEnvFlagEnabled(
+        this.config.get<string>('PHONE_VERIFICATION_REQUIRED'),
+      ),
       defaultShippingAddress: user.defaultShippingAddress,
       twoFactor: {
         enabled: user.totpEnabled,
         setupPending: Boolean(!user.totpEnabled && user.totpSetupSecret),
       },
       role: user.role,
+      permissions: user.permissions,
+      createdAt: user.createdAt,
+    };
+  }
+
+  /** Compact admin-user response for the team-management screen. */
+  toAdminUserResponse(user: User) {
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      permissions: user.permissions,
+      disabled: !!user.adminDisabledAt,
       createdAt: user.createdAt,
     };
   }
@@ -239,5 +362,84 @@ export class UsersService {
     }
     await this.disableTotpAndSecrets(userId);
     await this.setRefreshTokenHash(userId, null);
+  }
+
+  /**
+   * Sends a 6-digit WhatsApp OTP to `phone` (or the number already on file).
+   * Passing a different `phone` updates the account number and marks it unverified.
+   */
+  async sendPhoneOtp(
+    userId: string,
+    phone?: string,
+  ): Promise<{ sentTo: string }> {
+    const user = await this.findById(userId);
+
+    if (phone !== undefined && phone.trim() !== user.phone) {
+      user.phone = phone.trim();
+      user.phoneVerifiedAt = null;
+    }
+    if (!user.phone) {
+      throw new BadRequestException(
+        'Add a phone number before requesting a verification code.',
+      );
+    }
+    if (
+      user.phoneOtpSentAt &&
+      Date.now() - user.phoneOtpSentAt.getTime() < PHONE_OTP_RESEND_COOLDOWN_MS
+    ) {
+      throw new BadRequestException(
+        'Please wait a moment before requesting another code.',
+      );
+    }
+
+    const code = crypto.randomInt(100000, 1000000).toString();
+    user.phoneOtpCodeHash = await bcrypt.hash(code, 10);
+    user.phoneOtpExpiresAt = new Date(Date.now() + PHONE_OTP_TTL_MS);
+    user.phoneOtpAttempts = 0;
+    user.phoneOtpSentAt = new Date();
+    await this.users.save(user);
+
+    await this.notifications.sendWhatsApp(
+      user.phone,
+      `Your verification code is ${code}. It expires in 10 minutes.`,
+    );
+
+    return { sentTo: user.phone };
+  }
+
+  async verifyPhoneOtp(userId: string, code: string): Promise<void> {
+    const user = await this.findById(userId);
+
+    if (!user.phoneOtpCodeHash || !user.phoneOtpExpiresAt) {
+      throw new BadRequestException(
+        'No verification code pending. Request a new one.',
+      );
+    }
+    if (user.phoneOtpExpiresAt.getTime() < Date.now()) {
+      throw new BadRequestException(
+        'Verification code expired. Request a new one.',
+      );
+    }
+    if (user.phoneOtpAttempts >= PHONE_OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException(
+        'Too many incorrect attempts. Request a new code.',
+      );
+    }
+
+    const matches = await bcrypt.compare(code, user.phoneOtpCodeHash);
+    if (!matches) {
+      await this.users.update(userId, {
+        phoneOtpAttempts: user.phoneOtpAttempts + 1,
+      });
+      throw new BadRequestException('Incorrect code.');
+    }
+
+    await this.users.update(userId, {
+      phoneVerifiedAt: new Date(),
+      phoneOtpCodeHash: null,
+      phoneOtpExpiresAt: null,
+      phoneOtpAttempts: 0,
+      phoneOtpSentAt: null,
+    });
   }
 }
