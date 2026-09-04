@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { generateSecret, generateURI, verifySync } from 'otplib';
+import { authenticator } from 'otplib';
 import * as QRCode from 'qrcode';
 
 @Injectable()
@@ -14,7 +14,7 @@ export class TotpService {
   }
 
   generateSecret(): string {
-    return generateSecret();
+    return authenticator.generateSecret();
   }
 
   verifyCode(token: string, secret: string): boolean {
@@ -23,7 +23,7 @@ export class TotpService {
       return false;
     }
     try {
-      return verifySync({ token: normalized, secret }).valid;
+      return authenticator.check(normalized, secret);
     } catch {
       return false;
     }
@@ -39,11 +39,7 @@ export class TotpService {
    */
   keyUri(email: string, secret: string): string {
     const issuer = this.issuerName();
-    return generateURI({
-      issuer,
-      label: `${issuer}:${email}`,
-      secret,
-    });
+    return authenticator.keyuri(email, issuer, secret);
   }
 
   async toQrDataUrl(otpauthUrl: string): Promise<string> {
