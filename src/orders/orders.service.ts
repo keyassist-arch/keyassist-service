@@ -607,15 +607,14 @@ export class OrdersService {
     const pending = o.status === OrderStatus.PENDING;
 
     // Collapsed 3-line summary for the checkout/order screen.
-    // "Import & Delivery" bundles all logistics + customs so the user
-    // sees a simple, trustworthy breakdown instead of 6+ individual fees.
+    // "Import & Delivery" bundles logistics + customs so the user
+    // sees a simple, trustworthy breakdown without internal fee clutter.
     const importAndDelivery = (
       parseFloat(o.marketplaceTax    || '0') +
       parseFloat(o.marketplaceShipping || '0') +
       parseFloat(o.domesticHandling  || '0') +
       parseFloat(o.shippingFee       || '0') +
       parseFloat(o.customsTotal      || '0') +
-      parseFloat(o.insurance         || '0') +
       parseFloat(o.fxBuffer          || '0') +
       parseFloat(o.riskBuffer        || '0')
     ).toFixed(2);
@@ -625,11 +624,12 @@ export class OrdersService {
       userId: o.userId,
       ...(admin && o.user ? { userEmail: o.user.email } : {}),
       status: o.status,
-      // ── 3-line UI summary ──────────────────────────────────────────────────
+      // ── UI summary ──────────────────────────────────────────────────────────
       displaySummary: {
         product: o.subtotal,
         importAndDelivery,
         serviceFee: o.fees,
+        insurance: o.insurance,
         discount: o.discount,
         total: o.total,
         currency: o.currency,
