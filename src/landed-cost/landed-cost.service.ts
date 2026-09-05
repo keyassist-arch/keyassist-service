@@ -464,34 +464,19 @@ function buildBreakdown(parts: {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const lines: string[] = [];
 
-  const taxPct = (parts.taxRate * 100)
-    .toFixed(2)
-    .replace(/\.00$/, '')
-    .replace(/(\.[0-9])0$/, '$1');
-
-  if (parts.marketplaceTax > 0) {
-    lines.push(
-      `${taxPct}% of Product price (${fmt(parts.productSubtotal)}) = ${fmt(parts.marketplaceTax)} for tax`,
-    );
-    lines.push(
-      `Product (COGS) - ${fmt(parts.productSubtotal)} + ${fmt(parts.marketplaceTax)} = ${fmt(parts.itemCost)}`,
-    );
-  } else {
-    lines.push(`Product (COGS) - ${fmt(parts.itemCost)}`);
-  }
+  // Item cost (COGS) includes product price + marketplace sales tax added in the background
+  lines.push(`Product (COGS): ${fmt(parts.itemCost)}`);
 
   const totalShipping = round(parts.importAndDelivery + parts.insuranceUsd);
-  lines.push(`Shipping - ${fmt(totalShipping)}`);
+  lines.push(`Shipping: ${fmt(totalShipping)}`);
 
-  const servicePct =
-    parts.productSubtotal > 100 ? '10% of product' : 'flat fee';
-  lines.push(`Service - ${servicePct} = ${fmt(parts.serviceCharge)}`);
+  lines.push(`Service: ${fmt(parts.serviceCharge)}`);
 
   if (parts.discount > 0) {
-    lines.push(`Discount - -${fmt(parts.discount)}`);
+    lines.push(`Discount: -${fmt(parts.discount)}`);
   }
 
-  lines.push(`Total - ${fmt(parts.totalUsd)}`);
+  lines.push(`Total: ${fmt(parts.totalUsd)}`);
 
   return lines;
 }
