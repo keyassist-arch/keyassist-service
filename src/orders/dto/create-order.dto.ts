@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsObject, IsOptional, ValidateNested } from 'class-validator';
+import { IsBoolean, IsObject, IsOptional, ValidateNested } from 'class-validator';
 import { ShippingAddressDto } from './shipping-address.dto';
 import { LandedCostInputDto } from './landed-cost-input.dto';
 
@@ -9,6 +9,10 @@ export class CreateOrderDto {
   @ValidateNested()
   @Type(() => ShippingAddressDto)
   shippingAddress?: ShippingAddressDto;
+
+  @IsOptional()
+  @IsBoolean()
+  saveAddressToProfile?: boolean;
 
   @IsObject()
   @ValidateNested()

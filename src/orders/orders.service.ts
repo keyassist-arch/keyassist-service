@@ -75,6 +75,15 @@ export class OrdersService {
             );
           })();
 
+    if (
+      dto.shippingAddress &&
+      (dto.saveAddressToProfile || !user.defaultShippingAddress)
+    ) {
+      await this.usersService.updateProfile(userId, {
+        defaultShippingAddress: dto.shippingAddress as ShippingAddress,
+      });
+    }
+
     // Use cached prices from the DB — avoids a 5-30 s scrape per item at checkout.
     // Background verify-price jobs are enqueued after the order is saved so prices
     // stay fresh for fulfillment without blocking the user.
