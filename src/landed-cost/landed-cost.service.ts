@@ -143,6 +143,9 @@ export class LandedCostService {
 
     // ── 8. Breakdown lines ───────────────────────────────────────────────────
     const breakdown = buildBreakdown({
+      productSubtotal,
+      marketplaceTax,
+      taxRate: dto.taxAmountUsd != null ? (productSubtotal > 0 ? marketplaceTax / productSubtotal : 0) : taxRate,
       itemCost,
       importAndDelivery,
       destination: destination as ShippingDestination,
@@ -279,6 +282,9 @@ export class LandedCostService {
     ).marketplace;
 
     const breakdown = buildBreakdown({
+      productSubtotal,
+      marketplaceTax,
+      taxRate: taxableSubtotal > 0 ? marketplaceTax / taxableSubtotal : PRODUCT_TAX_RATE,
       itemCost,
       importAndDelivery,
       destination,
@@ -436,12 +442,17 @@ function round(n: number): number {
 }
 
 /**
- * The agreed customer invoice: item cost (COGS, sales tax folded in), import &
- * delivery (box/handling fee folded in), service fee, then insurance only when the
- * customer opted in. Every component amount stays on the response object for anyone
- * who needs to itemise further.
+ * The simplified landed cost breakdown:
+ * 1. Tax calculation note: e.g. 8.25% of Product price ($250.00) = $20.63 for tax
+ * 2. Product (COGS): e.g. Product (COGS) - $250.00 + $20.63 = $270.63
+ * 3. Shipping: total combined shipping (import, domestic handling, international cargo, insurance)
+ * 4. Service fee: 10% of product or flat fee
+ * 5. Total
  */
 function buildBreakdown(parts: {
+  productSubtotal: number;
+  marketplaceTax: number;
+  taxRate: number;
   itemCost: number;
   importAndDelivery: number;
   destination: ShippingDestination;
@@ -451,22 +462,36 @@ function buildBreakdown(parts: {
   totalUsd: number;
 }): string[] {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
-  const dest = parts.destination === 'outside_lagos' ? 'outside Lagos' : 'Lagos';
   const lines: string[] = [];
 
-  lines.push(`Item cost (COGS): ${fmt(parts.itemCost)}`);
-  lines.push(`Import & delivery fee (${dest}): ${fmt(parts.importAndDelivery)}`);
-  lines.push(`Service fee: ${fmt(parts.serviceCharge)}`);
-  if (parts.insuranceUsd > 0) {
-    lines.push(`Insurance: ${fmt(parts.insuranceUsd)}`);
+  const taxPct = (parts.taxRate * 100)
+    .toFixed(2)
+    .replace(/\.00$/, '')
+    .replace(/(\.[0-9])0$/, '$1');
+
+  if (parts.marketplaceTax > 0) {
+    lines.push(
+      `${taxPct}% of Product price (${fmt(parts.productSubtotal)}) = ${fmt(parts.marketplaceTax)} for tax`,
+    );
+    lines.push(
+      `Product (COGS) - ${fmt(parts.productSubtotal)} + ${fmt(parts.marketplaceTax)} = ${fmt(parts.itemCost)}`,
+    );
+  } else {
+    lines.push(`Product (COGS) - ${fmt(parts.itemCost)}`);
   }
+
+  const totalShipping = round(parts.importAndDelivery + parts.insuranceUsd);
+  lines.push(`Shipping - ${fmt(totalShipping)}`);
+
+  const servicePct =
+    parts.productSubtotal > 100 ? '10% of product' : 'flat fee';
+  lines.push(`Service - ${servicePct} = ${fmt(parts.serviceCharge)}`);
 
   if (parts.discount > 0) {
-    lines.push(`Loyalty discount: -${fmt(parts.discount)}`);
+    lines.push(`Discount - -${fmt(parts.discount)}`);
   }
 
-  lines.push(`─────────────────────────────`);
-  lines.push(`Estimated total (USD): ${fmt(parts.totalUsd)}`);
+  lines.push(`Total - ${fmt(parts.totalUsd)}`);
 
   return lines;
 }
