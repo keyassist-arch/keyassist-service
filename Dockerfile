@@ -11,7 +11,7 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY nest-cli.json tsconfig.json tsconfig.build.json ./
@@ -29,7 +29,7 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/dist ./dist
