@@ -17,6 +17,7 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PhoneVerifiedGuard } from '../common/guards/phone-verified.guard';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
+import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { OrdersService } from './orders.service';
@@ -28,6 +29,16 @@ import { CreateOrderDto } from './dto/create-order.dto';
 @UseGuards(JwtAuthGuard)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
+
+  @Get('track/:idOrCode')
+  @Public()
+  @ApiOperation({
+    summary: 'Public order tracking lookup (no authentication required)',
+    description: 'Look up live order progress, status journey, carrier tracking, and line items by order ID or KAO code.',
+  })
+  trackOrder(@Param('idOrCode') idOrCode: string) {
+    return this.ordersService.getPublicTracking(idOrCode);
+  }
 
   @Post()
   @UseGuards(PhoneVerifiedGuard)
@@ -57,7 +68,7 @@ export class OrdersController {
   }
 
   @Get(':id')
-  one(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
+  one(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.ordersService.findForUser(user.sub, id);
   }
 
@@ -66,7 +77,7 @@ export class OrdersController {
     summary: 'Cancel an unpaid order',
     description: 'Only orders in PENDING status can be self-cancelled.',
   })
-  cancel(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
+  cancel(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.ordersService.cancelOrder(user.sub, id);
   }
 }

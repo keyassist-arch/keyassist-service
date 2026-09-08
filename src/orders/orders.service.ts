@@ -26,6 +26,7 @@ import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { LandedCostService } from '../landed-cost/landed-cost.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
 import { ProductSource } from '../common/enums/product-source.enum';
+import { generateOrderNumber } from './utils/generate-order-number';
 import type {
   ShippingDestination,
   ShippingService as ShippingServiceType,
@@ -255,6 +256,7 @@ export class OrdersService {
 
       const o = em.create(Order, {
         userId,
+        orderNumber: generateOrderNumber(),
         status: OrderStatus.PENDING,
         subtotal: subtotal.toFixed(2),
         fees: lc.serviceChargeUsd.toFixed(2),
@@ -325,7 +327,7 @@ export class OrdersService {
     }
 
     const confirmTpl = this.emailTemplates.orderConfirmation({
-      orderId: order.id,
+      orderId: order.orderNumber || order.id,
       currency,
       total: order.total,
       displayName: [user.firstName, user.lastName].filter(Boolean).join(' ') || null,
@@ -387,9 +389,12 @@ export class OrdersService {
     return { order: this.toResponse(o) };
   }
 
-  async findForUser(userId: string, orderId: string) {
+  async findForUser(userId: string, idOrNumber: string) {
+    const isOrderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrNumber);
     const o = await this.orders.findOne({
-      where: { id: orderId, userId },
+      where: isOrderUuid
+        ? { id: idOrNumber, userId }
+        : { orderNumber: idOrNumber.toUpperCase(), userId },
       relations: ['items', 'trackingEvents'],
     });
     if (!o) {
@@ -403,9 +408,12 @@ export class OrdersService {
    * money has moved and there's nothing to refund. Once PAID or later,
    * customers go through the existing disputes/support flow instead.
    */
-  async cancelOrder(userId: string, orderId: string) {
+  async cancelOrder(userId: string, idOrNumber: string) {
+    const isOrderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrNumber);
     const o = await this.orders.findOne({
-      where: { id: orderId, userId },
+      where: isOrderUuid
+        ? { id: idOrNumber, userId }
+        : { orderNumber: idOrNumber.toUpperCase(), userId },
       relations: ['items', 'trackingEvents'],
     });
     if (!o) {
@@ -426,9 +434,10 @@ export class OrdersService {
     return this.toResponse(o);
   }
 
-  async findById(orderId: string): Promise<Order> {
+  async findById(idOrNumber: string): Promise<Order> {
+    const isOrderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrNumber);
     const o = await this.orders.findOne({
-      where: { id: orderId },
+      where: isOrderUuid ? { id: idOrNumber } : { orderNumber: idOrNumber.toUpperCase() },
       relations: ['items', 'user', 'trackingEvents'],
     });
     if (!o) {
@@ -619,8 +628,11 @@ export class OrdersService {
       parseFloat(o.riskBuffer        || '0')
     ).toFixed(2);
 
+    const orderNumber = o.orderNumber ?? `KAO-${o.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
     return {
       id: o.id,
+      orderNumber,
       userId: o.userId,
       ...(admin && o.user ? { userEmail: o.user.email } : {}),
       status: o.status,
@@ -690,6 +702,55 @@ export class OrdersService {
         canRequestPriceVerification: true,
         priceVerificationEndpoint: '/reconciliation/price-disputes',
       },
+    };
+  }
+
+  async getPublicTracking(idOrNumber: string) {
+    const clean = (idOrNumber ?? '').trim();
+    if (!clean) {
+      throw new BadRequestException('Order reference is required');
+    }
+    const isOrderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clean);
+    const o = await this.orders.findOne({
+      where: isOrderUuid ? { id: clean } : { orderNumber: clean.toUpperCase() },
+      relations: ['items', 'trackingEvents'],
+    });
+    if (!o) {
+      throw new NotFoundException(
+        'We could not find an order matching that reference. Please check your order ID and try again.',
+      );
+    }
+    return this.toPublicTrackingResponse(o);
+  }
+
+  toPublicTrackingResponse(o: Order) {
+    const orderNumber = o.orderNumber ?? `KAO-${o.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
+    return {
+      id: o.id,
+      orderNumber,
+      status: o.status,
+      carrier: o.carrier,
+      trackingNumber: o.trackingNumber,
+      destinationCity: o.shippingAddress?.city ?? null,
+      destinationCountry: o.shippingAddress?.country ?? null,
+      createdAt: o.createdAt,
+      updatedAt: o.updatedAt,
+      items: (o.items || []).map((i) => ({
+        title: i.titleSnapshot,
+        quantity: i.quantity,
+        images: i.imagesSnapshot,
+        variant: i.variantSnapshot,
+      })),
+      itemCount: (o.items || []).reduce((acc, i) => acc + (i.quantity || 1), 0),
+      tracking: (o.trackingEvents || []).map((t) => ({
+        id: t.id,
+        carrier: t.carrier,
+        trackingNumber: t.trackingNumber,
+        status: t.status,
+        message: t.message ?? null,
+        createdAt: t.createdAt,
+      })),
     };
   }
 }

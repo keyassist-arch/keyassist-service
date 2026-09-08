@@ -19,6 +19,9 @@ export class Order {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column({ name: 'order_number', type: 'varchar', length: 32, nullable: true, unique: true })
+  orderNumber: string | null;
+
   @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
 

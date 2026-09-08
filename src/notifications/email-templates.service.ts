@@ -245,7 +245,8 @@ export class EmailTemplateService {
   }): EmailTemplate {
     const name = args.displayName?.trim();
     const greeting = name ? `Hi ${name},` : 'Hi there,';
-    const subject = `Order confirmed — #${args.orderId.slice(0, 8).toUpperCase()}`;
+    const orderRef = args.orderId.startsWith('KAO-') ? args.orderId : args.orderId.slice(0, 8).toUpperCase();
+    const subject = `Order confirmed — #${orderRef}`;
     const totalDisplay = `${args.currency} ${args.total}`;
 
     const text =
@@ -270,7 +271,7 @@ export class EmailTemplateService {
       subject,
       text,
       html: layout({
-        preheader: `Your KeyAssist order #${args.orderId.slice(0, 8).toUpperCase()} has been received.`,
+        preheader: `Your KeyAssist order #${orderRef} has been received.`,
         heading: 'Order received',
         bodyHtml,
       }),
@@ -285,7 +286,8 @@ export class EmailTemplateService {
   }): EmailTemplate {
     const name = args.displayName?.trim();
     const greeting = name ? `Hi ${name},` : 'Hi there,';
-    const subject = `Payment confirmed — #${args.orderId.slice(0, 8).toUpperCase()}`;
+    const orderRef = args.orderId.startsWith('KAO-') ? args.orderId : args.orderId.slice(0, 8).toUpperCase();
+    const subject = `Payment confirmed — #${orderRef}`;
     const totalDisplay = `${args.currency} ${args.total}`;
 
     const text =
