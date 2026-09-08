@@ -54,7 +54,7 @@ export class AdminController {
   @Patch('orders/:id')
   @RequirePermission(AdminPermission.ORDERS)
   patchOrder(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: AdminPatchOrderDto,
   ) {
     return this.adminService.patchOrder(id, dto);
