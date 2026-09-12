@@ -19,7 +19,7 @@ Client
 | Request API | `POST /products/import` (queued). Admin-only **`POST /admin/scrape-preview`** runs a **sync** scrape for debugging (no DB import row). |
 | Rotating proxies | Optional **`SCRAPE_PROXY`** on each Playwright **browser context** (`PlaywrightService.newScrapeContext`). Plug in Bright Data, Smartproxy, etc. Full IP rotation is provider-side. |
 | Browser layer | **Playwright** (Chromium), shared browser, per-scrape context. |
-| Anti-bot (light) | Per-context **User-Agent** (pool in `pickScrapeUserAgent()`; adapters may override). Site-specific adapters (Jumia, Amazon, Nike, Apple, Shein) + **generic** JSON-LD / OG fallback. |
+| Anti-bot (light) | No forced UA override — every context uses the launched Chromium's real `navigator.userAgent`/Client Hints (kept internally consistent), `--disable-blink-features=AutomationControlled` + StealthPlugin, a post-load humanize pass (delay/mouse/scroll), and a challenge-page detector (`PlaywrightService.detectBlock`) that flags Cloudflare/PerimeterX/Datadome/Akamai/CAPTCHA pages via `LoadedPage.blockedReason`. Site-specific adapters (Jumia, Amazon, Nike, Apple, Shein) + **generic** JSON-LD / OG fallback. |
 | Normalized output | **`ScrapedProduct`** (`title`, `price`, `currency`, `images`, `variants`, …) then `ProductsService.buildProductFromScrape` + markup. |
 | Queue / scale | **BullMQ** + Redis — scrapes **never** run on the HTTP thread for user imports. |
 
@@ -32,7 +32,7 @@ Client
 | Playwright lifecycle | `src/scraper/playwright.service.ts` (`getBrowser`, `newScrapeContext`) |
 | Proxy parsing | `src/scraper/utils/parse-scrape-proxy.util.ts` |
 | Locale / language / timezone | Env `SCRAPE_LOCALE`, `SCRAPE_ACCEPT_LANGUAGE`, `SCRAPE_TIMEZONE_ID` → `PlaywrightService.newScrapeContext` (defaults: `en-US`, `en-US,en;q=0.9`, `America/Los_Angeles`). Reduces wrong-region HTML (e.g. `content-language: ko-KR`) vs [Apple US buy pages](https://www.apple.com/shop/buy-iphone/iphone-air). |
-| UA rotation | `src/scraper/utils/user-agent-rotation.util.ts` |
+| Bot-wall/challenge detection | `PlaywrightService.detectBlock` (private, called from `loadPage`) |
 | Site adapters | `src/scraper/adapters/*.adapter.ts` |
 | Normalized shape | `src/scraper/interfaces/scraped-product.interface.ts` |
 | Queue worker | `src/jobs/processors/scrape-product.processor.ts` |
@@ -72,6 +72,10 @@ SCRAPE_PROXY=http://YOUR_SCAPE_DO_TOKEN@api.scrape.do:80
 Confirm host, port, and whether a **password** or extra flags are required in your plan; encode special characters in the token per URL rules. Keep **`SCRAPE_LOCALE` / `SCRAPE_ACCEPT_LANGUAGE` / `SCRAPE_TIMEZONE_ID`** US-oriented for `amazon.com` PDPs.
 
 Services such as Scrape.do combine **residential/datacenter IPs**, **session cookies** (surfacing as `scrape.do-cookies` on **their** response), and consistent **locale** so heavy PDPs render completely. Locally, **`SCRAPE_PROXY`** from a US-capable provider plus the locale env vars above is the supported way to approximate that; the Apple adapter parses **configuration lines** from the main content into `variants` and `product.description`.
+
+## Ceiling of browser-level hardening (no `SCRAPE_PROXY` set)
+
+Without `SCRAPE_PROXY`, every scrape leaves from the host's own egress IP — on Railway that's a shared datacenter range. Enterprise bot management (Akamai, PerimeterX, Datadome — what Amazon/Walmart/Nike run) blocks primarily on **IP reputation**, ahead of browser fingerprint. `PlaywrightService`'s hardening (consistent UA/Client Hints, stealth patches, humanize pass, challenge detection) closes real gaps and should measurably help sites with lighter protection (Etsy, eBay, Backmarket, Zara, Jumia, Reebelo, Converse), but it cannot fix a block keyed on the IP itself. Watch worker logs for `[playwright] loadPage blocked reason=...` — a `cloudflare-challenge`/`perimeterx`/`datadome`/`akamai-*`/`http-403`/`http-429` reason on a site that used to work through scrape.do is the signal that only `SCRAPE_PROXY` (or restoring scrape.do) fixes, not further browser-side tuning.
 
 ## Operational note
 

@@ -21,11 +21,17 @@ export type LoadedPage = {
   page: Page;
   context: BrowserContext;
   source: 'scrape.do' | 'playwright';
+  /**
+   * Set when the response looks like a bot-detection challenge/block page
+   * (Cloudflare, PerimeterX, Datadome, Akamai, retailer CAPTCHA, HTTP 403/429/503).
+   * Adapters that get empty title/price back should treat that as an expected
+   * outcome of the block, not a selector bug, when this is set.
+   */
+  blockedReason?: string;
 };
 
 chromium.use(StealthPlugin());
 import { parseScrapeProxy } from './utils/parse-scrape-proxy.util';
-import { pickScrapeUserAgent } from './utils/user-agent-rotation.util';
 
 type GeoProfile = {
   geoCode?: string;
@@ -137,6 +143,10 @@ export class PlaywrightService implements OnModuleDestroy {
           '--disable-extensions',
           '--disable-sync',
           '--no-first-run',
+          // Leaves `window.navigator.webdriver` false at the CDP level (on top of
+          // StealthPlugin's JS-side patch) — one of the first checks most bot-detection
+          // scripts run.
+          '--disable-blink-features=AutomationControlled',
         ],
       });
       if (this.config.get<string>('SCRAPE_PROXY')?.trim()) {
@@ -205,16 +215,22 @@ export class PlaywrightService implements OnModuleDestroy {
       profile.geoCode,
     );
     const proxy = overrides.proxy ?? proxyFromEnv;
-    const userAgent = overrides.userAgent ?? pickScrapeUserAgent();
     const locale = overrides.locale ?? profile.locale;
     const timezoneId = overrides.timezoneId ?? profile.timezoneId;
     const acceptLang = profile.acceptLanguage;
     const ignoreHTTPSErrors = this.resolveIgnoreHttpSErrors(overrides);
+    // No default `userAgent` override here (adapters used to hardcode one, see
+    // git history): a spoofed UA string still leaves the browser's real Client
+    // Hints (`Sec-CH-UA`, `navigator.userAgentData`) and `navigator.platform`
+    // reporting the actual Chromium build/OS, so an overridden version/OS just
+    // creates a UA-vs-Client-Hints mismatch — itself a bot-detection signal.
+    // Leaving `userAgent` unset keeps everything the browser sends internally
+    // consistent; pass `contextOverrides.userAgent` only if a specific adapter
+    // has a proven, verified reason to.
     return browser.newContext({
       ...overrides,
       locale,
       timezoneId,
-      userAgent,
       ignoreHTTPSErrors,
       ...(proxy ? { proxy } : {}),
       extraHTTPHeaders: {
@@ -242,6 +258,61 @@ export class PlaywrightService implements OnModuleDestroy {
       );
       return null;
     }
+  }
+
+  /** Substring signatures for the major bot-management vendors' challenge/block pages. */
+  private static readonly BLOCK_SIGNATURES: Array<{ reason: string; pattern: RegExp }> = [
+    {
+      reason: 'amazon-captcha',
+      pattern: /Enter the characters you see below|api-services-support@amazon\.com/i,
+    },
+    {
+      reason: 'cloudflare-challenge',
+      pattern: /Attention Required! \| Cloudflare|cf-browser-verification|Just a moment\.\.\./i,
+    },
+    {
+      reason: 'perimeterx',
+      pattern: /Please verify you are a human|px-captcha|distil_r_blocked/i,
+    },
+    { reason: 'datadome', pattern: /geo\.captcha-delivery\.com|datadome/i },
+    { reason: 'akamai-access-denied', pattern: /Access Denied[\s\S]{0,300}Reference #/i },
+    { reason: 'generic-robot-check', pattern: /unusual traffic|automated (queries|requests)/i },
+  ];
+
+  /**
+   * Best-effort detection of a bot-management challenge page so a downstream
+   * "title/price missing" failure can be logged as "blocked by X" instead of a
+   * silent adapter/selector bug — the two look identical without this.
+   */
+  private async detectBlock(page: Page, status?: number): Promise<string | undefined> {
+    if (status === 403 || status === 429 || status === 503) {
+      return `http-${status}`;
+    }
+    try {
+      const html = await page.content();
+      const sample = html.slice(0, 20_000);
+      for (const sig of PlaywrightService.BLOCK_SIGNATURES) {
+        if (sig.pattern.test(sample)) return sig.reason;
+      }
+    } catch {
+      // page may have navigated away/closed between goto and here — not worth failing over
+    }
+    return undefined;
+  }
+
+  /**
+   * Small randomized delay + mouse move + scroll so every scrape isn't an
+   * instant "load then read the DOM" — a timing/behavior pattern some
+   * bot-management heuristics key on. Cheap relative to full page load time.
+   */
+  private async humanize(page: Page): Promise<void> {
+    await page.waitForTimeout(300 + Math.floor(Math.random() * 500));
+    await page
+      .mouse.move(100 + Math.random() * 400, 100 + Math.random() * 300)
+      .catch(() => undefined);
+    await page
+      .evaluate(() => window.scrollBy(0, 200 + Math.random() * 300))
+      .catch(() => undefined);
   }
 
   private checkContextLeak(): void {
@@ -293,12 +364,22 @@ export class PlaywrightService implements OnModuleDestroy {
         );
       });
       await page.unroute(url).catch(() => undefined);
-      return { page, context, source: 'scrape.do' };
+      await this.humanize(page);
+      const blockedReason = await this.detectBlock(page);
+      if (blockedReason) {
+        this.logger.warn(`[playwright] loadPage blocked reason=${blockedReason} url=${url.slice(0, 80)}`);
+      }
+      return { page, context, source: 'scrape.do', ...(blockedReason ? { blockedReason } : {}) };
     }
 
     this.logger.log(`[playwright] loadPage source=playwright url=${url.slice(0, 80)}`);
-    await page.goto(url, gotoOptions);
-    return { page, context, source: 'playwright' };
+    const response = await page.goto(url, gotoOptions);
+    await this.humanize(page);
+    const blockedReason = await this.detectBlock(page, response?.status());
+    if (blockedReason) {
+      this.logger.warn(`[playwright] loadPage blocked reason=${blockedReason} url=${url.slice(0, 80)}`);
+    }
+    return { page, context, source: 'playwright', ...(blockedReason ? { blockedReason } : {}) };
   }
 
   async onModuleDestroy(): Promise<void> {

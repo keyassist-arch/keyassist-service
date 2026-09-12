@@ -313,14 +313,7 @@ export class EbayAdapter implements ScraperAdapter {
     scrapeUrl: string,
     pageIid: string | null,
   ): Promise<RawEbayData | null> {
-    const context = await this.playwright.newScrapeContext(
-      {
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      },
-      scrapeUrl,
-    );
+    const context = await this.playwright.newScrapeContext({}, scrapeUrl);
     try {
       const page = await context.newPage();
       await page.goto(scrapeUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });

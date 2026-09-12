@@ -195,14 +195,7 @@ export class StockxAdapter implements ScraperAdapter {
 
   /** Fallback: use Playwright directly (works with SCRAPE_PROXY or residential IPs). */
   private async fetchViaPlaywright(url: string): Promise<StockxExtracted | null> {
-    const context = await this.playwright.newScrapeContext(
-      {
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      },
-      url,
-    );
+    const context = await this.playwright.newScrapeContext({}, url);
     try {
       const page = await context.newPage();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
