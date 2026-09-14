@@ -23,7 +23,8 @@
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "db:reset-catalog": "ts-node -r tsconfig-paths/register src/scripts/reset-catalog-commerce.ts",
     "seed:categories": "ts-node -r tsconfig-paths/register src/scripts/seed-categories.ts",
-    "backfill:categories": "ts-node -r tsconfig-paths/register src/scripts/backfill-product-categories.ts"
+    "backfill:categories": "ts-node -r tsconfig-paths/register src/scripts/backfill-product-categories.ts",
+    "create:admin": "ts-node -r tsconfig-paths/register src/scripts/create-admin-user.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",
