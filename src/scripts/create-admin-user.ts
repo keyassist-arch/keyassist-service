@@ -23,19 +23,8 @@ import * as bcrypt from 'bcrypt';
 import { resolve } from 'path';
 import { config } from 'dotenv';
 import { DataSource } from 'typeorm';
-import { User } from '../users/entities/user.entity';
 import { UserRole } from '../common/enums/role.enum';
 import { AdminPermission } from '../common/enums/admin-permission.enum';
-import { Cart } from '../cart/entities/cart.entity';
-import { Product } from '../products/entities/product.entity';
-import { ImportedProduct } from '../products/entities/imported-product.entity';
-import { Order } from '../orders/entities/order.entity';
-import { OrderItem } from '../orders/entities/order-item.entity';
-import { OrderTracking } from '../tracking/entities/order-tracking.entity';
-import { Refund } from '../reconciliation/entities/refund.entity';
-import { CustomerIssue } from '../reconciliation/entities/customer-issue.entity';
-import { ShippingRates } from '../shipping/entities/shipping-rates.entity';
-import { SavedPaymentMethod } from '../payment/entities/saved-payment-method.entity';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -165,80 +154,83 @@ async function main() {
   const ds = new DataSource({
     type: 'postgres',
     url,
-    entities: [
-      User,
-      Cart,
-      Product,
-      ImportedProduct,
-      Order,
-      OrderItem,
-      OrderTracking,
-      Refund,
-      CustomerIssue,
-      ShippingRates,
-      SavedPaymentMethod,
-    ],
     synchronize: false,
   });
 
   console.log('\nConnecting to database...');
   await ds.initialize();
-  const usersRepo = ds.getRepository(User);
 
   try {
-    let user = await usersRepo.findOne({ where: { email } });
+    const rows = await ds.query(
+      `SELECT id, email, first_name, last_name, role, permissions FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+      [email],
+    );
+    const existing = rows[0];
 
-    if (user && !isForceUpdate) {
+    if (existing && !isForceUpdate) {
       console.error(
-        `\n[Error] User with email '${email}' already exists (ID: ${user.id}, Role: ${user.role}).`,
+        `\n[Error] User with email '${email}' already exists (ID: ${existing.id}, Role: ${existing.role}).`,
       );
       console.log(
         'To overwrite password and update admin role/permissions, run again with the --force flag:\n',
       );
       console.log(
-        `  pnpm run create:admin -- --email="${email}" --force\n`,
+        `  node dist/scripts/create-admin-user.js --email="${email}" --force\n`,
       );
       process.exit(1);
     }
 
     const passwordHash = await bcrypt.hash(plainPassword, 10);
+    const permsJson = JSON.stringify(permissions);
 
-    if (user) {
+    let finalUser: any;
+    if (existing) {
       console.log(`\nUpdating existing user '${email}' to ${role}...`);
-      user.firstName = firstName;
-      user.lastName = lastName;
-      user.role = role;
-      user.permissions = permissions;
-      user.passwordHash = passwordHash;
-      user.emailVerifiedAt = user.emailVerifiedAt || new Date();
-      user.adminDisabledAt = null;
-      user.refreshTokenHash = null;
-      user = await usersRepo.save(user);
+      const updateResult = await ds.query(
+        `UPDATE users
+         SET first_name = $1,
+             last_name = $2,
+             role = $3,
+             permissions = $4::jsonb,
+             password_hash = $5,
+             email_verified_at = COALESCE(email_verified_at, NOW()),
+             admin_disabled_at = NULL,
+             refresh_token_hash = NULL,
+             updated_at = NOW()
+         WHERE id = $6
+         RETURNING id, email, first_name, last_name, role, permissions`,
+        [firstName, lastName, role, permsJson, passwordHash, existing.id],
+      );
+      finalUser = updateResult[0];
       console.log('User successfully updated!');
     } else {
       console.log(`\nCreating new admin user '${email}' with role ${role}...`);
-      user = usersRepo.create({
-        email,
-        firstName,
-        lastName,
-        role,
-        permissions,
-        passwordHash,
-        emailVerifiedAt: new Date(),
-        adminDisabledAt: null,
-      });
-      user = await usersRepo.save(user);
+      const insertResult = await ds.query(
+        `INSERT INTO users (
+           email,
+           first_name,
+           last_name,
+           role,
+           permissions,
+           password_hash,
+           email_verified_at,
+           admin_disabled_at
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW(), NULL)
+         RETURNING id, email, first_name, last_name, role, permissions`,
+        [email, firstName, lastName, role, permsJson, passwordHash],
+      );
+      finalUser = insertResult[0];
       console.log('Admin user successfully created!');
     }
 
     console.log('\n========================================================');
     console.log('                 ADMIN CREDENTIALS                      ');
     console.log('========================================================');
-    console.log(`  User ID:     ${user.id}`);
-    console.log(`  Email:       ${user.email}`);
-    console.log(`  Name:        ${user.firstName} ${user.lastName}`);
-    console.log(`  Role:        ${user.role}`);
-    console.log(`  Permissions: ${JSON.stringify(user.permissions)}`);
+    console.log(`  User ID:     ${finalUser.id}`);
+    console.log(`  Email:       ${finalUser.email}`);
+    console.log(`  Name:        ${finalUser.first_name || firstName} ${finalUser.last_name || lastName}`);
+    console.log(`  Role:        ${finalUser.role}`);
+    console.log(`  Permissions: ${JSON.stringify(permissions)}`);
     console.log(`  Password:    ${plainPassword}`);
     console.log('========================================================');
     console.log(
