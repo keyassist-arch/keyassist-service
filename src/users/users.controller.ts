@@ -7,6 +7,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { ConfirmTotpDto } from './dto/confirm-totp.dto';
 import { DisableTotpDto } from './dto/disable-totp.dto';
 import { SendPhoneOtpDto } from './dto/send-phone-otp.dto';
@@ -32,6 +33,20 @@ export class UsersController {
   ) {
     const updated = await this.usersService.updateProfile(user.sub, dto);
     return this.usersService.toPublic(updated);
+  }
+
+  @Patch('me/password')
+  @ApiOperation({ summary: 'Change password for authenticated user' })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.usersService.changePassword(
+      user.sub,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 
   @Get('me/2fa')

@@ -14,6 +14,7 @@ import { User, ShippingAddress } from './entities/user.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { TotpService } from '../totp/totp.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailTemplateService } from '../notifications/email-templates.service';
 import { isEnvFlagEnabled } from '../common/utils/env-flag.util';
 import { UserRole } from '../common/enums/role.enum';
 import { AdminPermission } from '../common/enums/admin-permission.enum';
@@ -33,6 +34,7 @@ export class UsersService {
     private readonly totp: TotpService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
+    private readonly emailTemplates: EmailTemplateService,
   ) {}
 
   async create(
@@ -194,6 +196,45 @@ export class UsersService {
       passwordHash,
       refreshTokenHash: null,
     });
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const user = await this.findById(userId);
+    const isCurrentValid = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash,
+    );
+    if (!isCurrentValid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException(
+        'New password must be different from your current password',
+      );
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.users.update(userId, {
+      passwordHash,
+      refreshTokenHash: null,
+    });
+
+    const pwdTpl = this.emailTemplates.passwordChanged();
+    await this.notifications
+      .sendEmail({
+        to: user.email,
+        subject: pwdTpl.subject,
+        text: pwdTpl.text,
+        html: pwdTpl.html,
+      })
+      .catch(() => {
+        // Non-blocking notification
+      });
+
+    return { message: 'Password updated successfully' };
   }
 
   async markEmailVerified(userId: string): Promise<void> {
