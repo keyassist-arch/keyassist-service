@@ -13,9 +13,13 @@ import {
   MIN_WEIGHT_LBS,
   OCEAN_SMALL_BOX_RATE,
   TV_CLEARING_FEE,
+  AIR_RATE_LAGOS_PICKUP_PER_LB,
+  AIR_RATE_LAGOS_PER_LB,
+  AIR_RATE_OUTSIDE_LAGOS_PER_LB,
 } from './utils/kingz-rates';
 
 export type ResolvedRates = {
+  airRateLagosPickupPerLb: number;
   airRateLagosPerLb: number;
   airRateOutsideLagosPerLb: number;
   dimDivisor: number;
@@ -29,8 +33,9 @@ export type ResolvedRates = {
 };
 
 const DEFAULTS: ResolvedRates = {
-  airRateLagosPerLb: AIR_RATE_PER_LB,
-  airRateOutsideLagosPerLb: AIR_RATE_PER_LB,
+  airRateLagosPickupPerLb: AIR_RATE_LAGOS_PICKUP_PER_LB,
+  airRateLagosPerLb: AIR_RATE_LAGOS_PER_LB,
+  airRateOutsideLagosPerLb: AIR_RATE_OUTSIDE_LAGOS_PER_LB,
   dimDivisor: DIM_DIVISOR,
   airMinimumLagos: AIR_MINIMUM_LAGOS,
   airMinimumOutsideLagos: AIR_MINIMUM_OUTSIDE_LAGOS,
@@ -82,6 +87,7 @@ export class ShippingRatesService implements OnModuleInit {
       const row = await this.repo.findOne({ where: { id: 1 } });
       if (row) {
         this.cache = {
+          airRateLagosPickupPerLb: parseFloat(row.airRateLagosPerLb) || AIR_RATE_LAGOS_PICKUP_PER_LB,
           airRateLagosPerLb: parseFloat(row.airRateLagosPerLb),
           airRateOutsideLagosPerLb: parseFloat(row.airRateOutsideLagosPerLb),
           dimDivisor: row.dimDivisor,

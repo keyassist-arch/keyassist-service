@@ -4,9 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { Cart } from './entities/cart.entity';
 import { CartItem } from './entities/cart-item.entity';
+import { Order } from '../orders/entities/order.entity';
+import { OrderStatus } from '../common/enums/order-status.enum';
 import { ProductsService } from '../products/products.service';
 import { computePricing } from '../common/utils/pricing.util';
 
@@ -20,8 +22,21 @@ export class CartService {
     private readonly carts: Repository<Cart>,
     @InjectRepository(CartItem)
     private readonly items: Repository<CartItem>,
+    @InjectRepository(Order)
+    private readonly ordersRepo: Repository<Order>,
     private readonly productsService: ProductsService,
   ) {}
+
+  async isEligibleForFirstOrderDiscount(userId?: string | null): Promise<boolean> {
+    if (!userId) return false;
+    const count = await this.ordersRepo.count({
+      where: {
+        userId,
+        status: Not(OrderStatus.CANCELLED),
+      },
+    });
+    return count === 0;
+  }
 
   async getOrCreateCart(userId: string): Promise<Cart> {
     const existing = await this.carts.findOne({
@@ -38,7 +53,8 @@ export class CartService {
 
   async getCart(userId: string) {
     const cart = await this.getOrCreateCart(userId);
-    return this.toResponse(cart);
+    const isFirstOrder = await this.isEligibleForFirstOrderDiscount(userId);
+    return this.toResponse(cart, isFirstOrder);
   }
 
   async addItem(
@@ -193,7 +209,7 @@ export class CartService {
     await this.items.delete({ cartId });
   }
 
-  private toResponse(cart: Cart) {
+  private toResponse(cart: Cart, isFirstOrder = false) {
     let subtotal = 0;
     let currency = '';
     for (const i of cart.items || []) {
@@ -209,7 +225,7 @@ export class CartService {
         currency = i.product.currency;
       }
     }
-    const pricing = computePricing(subtotal);
+    const pricing = computePricing(subtotal, 0, isFirstOrder);
     return {
       id: cart.id,
       subtotal: subtotal.toFixed(2),

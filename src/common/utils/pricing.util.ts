@@ -9,6 +9,8 @@ export function computePlatformFee(priceUsd: number): number {
   return priceUsd <= 100 ? 6 : Math.round(priceUsd * 0.1 * 100) / 100;
 }
 
+export const FIRST_ORDER_DISCOUNT_RATE = 0.5;
+
 export type PricingBreakdown = {
   serviceCharge: number;
   discount: number;
@@ -20,11 +22,18 @@ export type PricingBreakdown = {
 export function computePricing(
   subtotal: number,
   shippingFee = 0,
+  isFirstOrder = false,
 ): PricingBreakdown {
-  const serviceCharge = subtotal * SERVICE_CHARGE_RATE;
-  const discount =
-    subtotal > DISCOUNT_THRESHOLD_USD ? subtotal * DISCOUNT_RATE : 0;
+  const baseTotal = subtotal + shippingFee;
+  const rawServiceCharge = Math.round(baseTotal * SERVICE_CHARGE_RATE * 100) / 100;
+  const firstOrderDiscount = isFirstOrder
+    ? Math.round(rawServiceCharge * FIRST_ORDER_DISCOUNT_RATE * 100) / 100
+    : 0;
+  const volumeDiscount =
+    subtotal > DISCOUNT_THRESHOLD_USD ? Math.round(subtotal * DISCOUNT_RATE * 100) / 100 : 0;
+  const discount = Math.round((firstOrderDiscount + volumeDiscount) * 100) / 100;
+  const serviceCharge = rawServiceCharge;
   const fees = serviceCharge;
-  const total = subtotal + fees + shippingFee - discount;
+  const total = Math.round((subtotal + fees + shippingFee - discount) * 100) / 100;
   return { serviceCharge, discount, fees, shippingFee, total };
 }

@@ -552,7 +552,7 @@ export class ProductImportService {
     // FX-converts price into USD, so a wrong currency silently divides the amount
     // (e.g. 2000 tagged NGN became USD 1.37).
     const scraped = {
-      title: dto.title,
+      title: dto.title?.trim() || 'Manual Product Request',
       price: dto.price != null ? dto.price.toFixed(2) : '0.00',
       currency: dto.price != null ? (dto.currency ?? 'USD') : 'USD',
       images: dto.imageUrls ?? [],

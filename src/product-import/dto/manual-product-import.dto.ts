@@ -14,11 +14,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
 export class ManualProductImportDto {
-  @ApiProperty({ description: 'Product title', maxLength: 500 })
+  @ApiPropertyOptional({ description: 'Product title (optional)', maxLength: 500 })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(500)
-  title: string;
+  title?: string;
 
   /**
    * Customers are not asked for a price — admin quotes the request from the queue

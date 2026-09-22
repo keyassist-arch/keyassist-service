@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { Product } from '../products/entities/product.entity';
+import { Order } from '../orders/entities/order.entity';
+import { OrderStatus } from '../common/enums/order-status.enum';
 import { ProductSource } from '../common/enums/product-source.enum';
 import { CurrencyService } from '../currency/currency.service';
 import { ShippingService } from '../shipping/shipping.service';
@@ -12,6 +14,7 @@ import {
   PRODUCT_TAX_RATE,
   DISCOUNT_RATE,
   DISCOUNT_THRESHOLD_USD,
+  FIRST_ORDER_DISCOUNT_RATE,
 } from '../common/utils/pricing.util';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
@@ -35,6 +38,7 @@ export type CartLandedCostOpts = {
   shippingService: ShippingServiceType;
   category: ProductCategory;
   insurance?: boolean;
+  isFirstOrder?: boolean;
 };
 
 /**
@@ -54,11 +58,24 @@ export class LandedCostService {
   constructor(
     @InjectRepository(Product)
     private readonly products: Repository<Product>,
+    @InjectRepository(Order)
+    private readonly ordersRepo: Repository<Order>,
     private readonly currencyService: CurrencyService,
     private readonly shippingService: ShippingService,
     private readonly cartService: CartService,
     private readonly productsService: ProductsService,
   ) {}
+
+  async isEligibleForFirstOrderDiscount(userId?: string | null): Promise<boolean> {
+    if (!userId) return false;
+    const count = await this.ordersRepo.count({
+      where: {
+        userId,
+        status: Not(OrderStatus.CANCELLED),
+      },
+    });
+    return count === 0;
+  }
 
   async quote(dto: LandedCostQuoteDto): Promise<LandedCostBreakdown> {
     const { marketplace, productPriceUsd, category, destination, shippingService, displayCurrency } =
@@ -107,21 +124,25 @@ export class LandedCostService {
     const internationalShipping = kQuote.total - insuranceUsd;
 
     // ── 3. Buffers (product subtotal basis only) ─────────────────────────────
-    const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
-    const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
-
-    // ── 4. Our margin ────────────────────────────────────────────────────────
-    const serviceCharge = computePlatformFee(productSubtotal);
-    const discount = productSubtotal > DISCOUNT_THRESHOLD_USD
-      ? round(productSubtotal * DISCOUNT_RATE)
-      : 0;
-
-    // ── 5. Import & Delivery Total ───────────────────────────────────────────
+    // ── 3. Import & Delivery Total ───────────────────────────────────────────
     const importAndDelivery = round(
       marketplaceShipping + domesticHandling + internationalShipping,
     );
 
-    // ── 6. Grand total ───────────────────────────────────────────────────────
+    // ── 4. Buffers & Margin (applied to cart total to safeguard profit margin) ──
+    const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
+    const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
+    const baseCost = round(itemCost + importAndDelivery + insuranceUsd);
+    const serviceCharge = computePlatformFee(baseCost);
+    const firstOrderDiscount = dto.isFirstOrder
+      ? round(serviceCharge * FIRST_ORDER_DISCOUNT_RATE)
+      : 0;
+    const volumeDiscount = productSubtotal > DISCOUNT_THRESHOLD_USD
+      ? round(productSubtotal * DISCOUNT_RATE)
+      : 0;
+    const discount = round(firstOrderDiscount + volumeDiscount);
+
+    // ── 5. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
       itemCost + importAndDelivery + insuranceUsd +
         fxBuffer + riskBuffer + serviceCharge - discount,
@@ -254,23 +275,26 @@ export class LandedCostService {
     const internationalShipping = kQuote.total - insuranceUsd;
     const totalQty = lines.reduce((s, l) => s + l.qty, 0);
 
-    // ── 3. Buffers (product subtotal basis only) ─────────────────────────────
-    const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
-    const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
-
-    // ── 4. Margin ────────────────────────────────────────────────────────────
-    const serviceCharge = computePlatformFee(productSubtotal);
-    const discount =
-      productSubtotal > DISCOUNT_THRESHOLD_USD
-        ? round(productSubtotal * DISCOUNT_RATE)
-        : 0;
-
-    // ── 5. Import & Delivery Total ───────────────────────────────────────────
+    // ── 3. Import & Delivery Total ───────────────────────────────────────────
     const importAndDelivery = round(
       marketplaceShipping + domesticHandling + internationalShipping,
     );
 
-    // ── 6. Grand total ───────────────────────────────────────────────────────
+    // ── 4. Margin (applied to cart total to safeguard profit margin) ─────────
+    const fxBuffer = round(productSubtotal * FX_BUFFER_RATE);
+    const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
+    const baseCost = round(itemCost + importAndDelivery + insuranceUsd);
+    const serviceCharge = computePlatformFee(baseCost);
+    const firstOrderDiscount = opts.isFirstOrder
+      ? round(serviceCharge * FIRST_ORDER_DISCOUNT_RATE)
+      : 0;
+    const volumeDiscount =
+      productSubtotal > DISCOUNT_THRESHOLD_USD
+        ? round(productSubtotal * DISCOUNT_RATE)
+        : 0;
+    const discount = round(firstOrderDiscount + volumeDiscount);
+
+    // ── 5. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
       itemCost + importAndDelivery + insuranceUsd +
         fxBuffer + riskBuffer + serviceCharge - discount,
@@ -349,6 +373,9 @@ export class LandedCostService {
       throw new BadRequestException('Cart is empty');
     }
 
+    const isFirstOrder =
+      opts.isFirstOrder ?? (await this.isEligibleForFirstOrderDiscount(userId));
+
     const lines: CartLineInput[] = items.map((i) => ({
       priceUsd: parseFloat(
         this.productsService.resolveVariantPrice(i.product, i.variantSelection),
@@ -362,6 +389,7 @@ export class LandedCostService {
       shippingService: opts.shippingService,
       category: opts.category ?? 'generic',
       insurance: opts.insurance ?? false,
+      isFirstOrder,
     });
 
     const targetCurrency = (opts.displayCurrency ?? 'USD').toUpperCase();

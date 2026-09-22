@@ -8,17 +8,14 @@
 // ─── Air Freight ────────────────────────────────────────────────────────────
 
 /**
- * Air freight rate per billable lb (USA → Nigeria, all delivery types).
- * Lagos office pickup, self-pickup, and door-to-door all share this rate.
- * Previously separate Lagos ($5.00) / outside-Lagos ($6.00) rates — now unified at $5.50.
+ * Air freight rates per billable lb (USA → Nigeria).
+ * Lagos office pickup is free of local delivery surcharges ($5.50/lb).
+ * Doorstep delivery within Lagos ($6.00/lb) and outside Lagos ($6.50/lb) include local delivery charges.
  */
+export const AIR_RATE_LAGOS_PICKUP_PER_LB = 5.5;
+export const AIR_RATE_LAGOS_PER_LB = 6.0;
+export const AIR_RATE_OUTSIDE_LAGOS_PER_LB = 6.5;
 export const AIR_RATE_PER_LB = 5.5;
-
-/** @deprecated Use AIR_RATE_PER_LB — Kingz now uses a single rate for all destinations */
-export const AIR_RATE_LAGOS_PER_LB = AIR_RATE_PER_LB;
-
-/** @deprecated Use AIR_RATE_PER_LB — Kingz now uses a single rate for all destinations */
-export const AIR_RATE_OUTSIDE_LAGOS_PER_LB = AIR_RATE_PER_LB;
 
 /** Divisor used to calculate dimensional (volumetric) weight: (L×W×H in inches) / DIM_DIVISOR */
 export const DIM_DIVISOR = 139;
@@ -92,4 +89,4 @@ export const OCEAN_SMALL_SUV_RATE = 2200.0;
 export const OCEAN_LARGE_SUV_RATE = 3500.0;
 
 export type ShippingService = 'air' | 'ocean_small' | 'ocean_med' | 'ocean_large' | 'ocean_duffle' | 'ocean_wardrobe' | 'ocean_tv';
-export type ShippingDestination = 'lagos' | 'outside_lagos';
+export type ShippingDestination = 'lagos_pickup' | 'lagos' | 'outside_lagos';

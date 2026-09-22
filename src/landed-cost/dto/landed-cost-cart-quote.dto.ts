@@ -11,8 +11,8 @@ import type {
 
 /** `POST /landed-cost/quote-cart` — quotes the current user's entire cart, not one line. */
 export class LandedCostCartQuoteDto {
-  @ApiProperty({ enum: ['lagos', 'outside_lagos'] })
-  @IsEnum(['lagos', 'outside_lagos'] as const)
+  @ApiProperty({ enum: ['lagos_pickup', 'lagos', 'outside_lagos'] })
+  @IsEnum(['lagos_pickup', 'lagos', 'outside_lagos'] as const)
   destination: ShippingDestination;
 
   @ApiProperty({ enum: ['air', 'ocean_small'] })
@@ -44,4 +44,11 @@ export class LandedCostCartQuoteDto {
   @IsBoolean()
   @IsOptional()
   insurance?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Whether to force/override 50% first-order discount on platform fee (otherwise derived from user order history).',
+  })
+  @IsBoolean()
+  @IsOptional()
+  isFirstOrder?: boolean;
 }

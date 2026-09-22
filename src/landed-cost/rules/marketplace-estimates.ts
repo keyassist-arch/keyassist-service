@@ -54,9 +54,9 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       confidence: 'medium',
     },
     [ProductSource.ZARA]: {
-      // Zara US collects sales tax as a direct retailer.
+      // Zara US collects sales tax as a direct retailer and charges $6 base warehouse shipping.
       taxRate: US_SALES_TAX_RATE,
-      domesticShippingUsd: 0,
+      domesticShippingUsd: 6.0,
       confidence: 'medium',
     },
     [ProductSource.STOCKX]: {

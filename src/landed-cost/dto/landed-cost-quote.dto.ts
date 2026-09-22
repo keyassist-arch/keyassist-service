@@ -84,8 +84,8 @@ export class LandedCostQuoteDto {
   @Type(() => DimensionsDto)
   dimensions?: DimensionsDto;
 
-  @ApiProperty({ enum: ['lagos', 'outside_lagos'] })
-  @IsEnum(['lagos', 'outside_lagos'] as const)
+  @ApiProperty({ enum: ['lagos_pickup', 'lagos', 'outside_lagos'] })
+  @IsEnum(['lagos_pickup', 'lagos', 'outside_lagos'] as const)
   destination: ShippingDestination;
 
   @ApiProperty({ enum: ['air', 'ocean_small'] })
@@ -117,4 +117,11 @@ export class LandedCostQuoteDto {
   @IsBoolean()
   @IsOptional()
   insurance?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Whether to apply 50% first-order discount on platform fee.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  isFirstOrder?: boolean;
 }

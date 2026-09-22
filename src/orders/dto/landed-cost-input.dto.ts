@@ -9,7 +9,7 @@ import {
 } from '../../landed-cost/rules/category-weights';
 
 export class LandedCostInputDto {
-  @IsEnum(['lagos', 'outside_lagos'] as const)
+  @IsEnum(['lagos_pickup', 'lagos', 'outside_lagos'] as const)
   destination: ShippingDestination;
 
   @IsEnum(['air', 'ocean_small'] as const)

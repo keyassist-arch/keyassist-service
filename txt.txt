@@ -1,36 +1,36 @@
-user elects the product, ads it to wanna by list ( is a wait list for the platform to get the final prices and tax to be
-  computed for the user ), notification through email or whatsapp message is sent to them and they come and confirm and pay.
-  define batches.
+ 
 
-time for orders to get to ware house is about a week
-
-5-7$ flat fee for items $100 and below, 10% for items above $100
-
--------------------
-Batches
-Wanna buy list ()
-Team processes the price and tax 
-Monday & tuesdays - estimated 10 orders 
-wednesday - order places (time to get the orders is a week)
-tuesday (of the next week) - order arrived  
-wednesday (kingz computes all dropoffs from our arrived order)
-Thursday (shipped)
-10 - 15 days weeks for orders to reach users
-
--------------------
+When a link don’t work there should be a simple prompt that says paste the link manually and we will get back to you with estimate in 24hrs
 
 
+I can’t delete item on my cart with phone experience and while logged into both account on phone and computer the items in my cart 
+
+The 10% charge should be applied on the carts total not the item itself to safeguard profit margin and any other cost we may encounter.
+
+The shipping pricing to Lagos and outside Lagos is coded as the same it should be clear we only do free pickup in Lagos 
+
+Lagos pickup is free. extra charge includes when you are shipping within Lagos or outside Lagos.
+
+Kindly add the list of other services we offer in the button part of the site.(Business broker,B2B service,Logistics and general contractor) - read only
+
+Backmarket,Walmart and reebelo need to be added as part of the market place our customers can access.
 
 
-scrape navigates to guest checkout and inputs the details and get final pricing for them with tax
-BELIEVE OKOBIA
-11969 PLANO RD
-DALLAS, TX 75243
-150-3204
+On the category side of things it sends me nowhere maybe assign the sneakers and electronics to the marketplace we currently support
+ 
+
+Reebelo,backmarket and Walmart is not included in the marketplace on our websites.
+
+And it’s pretty obvious scraping might be a hassle so let’s make the manual entry more efficient. ( let's reduce the inputs to only the link not multple fields )
+
+Kindly add 6 dollars to the product(COGS) line for ZARA because they charge us 6 dollars base shipping to our warehouse.
+
+ON THE MANUAL ENTRY SIDE OF THINGS.
+
+Take out the try again pod because obviously if they can’t scrape a product once there is no possibility that it may work the second time.
+
+Kindly send them to enter product URL, description or a photo so the admin can process it within 24hrs.
 
 
-
-
-
-make sure to return error for missing shipping address
-add an option for upfreon charges and possible refund instead of waiting for full pricing from admin
+Flat 10% off should be replaced with 50% off your first order.
+Take out the estimated landed cost details right after the ship to and leave the summary after including back and place order button as seen in the image

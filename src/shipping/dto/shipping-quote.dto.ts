@@ -24,7 +24,7 @@ export class ShippingQuoteDto {
   @Min(0)
   height?: number;
 
-  @IsEnum(['lagos', 'outside_lagos'] as const)
+  @IsEnum(['lagos_pickup', 'lagos', 'outside_lagos'] as const)
   destination: ShippingDestination;
 
   @IsEnum(['air', 'ocean_small'] as const)

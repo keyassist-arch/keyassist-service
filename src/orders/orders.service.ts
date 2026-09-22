@@ -215,6 +215,9 @@ export class OrdersService {
       0,
     );
 
+    const isFirstOrder =
+      await this.landedCostService.isEligibleForFirstOrderDiscount(userId);
+
     const lc = await this.landedCostService.quoteForCartLines(
       lines.map((l) => ({
         priceUsd: parseFloat(l.price),
@@ -226,6 +229,7 @@ export class OrdersService {
         shippingService: landedCost.shippingService,
         category: landedCost.category ?? 'generic',
         insurance: landedCost.insurance ?? false,
+        isFirstOrder,
       },
     );
 

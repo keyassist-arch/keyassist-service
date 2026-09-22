@@ -35,7 +35,7 @@ export class ShippingService {
     } = dto;
 
     const insuranceUsd =
-      insurance && destination === 'lagos' && declaredValueUsd > 0
+      insurance && (destination === 'lagos' || destination === 'lagos_pickup') && declaredValueUsd > 0
         ? parseFloat(
             (declaredValueUsd * rates.cargoInsuranceRateLagos).toFixed(2),
           )
@@ -72,9 +72,11 @@ export class ShippingService {
 
     const billableWeight = Math.max(weight, dimWeight);
     const ratePerLb =
-      destination === 'lagos'
-        ? rates.airRateLagosPerLb
-        : rates.airRateOutsideLagosPerLb;
+      destination === 'lagos_pickup'
+        ? rates.airRateLagosPickupPerLb
+        : destination === 'outside_lagos'
+          ? rates.airRateOutsideLagosPerLb
+          : rates.airRateLagosPerLb;
 
     const breakdown: string[] = [];
 
