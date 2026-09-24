@@ -619,18 +619,24 @@ export class OrdersService {
   toResponse(o: Order, admin = false) {
     const pending = o.status === OrderStatus.PENDING;
 
-    // Collapsed 3-line summary for the checkout/order screen.
-    // "Import & Delivery" bundles logistics + customs so the user
-    // sees a simple, trustworthy breakdown without internal fee clutter.
-    const importAndDelivery = (
-      parseFloat(o.marketplaceTax    || '0') +
+    // Collapsed summary for the checkout/order screen and printed receipt, matching
+    // the landed-cost quote: Product (COGS) + Shipping + Service + Insurance − Discount.
+    // "Shipping" bundles logistics + customs; sales tax is billed inside COGS.
+    const importAndDelivery =
       parseFloat(o.marketplaceShipping || '0') +
-      parseFloat(o.domesticHandling  || '0') +
-      parseFloat(o.shippingFee       || '0') +
-      parseFloat(o.customsTotal      || '0') +
-      parseFloat(o.fxBuffer          || '0') +
-      parseFloat(o.riskBuffer        || '0')
-    ).toFixed(2);
+      parseFloat(o.domesticHandling || '0') +
+      parseFloat(o.shippingFee || '0') +
+      parseFloat(o.customsTotal || '0') +
+      parseFloat(o.fxBuffer || '0') +
+      parseFloat(o.riskBuffer || '0');
+    // COGS is derived from the stored total so the lines always add up — it picks
+    // up goods, sales tax and any retailer COGS surcharge (e.g. Zara's $6).
+    const productCogs =
+      parseFloat(o.total || '0') -
+      importAndDelivery -
+      parseFloat(o.fees || '0') -
+      parseFloat(o.insurance || '0') +
+      parseFloat(o.discount || '0');
 
     const orderNumber = o.orderNumber ?? `KAO-${o.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
 
@@ -642,8 +648,8 @@ export class OrdersService {
       status: o.status,
       // ── UI summary ──────────────────────────────────────────────────────────
       displaySummary: {
-        product: o.subtotal,
-        importAndDelivery,
+        product: productCogs.toFixed(2),
+        importAndDelivery: importAndDelivery.toFixed(2),
         serviceFee: o.fees,
         insurance: o.insurance,
         discount: o.discount,
