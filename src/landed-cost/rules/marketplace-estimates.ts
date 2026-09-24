@@ -5,6 +5,11 @@ export type MarketplaceEstimate = {
   taxRate: number;
   /** Estimated domestic US shipping cost to warehouse (USD) */
   domesticShippingUsd: number;
+  /**
+   * Flat per-order charge the retailer bills us that is billed to the customer
+   * inside item cost (COGS) rather than as shipping. Charged once per marketplace.
+   */
+  cogsSurchargeUsd?: number;
   /** How reliable these estimates are */
   confidence: 'high' | 'medium' | 'low';
 };
@@ -54,9 +59,11 @@ export const MARKETPLACE_ESTIMATES: Record<ProductSource, MarketplaceEstimate> =
       confidence: 'medium',
     },
     [ProductSource.ZARA]: {
-      // Zara US collects sales tax as a direct retailer and charges $6 base warehouse shipping.
+      // Zara US collects sales tax as a direct retailer. Its $6 base shipping to our
+      // warehouse is billed on the Product (COGS) line, not as shipping.
       taxRate: US_SALES_TAX_RATE,
-      domesticShippingUsd: 6.0,
+      domesticShippingUsd: 0,
+      cogsSurchargeUsd: 6.0,
       confidence: 'medium',
     },
     [ProductSource.STOCKX]: {

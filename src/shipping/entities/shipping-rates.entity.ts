@@ -10,6 +10,15 @@ export class ShippingRates {
   id: number;
 
   @Column({
+    name: 'air_rate_lagos_pickup_per_lb',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 5.5,
+  })
+  airRateLagosPickupPerLb: string;
+
+  @Column({
     name: 'air_rate_lagos_per_lb',
     type: 'decimal',
     precision: 10,

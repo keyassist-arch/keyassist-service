@@ -32,11 +32,15 @@ import { AddOrderLandedCostColumns1746720005000 } from './migrations/17467200050
 import { CreateCategories1746720006000 } from './migrations/1746720006000-CreateCategories';
 import { AddProductAsin1780272000000 } from './migrations/1780272000000-AddProductAsin';
 import { AddSavedPaymentMethods1780800000000 } from './migrations/1780800000000-AddSavedPaymentMethods';
+import { AddProductObservedTaxAmount1780900000000 } from './migrations/1780900000000-AddProductObservedTaxAmount';
+import { AddUserPhoneVerification1782200000000 } from './migrations/1782200000000-AddUserPhoneVerification';
 import { AddUserAdminPermissions1782300000000 } from './migrations/1782300000000-AddUserAdminPermissions';
 import { DropWannaBuyTables1784000000000 } from './migrations/1784000000000-DropWannaBuyTables';
 import { AddImportedProductAttribution1784911137000 } from './migrations/1784911137000-AddImportedProductAttribution';
 import { AddShippingInsuranceAndFixDimDivisor1786724439000 } from './migrations/1786724439000-AddShippingInsuranceAndFixDimDivisor';
 import { AddOrderInsurance1786724440000 } from './migrations/1786724440000-AddOrderInsurance';
+import { AddOrderNumber1786724450000 } from './migrations/1786724450000-AddOrderNumber';
+import { SplitLagosShippingRates1790000000000 } from './migrations/1790000000000-SplitLagosShippingRates';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -79,11 +83,15 @@ export default new DataSource({
     CreateCategories1746720006000,
     AddProductAsin1780272000000,
     AddSavedPaymentMethods1780800000000,
+    AddProductObservedTaxAmount1780900000000,
+    AddUserPhoneVerification1782200000000,
     AddUserAdminPermissions1782300000000,
     DropWannaBuyTables1784000000000,
     AddImportedProductAttribution1784911137000,
     AddShippingInsuranceAndFixDimDivisor1786724439000,
     AddOrderInsurance1786724440000,
+    AddOrderNumber1786724450000,
+    SplitLagosShippingRates1790000000000,
   ],
   synchronize: false,
 });

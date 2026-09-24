@@ -18,7 +18,7 @@ export interface LandedCostBreakdown {
    * 0 when a real observed tax amount was supplied instead of the rate estimate.
    */
   taxRate: number;
-  /** Invoice line 1 — `productSubtotalUsd` + `marketplaceTaxUsd`. */
+  /** Invoice line 1 — `productSubtotalUsd` + `marketplaceTaxUsd` + any retailer COGS surcharge (Zara $6). */
   itemCostUsd: number;
 
   // ── Logistics costs (USD) ───────────────────────────────────────────────────

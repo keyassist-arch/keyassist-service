@@ -4,6 +4,11 @@ export class UpdateShippingRatesDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  airRateLagosPickupPerLb?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   airRateLagosPerLb?: number;
 
   @IsOptional()

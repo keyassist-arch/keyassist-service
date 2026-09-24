@@ -91,7 +91,7 @@ export class LandedCostService {
       heightIn: weightRule.heightIn,
     };
 
-    // ── 1. Item cost (COGS) — goods + US sales tax ───────────────────────────
+    // ── 1. Item cost (COGS) — goods + US sales tax + retailer COGS surcharge ─
     const productSubtotal = round(productPriceUsd * dto.quantity);
     const taxRate = estimate.taxRate > 0 ? estimate.taxRate : PRODUCT_TAX_RATE;
     // Prefer an actual tax amount from the scraper/checkout over the rate estimate.
@@ -99,7 +99,7 @@ export class LandedCostService {
       dto.taxAmountUsd != null
         ? round(dto.taxAmountUsd)
         : round(productSubtotal * taxRate);
-    const itemCost = round(productSubtotal + marketplaceTax);
+    const itemCost = round(productSubtotal + marketplaceTax + (estimate.cogsSurchargeUsd ?? 0));
     const marketplaceShipping = round(estimate.domesticShippingUsd);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -223,7 +223,7 @@ export class LandedCostService {
 
     const { destination, shippingService, category, insurance = false } = opts;
 
-    // ── 1. Item cost (COGS) — goods + US sales tax ───────────────────────────
+    // ── 1. Item cost (COGS) — goods + US sales tax + retailer COGS surcharge ─
     const productSubtotal = round(lines.reduce((s, l) => s + l.priceUsd * l.qty, 0));
 
     // Tax is per line: a mixed cart can hold US-taxed goods next to untaxed ones
@@ -231,6 +231,7 @@ export class LandedCostService {
     let marketplaceTax = 0;
     const seenMarketplaces = new Set<ProductSource>();
     let marketplaceShipping = 0;
+    let cogsSurcharge = 0;
     let lowestConfidence: 'high' | 'medium' | 'low' = 'high';
     const confidenceOrder = { high: 0, medium: 1, low: 2 };
 
@@ -242,6 +243,7 @@ export class LandedCostService {
       if (taxRate > 0) taxableSubtotal += lineSubtotal;
       if (!seenMarketplaces.has(line.marketplace)) {
         marketplaceShipping += est.domesticShippingUsd;
+        cogsSurcharge += est.cogsSurchargeUsd ?? 0;
         seenMarketplaces.add(line.marketplace);
       }
       if (confidenceOrder[est.confidence] > confidenceOrder[lowestConfidence]) {
@@ -249,7 +251,7 @@ export class LandedCostService {
       }
     }
     marketplaceTax = round(marketplaceTax);
-    const itemCost = round(productSubtotal + marketplaceTax);
+    const itemCost = round(productSubtotal + marketplaceTax + cogsSurcharge);
     marketplaceShipping = round(marketplaceShipping);
 
     // ── 2. International logistics (Kingz, USA → Nigeria) ───────────────────
@@ -492,7 +494,8 @@ function buildBreakdown(parts: {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const lines: string[] = [];
 
-  // Item cost (COGS) includes product price + marketplace sales tax added in the background
+  // Item cost (COGS) includes product price + marketplace sales tax + any retailer
+  // COGS surcharge (e.g. Zara's $6 warehouse shipping), added in the background
   lines.push(`Product (COGS): ${fmt(parts.itemCost)}`);
 
   const totalShipping = round(parts.importAndDelivery + parts.insuranceUsd);

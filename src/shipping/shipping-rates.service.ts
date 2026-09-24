@@ -87,7 +87,8 @@ export class ShippingRatesService implements OnModuleInit {
       const row = await this.repo.findOne({ where: { id: 1 } });
       if (row) {
         this.cache = {
-          airRateLagosPickupPerLb: parseFloat(row.airRateLagosPerLb) || AIR_RATE_LAGOS_PICKUP_PER_LB,
+          airRateLagosPickupPerLb:
+            parseFloat(row.airRateLagosPickupPerLb) || AIR_RATE_LAGOS_PICKUP_PER_LB,
           airRateLagosPerLb: parseFloat(row.airRateLagosPerLb),
           airRateOutsideLagosPerLb: parseFloat(row.airRateOutsideLagosPerLb),
           dimDivisor: row.dimDivisor,
@@ -117,6 +118,8 @@ export class ShippingRatesService implements OnModuleInit {
 
   private dtoToEntity(dto: UpdateShippingRatesDto): Partial<ShippingRates> {
     const result: Partial<ShippingRates> = {};
+    if (dto.airRateLagosPickupPerLb !== undefined)
+      result.airRateLagosPickupPerLb = String(dto.airRateLagosPickupPerLb);
     if (dto.airRateLagosPerLb !== undefined)
       result.airRateLagosPerLb = String(dto.airRateLagosPerLb);
     if (dto.airRateOutsideLagosPerLb !== undefined)
