@@ -4,4 +4,5 @@ export enum AdminPermission {
   REFUNDS = 'REFUNDS',
   ISSUES = 'ISSUES',
   SHIPPING_RATES = 'SHIPPING_RATES',
+  DISCOUNTS = 'DISCOUNTS',
 }

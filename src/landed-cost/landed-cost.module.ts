@@ -6,6 +6,7 @@ import { CurrencyModule } from '../currency/currency.module';
 import { ShippingModule } from '../shipping/shipping.module';
 import { CartModule } from '../cart/cart.module';
 import { ProductsModule } from '../products/products.module';
+import { PricingModule } from '../pricing/pricing.module';
 import { LandedCostService } from './landed-cost.service';
 import { LandedCostController } from './landed-cost.controller';
 
@@ -16,6 +17,7 @@ import { LandedCostController } from './landed-cost.controller';
     ShippingModule,
     CartModule,
     ProductsModule,
+    PricingModule,
   ],
   providers: [LandedCostService],
   controllers: [LandedCostController],

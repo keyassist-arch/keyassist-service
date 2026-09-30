@@ -10,7 +10,8 @@ import { CartItem } from './entities/cart-item.entity';
 import { Order } from '../orders/entities/order.entity';
 import { OrderStatus } from '../common/enums/order-status.enum';
 import { ProductsService } from '../products/products.service';
-import { computePricing } from '../common/utils/pricing.util';
+import { computePricing, type DiscountRates } from '../common/utils/pricing.util';
+import { DiscountSettingsService } from '../pricing/discount-settings.service';
 
 /** Hard ceiling on any single line-item quantity. */
 const MAX_ITEM_QUANTITY = 100;
@@ -25,6 +26,7 @@ export class CartService {
     @InjectRepository(Order)
     private readonly ordersRepo: Repository<Order>,
     private readonly productsService: ProductsService,
+    private readonly discountSettings: DiscountSettingsService,
   ) {}
 
   async isEligibleForFirstOrderDiscount(userId?: string | null): Promise<boolean> {
@@ -54,7 +56,8 @@ export class CartService {
   async getCart(userId: string) {
     const cart = await this.getOrCreateCart(userId);
     const isFirstOrder = await this.isEligibleForFirstOrderDiscount(userId);
-    return this.toResponse(cart, isFirstOrder);
+    const discountRates = await this.discountSettings.getRates();
+    return this.toResponse(cart, isFirstOrder, discountRates);
   }
 
   async addItem(
@@ -209,7 +212,11 @@ export class CartService {
     await this.items.delete({ cartId });
   }
 
-  private toResponse(cart: Cart, isFirstOrder = false) {
+  private toResponse(
+    cart: Cart,
+    isFirstOrder = false,
+    discountRates?: DiscountRates,
+  ) {
     let subtotal = 0;
     let currency = '';
     for (const i of cart.items || []) {
@@ -225,7 +232,7 @@ export class CartService {
         currency = i.product.currency;
       }
     }
-    const pricing = computePricing(subtotal, 0, isFirstOrder);
+    const pricing = computePricing(subtotal, 0, isFirstOrder, discountRates);
     return {
       id: cart.id,
       subtotal: subtotal.toFixed(2),

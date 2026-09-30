@@ -15,6 +15,7 @@ import { ProductsModule } from '../products/products.module';
 import { QueuesModule } from '../jobs/queues.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { ShippingModule } from '../shipping/shipping.module';
+import { PricingModule } from '../pricing/pricing.module';
 import { ScraperModule } from '../scraper/scraper.module';
 import { UsersModule } from '../users/users.module';
 import { AuthModule } from '../auth/auth.module';
@@ -29,6 +30,7 @@ import { UploadsModule } from '../uploads/uploads.module';
     QueuesModule,
     RealtimeModule,
     ShippingModule,
+    PricingModule,
     ScraperModule,
     UsersModule,
     AuthModule,

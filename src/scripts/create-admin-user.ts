@@ -14,7 +14,7 @@
  *   --lastName     Admin last name (default: User or ADMIN_LAST_NAME env)
  *   --role         ADMIN_SUPER | ADMIN_STAFF (default: ADMIN_SUPER)
  *   --password     Custom password (if omitted, a secure 18-character password is automatically generated)
- *   --permissions  Comma-separated list of permissions for ADMIN_STAFF (ORDERS,PRODUCTS,REFUNDS,ISSUES,SHIPPING_RATES)
+ *   --permissions  Comma-separated list of permissions for ADMIN_STAFF (ORDERS,PRODUCTS,REFUNDS,ISSUES,SHIPPING_RATES,DISCOUNTS)
  *   --force        Update existing user if email is already taken
  */
 import 'reflect-metadata';

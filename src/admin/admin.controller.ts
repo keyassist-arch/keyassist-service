@@ -31,6 +31,7 @@ import { AdminSeedDto } from './dto/admin-seed.dto';
 import { ScraperService } from '../scraper/scraper.service';
 import { AdminScrapePreviewDto } from './dto/admin-scrape-preview.dto';
 import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
+import { UpdateDiscountSettingsDto } from '../pricing/dto/update-discount-settings.dto';
 import { AdminCreateProductDto } from '../products/dto/admin-create-product.dto';
 import { AdminUpdateProductDto } from '../products/dto/admin-update-product.dto';
 
@@ -120,6 +121,20 @@ export class AdminController {
   @RequirePermission(AdminPermission.SHIPPING_RATES)
   updateShippingRates(@Body() dto: UpdateShippingRatesDto) {
     return this.adminService.updateShippingRates(dto);
+  }
+
+  @Get('discount-settings')
+  @RequirePermission(AdminPermission.DISCOUNTS)
+  @ApiOperation({ summary: 'Get first-order and volume discount settings (all 0 by default)' })
+  getDiscountSettings() {
+    return this.adminService.getDiscountSettings();
+  }
+
+  @Patch('discount-settings')
+  @RequirePermission(AdminPermission.DISCOUNTS)
+  @ApiOperation({ summary: 'Update discount settings; rates are fractions (0.5 = 50%)' })
+  updateDiscountSettings(@Body() dto: UpdateDiscountSettingsDto) {
+    return this.adminService.updateDiscountSettings(dto);
   }
 
   @Post('scrape-preview')

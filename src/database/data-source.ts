@@ -12,6 +12,7 @@ import { User } from '../users/entities/user.entity';
 import { Refund } from '../reconciliation/entities/refund.entity';
 import { CustomerIssue } from '../reconciliation/entities/customer-issue.entity';
 import { ShippingRates } from '../shipping/entities/shipping-rates.entity';
+import { DiscountSettings } from '../pricing/entities/discount-settings.entity';
 import { SavedPaymentMethod } from '../payment/entities/saved-payment-method.entity';
 import { AddProductRescrapeEnabled1743130800000 } from './migrations/1743130800000-AddProductRescrapeEnabled';
 import { ClearProductFkOnFailedImports1743200000000 } from './migrations/1743200000000-ClearProductFkOnFailedImports';
@@ -41,6 +42,7 @@ import { AddShippingInsuranceAndFixDimDivisor1786724439000 } from './migrations/
 import { AddOrderInsurance1786724440000 } from './migrations/1786724440000-AddOrderInsurance';
 import { AddOrderNumber1786724450000 } from './migrations/1786724450000-AddOrderNumber';
 import { SplitLagosShippingRates1790000000000 } from './migrations/1790000000000-SplitLagosShippingRates';
+import { CreateDiscountSettings1790100000000 } from './migrations/1790100000000-CreateDiscountSettings';
 
 config({ path: resolve(process.cwd(), '.env') });
 
@@ -61,6 +63,7 @@ export default new DataSource({
     Refund,
     CustomerIssue,
     ShippingRates,
+    DiscountSettings,
     SavedPaymentMethod,
   ],
   migrations: [
@@ -92,6 +95,7 @@ export default new DataSource({
     AddOrderInsurance1786724440000,
     AddOrderNumber1786724450000,
     SplitLagosShippingRates1790000000000,
+    CreateDiscountSettings1790100000000,
   ],
   synchronize: false,
 });

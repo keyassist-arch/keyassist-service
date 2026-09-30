@@ -119,7 +119,7 @@ export class LandedCostQuoteDto {
   insurance?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Whether to apply 50% first-order discount on platform fee.',
+    description: 'Whether to apply the first-order discount on platform fee (rate is admin-configured; 0 by default).',
   })
   @IsBoolean()
   @IsOptional()

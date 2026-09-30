@@ -46,7 +46,7 @@ export class LandedCostCartQuoteDto {
   insurance?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Whether to force/override 50% first-order discount on platform fee (otherwise derived from user order history).',
+    description: 'Whether to force/override the first-order discount on platform fee (rate is admin-configured; 0 by default) (otherwise derived from user order history).',
   })
   @IsBoolean()
   @IsOptional()

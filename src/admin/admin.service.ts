@@ -17,6 +17,8 @@ import type { SendNotificationJob } from '../jobs/processors/send-notification.p
 import { OrderRealtimeService } from '../realtime/order-realtime.service';
 import { ShippingRatesService } from '../shipping/shipping-rates.service';
 import { UpdateShippingRatesDto } from '../shipping/dto/update-shipping-rates.dto';
+import { DiscountSettingsService } from '../pricing/discount-settings.service';
+import { UpdateDiscountSettingsDto } from '../pricing/dto/update-discount-settings.dto';
 import { EmailTemplateService } from '../notifications/email-templates.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { AdminCreateProductDto } from '../products/dto/admin-create-product.dto';
@@ -40,6 +42,7 @@ export class AdminService {
     private readonly notifyQueue: Queue<SendNotificationJob>,
     private readonly orderRealtime: OrderRealtimeService,
     private readonly shippingRatesService: ShippingRatesService,
+    private readonly discountSettingsService: DiscountSettingsService,
     private readonly emailTemplates: EmailTemplateService,
     private readonly uploadsService: UploadsService,
   ) {}
@@ -185,6 +188,14 @@ export class AdminService {
 
   async updateShippingRates(dto: UpdateShippingRatesDto) {
     return this.shippingRatesService.update(dto);
+  }
+
+  async getDiscountSettings() {
+    return this.discountSettingsService.getRow();
+  }
+
+  async updateDiscountSettings(dto: UpdateDiscountSettingsDto) {
+    return this.discountSettingsService.update(dto);
   }
 
   async seed(setupKey: string) {

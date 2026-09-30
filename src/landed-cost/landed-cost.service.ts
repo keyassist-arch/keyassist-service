@@ -11,11 +11,10 @@ import { CartService } from '../cart/cart.service';
 import { ProductsService } from '../products/products.service';
 import {
   computePlatformFee,
+  computeDiscount,
   PRODUCT_TAX_RATE,
-  DISCOUNT_RATE,
-  DISCOUNT_THRESHOLD_USD,
-  FIRST_ORDER_DISCOUNT_RATE,
 } from '../common/utils/pricing.util';
+import { DiscountSettingsService } from '../pricing/discount-settings.service';
 import { MARKETPLACE_ESTIMATES } from './rules/marketplace-estimates';
 import { CATEGORY_WEIGHT_RULES, type ProductCategory } from './rules/category-weights';
 import type { LandedCostBreakdown } from './interfaces/landed-cost-breakdown.interface';
@@ -64,6 +63,7 @@ export class LandedCostService {
     private readonly shippingService: ShippingService,
     private readonly cartService: CartService,
     private readonly productsService: ProductsService,
+    private readonly discountSettings: DiscountSettingsService,
   ) {}
 
   async isEligibleForFirstOrderDiscount(userId?: string | null): Promise<boolean> {
@@ -134,13 +134,12 @@ export class LandedCostService {
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
     const baseCost = round(itemCost + importAndDelivery + insuranceUsd);
     const serviceCharge = computePlatformFee(baseCost);
-    const firstOrderDiscount = dto.isFirstOrder
-      ? round(serviceCharge * FIRST_ORDER_DISCOUNT_RATE)
-      : 0;
-    const volumeDiscount = productSubtotal > DISCOUNT_THRESHOLD_USD
-      ? round(productSubtotal * DISCOUNT_RATE)
-      : 0;
-    const discount = round(firstOrderDiscount + volumeDiscount);
+    const discount = computeDiscount(
+      serviceCharge,
+      productSubtotal,
+      dto.isFirstOrder ?? false,
+      await this.discountSettings.getRates(),
+    );
 
     // ── 5. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
@@ -287,14 +286,12 @@ export class LandedCostService {
     const riskBuffer = round(productSubtotal * RISK_BUFFER_RATE);
     const baseCost = round(itemCost + importAndDelivery + insuranceUsd);
     const serviceCharge = computePlatformFee(baseCost);
-    const firstOrderDiscount = opts.isFirstOrder
-      ? round(serviceCharge * FIRST_ORDER_DISCOUNT_RATE)
-      : 0;
-    const volumeDiscount =
-      productSubtotal > DISCOUNT_THRESHOLD_USD
-        ? round(productSubtotal * DISCOUNT_RATE)
-        : 0;
-    const discount = round(firstOrderDiscount + volumeDiscount);
+    const discount = computeDiscount(
+      serviceCharge,
+      productSubtotal,
+      opts.isFirstOrder ?? false,
+      await this.discountSettings.getRates(),
+    );
 
     // ── 5. Grand total ───────────────────────────────────────────────────────
     const totalUsd = round(
