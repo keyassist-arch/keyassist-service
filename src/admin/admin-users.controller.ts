@@ -12,6 +12,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { UserRole } from '../common/enums/role.enum';
 import { SWAGGER_JWT_AUTH } from '../common/constants/swagger-auth';
 import { AdminUsersService } from './admin-users.service';
@@ -39,10 +41,10 @@ export class AdminUsersController {
 
   @Post()
   @ApiOperation({
-    summary: 'Invite a new ADMIN_STAFF user with specific screen permissions',
+    summary: 'Invite a new admin (ADMIN_STAFF by default, or ADMIN_SUPER)',
     description:
-      'Creates the account and emails a set-password link. Only mints ADMIN_STAFF — ' +
-      'promoting to ADMIN_SUPER stays a manual/DB action.',
+      'Creates the account and emails a set-password link. `inviteEmailSent` ' +
+      'is false if the email failed — use resend-invite to retry.',
   })
   create(@Body() dto: CreateAdminUserDto) {
     return this.adminUsersService.create(dto);
@@ -50,12 +52,23 @@ export class AdminUsersController {
 
   @Patch(':id')
   @ApiOperation({
-    summary: 'Update an ADMIN_STAFF user\'s permissions and/or disabled state',
+    summary:
+      "Change an admin's role, or a staff admin's permissions/disabled state",
+    description:
+      "Role changes take effect on the user's next token refresh. You cannot " +
+      'change your own role or demote the last active ADMIN_SUPER.',
   })
   patch(
+    @CurrentUser() actor: JwtPayload,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: PatchAdminUserDto,
   ) {
-    return this.adminUsersService.patch(id, dto);
+    return this.adminUsersService.patch(actor.sub, id, dto);
+  }
+
+  @Post(':id/resend-invite')
+  @ApiOperation({ summary: 'Email a fresh set-password link to an admin' })
+  resendInvite(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminUsersService.resendInvite(id);
   }
 }

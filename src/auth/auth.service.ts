@@ -418,12 +418,14 @@ export class AuthService implements OnModuleInit {
    * Issues a password-reset-purpose token for a freshly-created admin
    * invite, so the invited admin lands on the existing `/reset-password`
    * flow to set their own password. Returns the token and the TTL label
-   * used, so the caller can build the email link and copy.
+   * used, so the caller can build the email link and copy. Invites get their
+   * own, longer TTL than self-serve resets since the invitee isn't waiting
+   * on the email.
    */
   async issueAdminInviteToken(
     userId: string,
   ): Promise<{ token: string; ttlLabel: string }> {
-    const ttl = this.config.get<string>('PASSWORD_RESET_TOKEN_EXPIRES', '1h');
+    const ttl = this.config.get<string>('ADMIN_INVITE_TOKEN_EXPIRES', '72h');
     const token = await this.signPasswordResetToken(userId, ttl);
     return { token, ttlLabel: ttl };
   }

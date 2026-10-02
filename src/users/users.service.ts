@@ -88,6 +88,7 @@ export class UsersService {
     firstName: string;
     lastName: string;
     permissions: AdminPermission[];
+    role?: UserRole.ADMIN_STAFF | UserRole.ADMIN_SUPER;
   }): Promise<User> {
     const normalizedEmail = args.email.trim().toLowerCase();
     const existing = await this.users.findOne({
@@ -103,7 +104,7 @@ export class UsersService {
       lastName: args.lastName.trim(),
       email: normalizedEmail,
       passwordHash,
-      role: UserRole.ADMIN_STAFF,
+      role: args.role ?? UserRole.ADMIN_STAFF,
       permissions: args.permissions,
       emailVerifiedAt: new Date(),
     });
@@ -134,17 +135,52 @@ export class UsersService {
   }
 
   /**
-   * Updates permissions and/or disabled state for an ADMIN_STAFF account.
-   * Refuses to touch ADMIN_SUPER rows — promotion/demotion of the top role
-   * stays a manual/DB action.
+   * Updates role, permissions and/or disabled state for an admin account.
+   * Permissions and disabling only apply to ADMIN_STAFF (after any role
+   * change in the same request). Super-admins can't change their own role,
+   * and the last active ADMIN_SUPER can't be demoted.
    */
   async patchAdminUser(
+    actorId: string,
     userId: string,
-    dto: { permissions?: AdminPermission[]; disabled?: boolean },
+    dto: {
+      permissions?: AdminPermission[];
+      disabled?: boolean;
+      role?: UserRole.ADMIN_STAFF | UserRole.ADMIN_SUPER;
+    },
   ): Promise<User> {
     const user = await this.findById(userId);
-    if (user.role !== UserRole.ADMIN_STAFF) {
-      throw new BadRequestException('Only staff admin accounts can be edited here');
+    if (
+      user.role !== UserRole.ADMIN_STAFF &&
+      user.role !== UserRole.ADMIN_SUPER
+    ) {
+      throw new BadRequestException('Not an admin account');
+    }
+    if (dto.role !== undefined && dto.role !== user.role) {
+      if (user.id === actorId) {
+        throw new BadRequestException('You cannot change your own role');
+      }
+      if (user.role === UserRole.ADMIN_SUPER) {
+        const otherActiveSupers = await this.users
+          .createQueryBuilder('u')
+          .where('u.role = :role', { role: UserRole.ADMIN_SUPER })
+          .andWhere('u.id != :id', { id: user.id })
+          .andWhere('u.adminDisabledAt IS NULL')
+          .getCount();
+        if (otherActiveSupers === 0) {
+          throw new BadRequestException(
+            'Cannot demote the last active super admin',
+          );
+        }
+      }
+      user.role = dto.role;
+    }
+    const touchesStaffFields =
+      dto.permissions !== undefined || dto.disabled !== undefined;
+    if (touchesStaffFields && user.role !== UserRole.ADMIN_STAFF) {
+      throw new BadRequestException(
+        'Permissions and disabled state only apply to staff admin accounts',
+      );
     }
     if (dto.permissions !== undefined) {
       user.permissions = dto.permissions;

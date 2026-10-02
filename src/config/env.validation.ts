@@ -218,6 +218,11 @@ class EnvironmentVariables {
   @IsOptional()
   PASSWORD_RESET_TOKEN_EXPIRES?: string;
 
+  /** Optional; TTL for admin invite set-password links (default 72h). */
+  @IsString()
+  @IsOptional()
+  ADMIN_INVITE_TOKEN_EXPIRES?: string;
+
   /** Optional; separate secret for email verification links (defaults to JWT_PASSWORD_RESET_SECRET, then JWT_REFRESH_SECRET). */
   @IsString()
   @IsOptional()
