@@ -16,7 +16,7 @@ import { TotpService } from '../totp/totp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailTemplateService } from '../notifications/email-templates.service';
 import { isEnvFlagEnabled } from '../common/utils/env-flag.util';
-import { UserRole } from '../common/enums/role.enum';
+import { UserRole, isAdminRole } from '../common/enums/role.enum';
 import { AdminPermission } from '../common/enums/admin-permission.enum';
 
 /** PostgreSQL unique-constraint violation code. */
@@ -78,10 +78,10 @@ export class UsersService {
   }
 
   /**
-   * Creates an ADMIN_STAFF account with no usable password — the invited
-   * admin sets their own via the password-reset flow (see
-   * `AuthService.issueAdminInviteToken`). `emailVerifiedAt` is set
-   * immediately since the super admin is vouching for the address.
+   * Creates an ADMIN_STAFF account (or promotes an existing regular user account)
+   * with no usable password if newly created — the invited admin sets their own
+   * via the password-reset flow (see `AuthService.issueAdminInviteToken`).
+   * `emailVerifiedAt` is set immediately since the super admin is vouching for the address.
    */
   async createAdminUser(args: {
     email: string;
@@ -94,9 +94,35 @@ export class UsersService {
     const existing = await this.users.findOne({
       where: { email: normalizedEmail },
     });
+
     if (existing) {
-      throw new ConflictException('Email already registered');
+      if (isAdminRole(existing.role)) {
+        if (existing.adminDisabledAt) {
+          throw new ConflictException(
+            'This user is already an admin account but is currently disabled. Please re-enable it in the team settings.',
+          );
+        }
+        throw new ConflictException(
+          'This user is already an admin account. You can update their permissions directly in the team settings.',
+        );
+      }
+
+      // Existing customer / standard user — promote them to admin role
+      existing.role = args.role ?? UserRole.ADMIN_STAFF;
+      existing.permissions = args.permissions;
+      if (args.firstName?.trim()) {
+        existing.firstName = args.firstName.trim();
+      }
+      if (args.lastName?.trim()) {
+        existing.lastName = args.lastName.trim();
+      }
+      if (!existing.emailVerifiedAt) {
+        existing.emailVerifiedAt = new Date();
+      }
+      existing.adminDisabledAt = null;
+      return await this.users.save(existing);
     }
+
     // Random, never-communicated placeholder — unusable until reset.
     const passwordHash = await bcrypt.hash(crypto.randomUUID(), 10);
     const user = this.users.create({

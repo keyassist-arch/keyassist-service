@@ -104,6 +104,7 @@ export class AdminManualImportsService {
             slug: r.product.slug ?? null,
             title: r.product.title,
             images: r.product.images ?? [],
+            description: r.product.description ?? null,
             salePrice: r.product.salePrice,
             currency: r.product.currency,
           }

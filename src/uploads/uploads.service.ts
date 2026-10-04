@@ -1,7 +1,7 @@
 import {
   BadRequestException,
   Injectable,
-  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -11,6 +11,8 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { Readable } from 'stream';
 
 const ALLOWED_IMAGE_TYPES: Record<string, string> = {
@@ -18,6 +20,14 @@ const ALLOWED_IMAGE_TYPES: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
   'image/gif': 'gif',
+};
+
+const MIME_FROM_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
 };
 
 export interface UploadedImage {
@@ -32,15 +42,23 @@ export interface StoredObject {
 
 @Injectable()
 export class UploadsService {
+  private readonly logger = new Logger(UploadsService.name);
   private client: S3Client | null = null;
   private bucket: string | null = null;
+  private readonly localUploadDir = path.resolve(process.cwd(), 'uploads_local');
 
   constructor(private readonly config: ConfigService) {}
 
+  private isStorageConfigured(): boolean {
+    const endpoint = this.config.get<string>('STORAGE_ENDPOINT');
+    const accessKeyId = this.config.get<string>('STORAGE_ACCESS_KEY_ID');
+    const secretAccessKey = this.config.get<string>('STORAGE_SECRET_ACCESS_KEY');
+    const bucket = this.config.get<string>('STORAGE_BUCKET');
+    return Boolean(endpoint && accessKeyId && secretAccessKey && bucket);
+  }
+
   /**
-   * Uploads product image bytes to Railway's (Tigris-backed) S3-compatible bucket. Bytes
-   * are proxied through this server — Railway buckets are private with no public bucket URLs,
-   * so `UploadsController` proxies reads back out under `${API_PUBLIC_URL}/uploads/:key`.
+   * Uploads product image bytes to object storage (or local storage fallback).
    */
   async uploadProductImage(file: {
     buffer: Buffer;
@@ -54,34 +72,56 @@ export class UploadsService {
     }
 
     const key = `products/${randomUUID()}.${ext}`;
-    await this.getClient().send(
-      new PutObjectCommand({
-        Bucket: this.getBucket(),
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-      }),
-    );
+
+    if (this.isStorageConfigured()) {
+      await this.getClient().send(
+        new PutObjectCommand({
+          Bucket: this.getBucket(),
+          Key: key,
+          Body: file.buffer,
+          ContentType: file.mimetype,
+        }),
+      );
+    } else {
+      // Local disk fallback
+      const fullPath = path.join(this.localUploadDir, key);
+      await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.promises.writeFile(fullPath, file.buffer);
+    }
 
     return { key, url: `${this.getPublicBaseUrl()}/uploads/${key}` };
   }
 
   async getObject(key: string): Promise<StoredObject> {
-    try {
-      const result = await this.getClient().send(
-        new GetObjectCommand({ Bucket: this.getBucket(), Key: key }),
-      );
-      return {
-        body: result.Body as Readable,
-        contentType: result.ContentType ?? 'application/octet-stream',
-      };
-    } catch (err) {
-      const name = (err as { name?: string })?.name;
-      if (name === 'NoSuchKey' || name === 'NotFound') {
-        throw new NotFoundException('Image not found');
+    if (this.isStorageConfigured()) {
+      try {
+        const result = await this.getClient().send(
+          new GetObjectCommand({ Bucket: this.getBucket(), Key: key }),
+        );
+        return {
+          body: result.Body as Readable,
+          contentType: result.ContentType ?? 'application/octet-stream',
+        };
+      } catch (err) {
+        const name = (err as { name?: string })?.name;
+        if (name === 'NoSuchKey' || name === 'NotFound') {
+          throw new NotFoundException('Image not found');
+        }
+        throw err;
       }
-      throw err;
     }
+
+    // Local disk fallback
+    const fullPath = path.join(this.localUploadDir, key);
+    if (!fs.existsSync(fullPath)) {
+      throw new NotFoundException('Image not found');
+    }
+    const ext = path.extname(fullPath).replace('.', '').toLowerCase();
+    const contentType = MIME_FROM_EXT[ext] || 'application/octet-stream';
+    return {
+      body: fs.createReadStream(fullPath) as Readable,
+      contentType,
+    };
   }
 
   private getClient(): S3Client {
@@ -90,33 +130,20 @@ export class UploadsService {
     const endpoint = this.config.get<string>('STORAGE_ENDPOINT');
     const region = this.config.get<string>('STORAGE_REGION') || 'auto';
     const accessKeyId = this.config.get<string>('STORAGE_ACCESS_KEY_ID');
-    const secretAccessKey = this.config.get<string>(
-      'STORAGE_SECRET_ACCESS_KEY',
-    );
-    if (!endpoint || !accessKeyId || !secretAccessKey) {
-      throw new InternalServerErrorException(
-        'Object storage is not configured — set STORAGE_ENDPOINT, STORAGE_ACCESS_KEY_ID, STORAGE_SECRET_ACCESS_KEY',
-      );
-    }
+    const secretAccessKey = this.config.get<string>('STORAGE_SECRET_ACCESS_KEY');
 
     this.client = new S3Client({
       endpoint,
       region,
-      credentials: { accessKeyId, secretAccessKey },
+      credentials: { accessKeyId: accessKeyId!, secretAccessKey: secretAccessKey! },
     });
     return this.client;
   }
 
   private getBucket(): string {
     if (this.bucket) return this.bucket;
-    const bucket = this.config.get<string>('STORAGE_BUCKET');
-    if (!bucket) {
-      throw new InternalServerErrorException(
-        'Object storage is not configured — set STORAGE_BUCKET',
-      );
-    }
-    this.bucket = bucket;
-    return bucket;
+    this.bucket = this.config.get<string>('STORAGE_BUCKET') || 'uploads';
+    return this.bucket;
   }
 
   private getPublicBaseUrl(): string {
