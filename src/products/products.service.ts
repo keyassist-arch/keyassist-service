@@ -547,6 +547,7 @@ export class ProductsService {
       sourceUrl: p.sourceUrl,
       rescrapeEnabled: p.rescrapeEnabled,
       source: p.source,
+      isManual: !p.rescrapeEnabled || p.source === ProductSource.GENERIC,
       title: p.title,
       description: p.description,
       brand: p.brand,

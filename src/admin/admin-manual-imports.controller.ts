@@ -21,10 +21,11 @@ import { AdminManualImportsService } from './admin-manual-imports.service';
 import type { ManualImportFulfillmentStatus } from './admin-manual-imports.service';
 import { AdminPlaceManualImportOrderDto } from './dto/admin-place-manual-import-order.dto';
 import { AdminDismissManualImportDto } from './dto/admin-dismiss-manual-import.dto';
+import { AdminApproveManualImportToCartDto } from './dto/admin-approve-manual-import-to-cart.dto';
 
 /**
  * Queue of customer-submitted manual product imports (auto-scrape failed, they
- * entered details by hand) awaiting admin to place an order on their behalf.
+ * entered details by hand) awaiting admin to price and approve into cart or place an order.
  */
 @ApiTags('Admin – Manual Imports')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -39,6 +40,20 @@ export class AdminManualImportsController {
   @ApiOperation({ summary: 'List manual-import requests by fulfillment status' })
   list(@Query('status') status: ManualImportFulfillmentStatus = 'pending') {
     return this.service.list(status);
+  }
+
+  @Post(':id/approve-to-cart')
+  @RequirePermission(AdminPermission.PRODUCTS)
+  @ApiOperation({
+    summary: 'Approve manual import with verified price and add to customer cart',
+    description:
+      'Sets the verified supplier purchase price, puts the item in the customer\'s active cart, and sends an email notification advising them to proceed to cart and checkout.',
+  })
+  approveToCart(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminApproveManualImportToCartDto,
+  ) {
+    return this.service.approveToCart(id, dto);
   }
 
   @Post(':id/order')

@@ -21,9 +21,13 @@ import { UsersModule } from '../users/users.module';
 import { AuthModule } from '../auth/auth.module';
 import { UploadsModule } from '../uploads/uploads.module';
 
+import { Product } from '../products/entities/product.entity';
+import { CartModule } from '../cart/cart.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, User, ImportedProduct]),
+    TypeOrmModule.forFeature([Order, User, ImportedProduct, Product]),
     TrackingModule,
     OrdersModule,
     ProductsModule,
@@ -35,6 +39,8 @@ import { UploadsModule } from '../uploads/uploads.module';
     UsersModule,
     AuthModule,
     UploadsModule,
+    CartModule,
+    NotificationsModule,
   ],
   providers: [AdminService, AdminUsersService, AdminManualImportsService],
   controllers: [AdminController, AdminUsersController, AdminManualImportsController],

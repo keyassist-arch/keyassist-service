@@ -459,4 +459,44 @@ export class EmailTemplateService {
       }),
     };
   }
+
+  manualImportApprovedToCart(args: {
+    productTitle: string;
+    priceFormatted: string;
+    cartUrl: string;
+    displayName?: string | null;
+    sourceUrl?: string;
+  }): EmailTemplate {
+    const name = args.displayName?.trim();
+    const greeting = name ? `Hi ${name},` : 'Hi there,';
+    const subject = 'Manual Import added';
+
+    const text =
+      `${greeting}\n\n` +
+      `Great news! Your manual product request for "${args.productTitle}" has been verified and priced at ${args.priceFormatted}.\n\n` +
+      `It has been added directly to your cart. Go to cart and proceed with checkout:\n${args.cartUrl}\n\n` +
+      `You can also add more items to your cart to combine shipments and save on delivery.\n\n` +
+      `Thank you for shopping with Key Assist!`;
+
+    const bodyHtml =
+      `<p style="margin:0 0 12px;">${esc(greeting)}</p>` +
+      `<p style="margin:0 0 16px;">Great news! Your manual product request for <strong>${esc(args.productTitle)}</strong> has been verified and priced at <strong>${esc(args.priceFormatted)}</strong>.</p>` +
+      infoTable([
+        ['Product', args.productTitle],
+        ['Verified Price', args.priceFormatted],
+      ]) +
+      `<p style="margin:16px 0 12px;">It has been added directly to your cart. You can go to your cart now and proceed with checkout, or add more items to combine your shipping.</p>` +
+      btn(args.cartUrl, 'Go to cart and proceed with checkout', '#059669') +
+      fallbackLink(args.cartUrl);
+
+    return {
+      subject,
+      text,
+      html: layout({
+        preheader: `Your manual product request for "${args.productTitle}" is ready in your cart.`,
+        heading: 'Manual Import added',
+        bodyHtml,
+      }),
+    };
+  }
 }
