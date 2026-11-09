@@ -6,9 +6,14 @@ import {
   Param,
   ParseIntPipe,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { OptionalCurrentUser } from '../common/decorators/optional-current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { CurrencyService } from '../currency/currency.service';
 import { ProductsService } from './products.service';
 
@@ -53,7 +58,7 @@ export class ProductsController {
   ) {
     const capped = Math.min(RECENT_PRODUCTS_MAX, Math.max(1, limit));
     const list = await this.productsService.findRecentForPublic(capped);
-    const responses = list.map((p) => this.productsService.toResponse(p));
+    const responses = await this.productsService.toResponses(list);
 
     if (!displayCurrency) return responses;
 
@@ -71,7 +76,16 @@ export class ProductsController {
     );
   }
 
+  /** The signed-in shopper's manual requests, including ones still waiting on an admin price. */
+  @Get('mine')
+  @ApiOperation({ summary: 'Product requests submitted by the current user' })
+  async listMine(@CurrentUser() viewer: JwtPayload) {
+    const list = await this.productsService.findRequestsForUser(viewer.sub);
+    return list.map((p) => this.productsService.toResponse(p, true));
+  }
+
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':idOrSlug/related')
   @ApiOperation({ summary: 'Related products for a product detail page' })
   @ApiParam({
@@ -95,9 +109,10 @@ export class ProductsController {
     @Param('idOrSlug') idOrSlug: string,
     @Query('limit', new DefaultValuePipe(RELATED_DEFAULT_LIMIT), ParseIntPipe) limit: number,
     @Query('displayCurrency') displayCurrency?: string,
+    @OptionalCurrentUser() viewer?: JwtPayload,
   ) {
     const capped = Math.min(RELATED_MAX_LIMIT, Math.max(1, limit));
-    const results = await this.productsService.findRelated(idOrSlug, capped);
+    const results = await this.productsService.findRelated(idOrSlug, capped, viewer);
 
     if (!displayCurrency) return results;
 
@@ -120,6 +135,7 @@ export class ProductsController {
    * Returns the base `salePrice` when no matching `configurationPrices` row exists.
    */
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':idOrSlug/variant-price')
   @ApiOperation({ summary: 'Resolve price for a variant selection (size dropdown)' })
   @ApiParam({
@@ -136,6 +152,7 @@ export class ProductsController {
   async getVariantPrice(
     @Param('idOrSlug') idOrSlug: string,
     @Query() query: Record<string, string>,
+    @OptionalCurrentUser() viewer?: JwtPayload,
   ) {
     const RESERVED = new Set(['displayCurrency']);
     const variantSelection: Record<string, string> = {};
@@ -146,6 +163,7 @@ export class ProductsController {
     }
 
     const product = await this.productsService.findByIdOrSlug(idOrSlug);
+    await this.productsService.assertVisibleTo(product, viewer);
     const hasSelection = Object.keys(variantSelection).length > 0;
     const resolvedPrice = this.productsService.resolveVariantPrice(
       product,
@@ -184,6 +202,7 @@ export class ProductsController {
   }
 
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':idOrSlug')
   @ApiParam({
     name: 'idOrSlug',
@@ -201,9 +220,11 @@ export class ProductsController {
   async getOne(
     @Param('idOrSlug') idOrSlug: string,
     @Query('displayCurrency') displayCurrency?: string,
+    @OptionalCurrentUser() viewer?: JwtPayload,
   ) {
     const p = await this.productsService.findByIdOrSlug(idOrSlug);
-    const response = this.productsService.toResponse(p);
+    await this.productsService.assertVisibleTo(p, viewer);
+    const [response] = await this.productsService.toResponses([p]);
 
     if (!displayCurrency) return response;
 

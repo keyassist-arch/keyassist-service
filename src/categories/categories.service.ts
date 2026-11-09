@@ -11,6 +11,7 @@ import { ProductsService } from '../products/products.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { slugifyTitle } from '../common/utils/slugify.util';
+import { catalogVisibilitySql } from '../products/catalog-visibility';
 
 function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -45,11 +46,13 @@ export class CategoriesService {
       order: { position: 'ASC', createdAt: 'ASC' },
     });
 
+    const visible = catalogVisibilitySql('p');
     const counts = await this.products
       .createQueryBuilder('p')
       .select('p.category_id', 'categoryId')
       .addSelect('COUNT(*)', 'count')
       .where('p.category_id IS NOT NULL')
+      .andWhere(visible.sql, visible.params)
       .groupBy('p.category_id')
       .getRawMany<{ categoryId: string; count: string }>();
 
@@ -61,7 +64,12 @@ export class CategoriesService {
     const where = isUuid(param) ? { id: param } : { slug: param };
     const cat = await this.categories.findOne({ where });
     if (!cat) throw new NotFoundException('Category not found');
-    const productCount = await this.products.count({ where: { categoryId: cat.id } });
+    const visible = catalogVisibilitySql('p');
+    const productCount = await this.products
+      .createQueryBuilder('p')
+      .where('p.category_id = :categoryId', { categoryId: cat.id })
+      .andWhere(visible.sql, visible.params)
+      .getCount();
     return { category: cat, productCount };
   }
 
@@ -76,19 +84,22 @@ export class CategoriesService {
     page: number,
   ): Promise<{ total: number; page: number; limit: number; results: ReturnType<ProductsService['toResponse']>[] }> {
     const { category } = await this.findByIdOrSlug(param);
+    const visible = catalogVisibilitySql('p');
 
-    const [rows, total] = await this.products.findAndCount({
-      where: { categoryId: category.id },
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: (page - 1) * limit,
-    });
+    const [rows, total] = await this.products
+      .createQueryBuilder('p')
+      .where('p.category_id = :categoryId', { categoryId: category.id })
+      .andWhere(visible.sql, visible.params)
+      .orderBy('p.created_at', 'DESC')
+      .take(limit)
+      .skip((page - 1) * limit)
+      .getManyAndCount();
 
     return {
       total,
       page,
       limit,
-      results: rows.map((p) => this.productsService.toResponse(p)),
+      results: await this.productsService.toResponses(rows),
     };
   }
 

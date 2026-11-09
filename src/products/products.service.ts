@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import {
@@ -17,6 +17,8 @@ import { slugifyTitle } from '../common/utils/slugify.util';
 import { CurrencyService } from '../currency/currency.service';
 import { AdminCreateProductDto } from './dto/admin-create-product.dto';
 import { AdminUpdateProductDto } from './dto/admin-update-product.dto';
+import { CatalogViewer, catalogVisibilitySql } from './catalog-visibility';
+import { isAdminRole } from '../common/enums/role.enum';
 
 @Injectable()
 export class ProductsService {
@@ -335,17 +337,56 @@ export class ProductsService {
   }
 
   /**
-   * Public catalog snippet (e.g. home page); `limit` should be pre-clamped by the controller.
-   * Unpriced rows (`salePrice` 0) are customer manual-entry requests still waiting on an admin
-   * quote — they stay out of the storefront feed but remain reachable by direct link and in
-   * `GET /admin/products`.
+   * Public catalog snippet (shop and home). `limit` should be pre-clamped by the controller.
+   * Unpriced manual requests are omitted. A request appears here after an admin sets its price.
    */
   async findRecentForPublic(limit: number): Promise<Product[]> {
-    return this.products.find({
-      where: { salePrice: MoreThan('0') },
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
+    const hidden = catalogVisibilitySql('p');
+    return this.products
+      .createQueryBuilder('p')
+      .where('p.sale_price > 0')
+      .andWhere(hidden.sql, hidden.params)
+      .orderBy('p.created_at', 'DESC')
+      .take(limit)
+      .getMany();
+  }
+
+  /** Manual product requests submitted by this user, including ones still waiting on a quote. */
+  async findRequestsForUser(userId: string): Promise<Product[]> {
+    return this.products
+      .createQueryBuilder('p')
+      .where('p.rescrape_enabled = false')
+      .andWhere(
+        `EXISTS (
+          SELECT 1 FROM imported_products req
+          WHERE req.product_id = p.id
+            AND req.requested_by_user_id = CAST(:viewerId AS uuid)
+        )`,
+        { viewerId: userId },
+      )
+      .orderBy('p.created_at', 'DESC')
+      .getMany();
+  }
+
+  /**
+   * An unpriced manual request is only open to the shopper who submitted it, and to admins.
+   * After an admin sets a price, the product is public.
+   */
+  async assertVisibleTo(product: Product, viewer?: CatalogViewer): Promise<void> {
+    if (parseFloat(product.salePrice) > 0) return;
+    if (product.rescrapeEnabled) return;
+
+    const row = await this.imports
+      .createQueryBuilder('ip')
+      .innerJoin('ip.product', 'prod')
+      .where('prod.id = :id', { id: product.id })
+      .andWhere('ip.requestedByUserId IS NOT NULL')
+      .getOne();
+    if (!row?.requestedByUserId) return;
+    if (viewer && (viewer.sub === row.requestedByUserId || isAdminRole(viewer.role))) {
+      return;
+    }
+    throw new NotFoundException('Product not found');
   }
 
   /**
@@ -353,18 +394,27 @@ export class ProductsService {
    * Returns same-category products first, then title-keyword matches to fill the remainder.
    * The source product is always excluded from results.
    */
-  async findRelated(param: string, limit: number): Promise<ReturnType<ProductsService['toResponse']>[]> {
+  async findRelated(
+    param: string,
+    limit: number,
+    viewer?: CatalogViewer,
+  ): Promise<ReturnType<ProductsService['toResponse']>[]> {
     const product = await this.findByIdOrSlug(param);
+    await this.assertVisibleTo(product, viewer);
     const results: Product[] = [];
     const seen = new Set<string>([product.id]);
+    const hidden = catalogVisibilitySql('p');
 
     // 1. Same-category products (highest relevance)
     if (product.categoryId) {
-      const sameCat = await this.products.find({
-        where: { categoryId: product.categoryId, salePrice: MoreThan('0') },
-        order: { createdAt: 'DESC' },
-        take: limit,
-      });
+      const sameCat = await this.products
+        .createQueryBuilder('p')
+        .where('p.category_id = :categoryId', { categoryId: product.categoryId })
+        .andWhere('p.sale_price > 0')
+        .andWhere(hidden.sql, hidden.params)
+        .orderBy('p.created_at', 'DESC')
+        .take(limit)
+        .getMany();
       for (const p of sameCat) {
         if (!seen.has(p.id)) {
           seen.add(p.id);
@@ -385,6 +435,7 @@ export class ProductsService {
           .createQueryBuilder('p')
           .where('p.id != :id', { id: product.id })
           .andWhere('p.sale_price > 0')
+          .andWhere(hidden.sql, hidden.params)
           .andWhere(`(${kwConditions.join(' OR ')})`, kwParams)
           .orderBy('p.created_at', 'DESC')
           .take(limit)
@@ -399,7 +450,7 @@ export class ProductsService {
       }
     }
 
-    return results.slice(0, limit).map((p) => this.toResponse(p));
+    return this.toResponses(results.slice(0, limit));
   }
 
   private extractTitleKeywords(title: string): string[] {
@@ -534,7 +585,29 @@ export class ProductsService {
     return this.salePrice(row.originalPrice, product.markupPercent);
   }
 
-  toResponse(p: Product) {
+  /** Customer-submitted manual imports, priced or still waiting on a quote. */
+  async manualImportProductIds(ids: string[]): Promise<Set<string>> {
+    if (!ids.length) return new Set();
+    const rows = await this.imports
+      .createQueryBuilder('ip')
+      .select('ip.product_id', 'productId')
+      .where('ip.product_id IN (:...ids)', { ids })
+      .andWhere('ip.requested_by_user_id IS NOT NULL')
+      .getRawMany<Record<string, string>>();
+    const out = new Set<string>();
+    for (const row of rows) {
+      const id = row.productId ?? row.productid;
+      if (id) out.add(id);
+    }
+    return out;
+  }
+
+  async toResponses(products: Product[]) {
+    const manualIds = await this.manualImportProductIds(products.map((p) => p.id));
+    return products.map((p) => this.toResponse(p, manualIds.has(p.id)));
+  }
+
+  toResponse(p: Product, manualImport = false) {
     const variantOptions: Record<string, string[]> = {};
     for (const v of p.variants ?? []) {
       variantOptions[v.name] = v.options;
@@ -548,6 +621,8 @@ export class ProductsService {
       rescrapeEnabled: p.rescrapeEnabled,
       source: p.source,
       isManual: !p.rescrapeEnabled || p.source === ProductSource.GENERIC,
+      /** Customer manual import. Public shop shows it only after an admin price, with a badge. */
+      manualImport,
       title: p.title,
       description: p.description,
       brand: p.brand,
