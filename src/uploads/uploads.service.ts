@@ -49,12 +49,18 @@ export class UploadsService {
 
   constructor(private readonly config: ConfigService) {}
 
+  private storageSetting(key: string): string | undefined {
+    const value = this.config.get<string>(key)?.trim();
+    return value || undefined;
+  }
+
   private isStorageConfigured(): boolean {
-    const endpoint = this.config.get<string>('STORAGE_ENDPOINT');
-    const accessKeyId = this.config.get<string>('STORAGE_ACCESS_KEY_ID');
-    const secretAccessKey = this.config.get<string>('STORAGE_SECRET_ACCESS_KEY');
-    const bucket = this.config.get<string>('STORAGE_BUCKET');
-    return Boolean(endpoint && accessKeyId && secretAccessKey && bucket);
+    return Boolean(
+      this.storageSetting('STORAGE_ENDPOINT') &&
+        this.storageSetting('STORAGE_ACCESS_KEY_ID') &&
+        this.storageSetting('STORAGE_SECRET_ACCESS_KEY') &&
+        this.storageSetting('STORAGE_BUCKET'),
+    );
   }
 
   /**
@@ -127,22 +133,26 @@ export class UploadsService {
   private getClient(): S3Client {
     if (this.client) return this.client;
 
-    const endpoint = this.config.get<string>('STORAGE_ENDPOINT');
-    const region = this.config.get<string>('STORAGE_REGION') || 'auto';
-    const accessKeyId = this.config.get<string>('STORAGE_ACCESS_KEY_ID');
-    const secretAccessKey = this.config.get<string>('STORAGE_SECRET_ACCESS_KEY');
+    const endpoint = this.storageSetting('STORAGE_ENDPOINT');
+    const region = this.storageSetting('STORAGE_REGION') || 'auto';
+    const accessKeyId = this.storageSetting('STORAGE_ACCESS_KEY_ID');
+    const secretAccessKey = this.storageSetting('STORAGE_SECRET_ACCESS_KEY');
 
     this.client = new S3Client({
       endpoint,
       region,
       credentials: { accessKeyId: accessKeyId!, secretAccessKey: secretAccessKey! },
+      // SDK v3 signs a CRC32 checksum on every upload and download. Railway
+      // buckets do not implement that header, so the signature check fails.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
     return this.client;
   }
 
   private getBucket(): string {
     if (this.bucket) return this.bucket;
-    this.bucket = this.config.get<string>('STORAGE_BUCKET') || 'uploads';
+    this.bucket = this.storageSetting('STORAGE_BUCKET') || 'uploads';
     return this.bucket;
   }
 
