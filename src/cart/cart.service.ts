@@ -4,17 +4,30 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { Cart } from './entities/cart.entity';
 import { CartItem } from './entities/cart-item.entity';
 import { Order } from '../orders/entities/order.entity';
 import { OrderStatus } from '../common/enums/order-status.enum';
+import { ProductSource } from '../common/enums/product-source.enum';
+import { Product } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
 import { computePricing, type DiscountRates } from '../common/utils/pricing.util';
 import { DiscountSettingsService } from '../pricing/discount-settings.service';
 
 /** Hard ceiling on any single line-item quantity. */
 const MAX_ITEM_QUANTITY = 100;
+
+/**
+ * Manual-import products sit at 0.00 until an admin quotes them. They only
+ * enter a cart through admin approval (`setQuotedManualLine`), never directly.
+ */
+export function isAwaitingQuote(p: Product): boolean {
+  const isManual = !p.rescrapeEnabled || p.source === ProductSource.GENERIC;
+  if (!isManual) return false;
+  const price = parseFloat(p.salePrice ?? p.originalPrice);
+  return !(Number.isFinite(price) && price > 0);
+}
 
 @Injectable()
 export class CartService {
@@ -45,7 +58,17 @@ export class CartService {
       where: { userId },
       relations: ['items', 'items.product'],
     });
-    if (existing) return existing;
+    if (existing) {
+      // Drop unquoted manual lines added before they were blocked.
+      const stale = (existing.items ?? []).filter(
+        (i) => i.product && isAwaitingQuote(i.product),
+      );
+      if (stale.length) {
+        await this.items.delete({ id: In(stale.map((i) => i.id)) });
+        existing.items = existing.items.filter((i) => !stale.includes(i));
+      }
+      return existing;
+    }
 
     // New cart — no items yet, skip a second DB round-trip.
     const created = await this.carts.save(this.carts.create({ userId }));
@@ -68,6 +91,25 @@ export class CartService {
   ) {
     const cart = await this.getOrCreateCart(userId);
     await this.applyLineToCart(cart.id, productId, quantity, variantSelection);
+    return this.getCart(userId);
+  }
+
+  /**
+   * Puts an admin-quoted manual product in the user's cart at quantity 1.
+   * Idempotent: an existing line is reset to 1 rather than incremented, so a
+   * repeat approval (or a line left over from before the quote) can't double up.
+   */
+  async setQuotedManualLine(userId: string, productId: string) {
+    const cart = await this.getOrCreateCart(userId);
+    const item = await this.items.findOne({ where: { cartId: cart.id, productId } });
+    if (item) {
+      item.quantity = 1;
+      await this.items.save(item);
+    } else {
+      await this.items.save(
+        this.items.create({ cartId: cart.id, productId, quantity: 1, variantSelection: null }),
+      );
+    }
     return this.getCart(userId);
   }
 
@@ -105,9 +147,13 @@ export class CartService {
     }
 
     // Validate all products in parallel — throws NotFoundException for any unknown id.
-    await Promise.all(
+    const products = await Promise.all(
       [...linesByProduct.keys()].map((id) => this.productsService.findById(id)),
     );
+    // Unquoted manual requests only reach the cart via admin approval.
+    for (const p of products) {
+      if (isAwaitingQuote(p)) linesByProduct.delete(p.id);
+    }
 
     // Fetch existing items for this cart in one query.
     const existingItems = await this.items.find({ where: { cartId: cart.id } });
@@ -151,7 +197,12 @@ export class CartService {
     quantity: number,
     variantSelection?: Record<string, string>,
   ): Promise<void> {
-    await this.productsService.findById(productId);
+    const product = await this.productsService.findById(productId);
+    if (isAwaitingQuote(product)) {
+      throw new BadRequestException(
+        "This request is awaiting a price quote. We'll add it to your cart once it's priced.",
+      );
+    }
     const item = await this.items.findOne({ where: { cartId, productId } });
     if (item) {
       item.quantity = Math.min(item.quantity + quantity, MAX_ITEM_QUANTITY);

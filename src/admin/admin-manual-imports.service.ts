@@ -90,8 +90,8 @@ export class AdminManualImportsService {
     product.rescrapeEnabled = false;
     await this.productsRepo.save(product);
 
-    // 2. Add the product directly to the customer's cart
-    await this.cartService.addItem(row.requestedByUserId, product.id, 1);
+    // 2. Put the product in the customer's cart at quantity 1 (idempotent — never increments)
+    await this.cartService.setQuotedManualLine(row.requestedByUserId, product.id);
 
     // 3. Mark the manual import as fulfilled/approved
     row.dismissedAt = new Date();
