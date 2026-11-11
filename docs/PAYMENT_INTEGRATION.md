@@ -85,6 +85,37 @@ const sessionId = params.get('session_id');
 
 > **No extra API call is needed to confirm.** The webhook does it server-side automatically. The `{CHECKOUT_SESSION_ID}` in the URL is available for your analytics/display only.
 
+### Stablecoin payments (USDC / USDP / USDG via Stripe)
+
+Stablecoins run through the same Stripe Checkout flow. They use the Stripe payment method type `crypto`.
+
+- **Availability:** show the option only when `GET /payments/methods` returns `stablecoinAvailable: true` on the `stripe` entry.
+- **Restrictions:** the order must be in **USD** and the total must be **≤ 10,000 USD**. Otherwise `/payments/initialize` returns `400`.
+- **Initialize** with stablecoins only:
+
+```js
+await api.post('/payments/initialize', {
+  orderId,
+  provider: 'stripe',
+  stripePaymentMethodTypes: ['crypto'],
+});
+```
+
+If you omit `stripePaymentMethodTypes`, Checkout also offers stablecoins to eligible customers alongside cards, once the method is enabled in the Dashboard.
+
+After payment, the order's `paymentMethodDetails` has these fields:
+
+| Field | Meaning |
+|-------|---------|
+| `type` | `crypto` |
+| `token` | Token paid with, e.g. `USDC` |
+| `channel` | Network the payment was made on |
+| `walletAddress` | Buyer's wallet |
+| `transactionHash` | On-chain transaction hash |
+
+- **Refunds** use the normal refund flow. Stripe sends them back as stablecoins to the buyer's original wallet.
+- **Disputes and chargebacks** don't apply to stablecoin payments.
+
 ---
 
 ## 2. Confirming PayPal Payments
@@ -634,6 +665,7 @@ These need to be set on the server before any payment features work:
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 | `STRIPE_CHECKOUT_SUCCESS_URL` | Must contain `{CHECKOUT_SESSION_ID}` |
 | `STRIPE_CHECKOUT_CANCEL_URL` | Where to send users who cancel Stripe Checkout |
+| `STRIPE_STABLECOIN_ENABLED` | `true` once "Stablecoins and Crypto" is approved in the Stripe Dashboard |
 | `PAYPAL_CLIENT_ID` | PayPal app client ID |
 | `PAYPAL_SECRET_KEY` | PayPal app client secret |
 | `PAYPAL_MODE` | `sandbox` (default) or `live` |

@@ -21,7 +21,12 @@ const STRIPE_PM_TYPES = [
   'klarna',
   'afterpay_clearpay',
   'affirm',
+  /** Stablecoins (USDC/USDP/USDG). USD only, max 10,000 USD per transaction. */
+  'crypto',
 ] as const;
+
+/** Stripe caps stablecoin (crypto) payments at 10,000 USD per transaction. */
+export const STRIPE_CRYPTO_MAX_USD = 10_000;
 
 export type PaystackChannel = (typeof PAYSTACK_CHANNELS)[number];
 export type StripeCheckoutPmType = (typeof STRIPE_PM_TYPES)[number];

@@ -39,6 +39,47 @@ export function stripePaymentMethodToDetails(
     base.label = `SEPA ····${pm.sepa_debit.last4 ?? ''}`;
     return base;
   }
+  // Stablecoins. `crypto` postdates the stripe@17 type union, so compare as string.
+  if ((pm.type as string) === 'crypto') {
+    base.label = 'Stablecoin';
+    return base;
+  }
   base.label = pm.type;
   return base;
+}
+
+type StripeCryptoChargeDetails = {
+  buyer_address?: string | null;
+  network?: string | null;
+  token_currency?: string | null;
+  transaction_hash?: string | null;
+};
+
+/**
+ * Pulls on-chain details (wallet, network, token, tx hash) off a stablecoin charge's
+ * `payment_method_details.crypto`. Returns {} when absent.
+ */
+export function stripeCryptoChargeDetails(
+  charge: Stripe.Charge | null | undefined,
+): Partial<PaymentMethodDetails> {
+  const crypto = (
+    charge?.payment_method_details as
+      | { crypto?: StripeCryptoChargeDetails }
+      | null
+      | undefined
+  )?.crypto;
+  if (!crypto) {
+    return {};
+  }
+  const token = crypto.token_currency?.toUpperCase();
+  const network = crypto.network ?? undefined;
+  return {
+    channel: network,
+    token: token ?? undefined,
+    walletAddress: crypto.buyer_address ?? undefined,
+    transactionHash: crypto.transaction_hash ?? undefined,
+    label: [token ?? 'Stablecoin', network ? `on ${network}` : '']
+      .filter(Boolean)
+      .join(' '),
+  };
 }

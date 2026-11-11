@@ -93,6 +93,11 @@ class EnvironmentVariables {
   @IsOptional()
   STRIPE_CHECKOUT_CANCEL_URL?: string;
 
+  /** Set to `true` once "Stablecoins and Crypto" is approved in the Stripe Dashboard. */
+  @IsString()
+  @IsOptional()
+  STRIPE_STABLECOIN_ENABLED?: string;
+
   @IsString()
   @IsOptional()
   PAYPAL_CLIENT_ID?: string;

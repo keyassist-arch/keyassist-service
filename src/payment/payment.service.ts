@@ -18,10 +18,14 @@ import {
   InitializePaymentDto,
   normalizePaystackChannels,
   normalizeStripePaymentMethodTypes,
+  STRIPE_CRYPTO_MAX_USD,
 } from './dto/initialize-payment.dto';
 import { amountToMinorUnits } from './utils/amount-minor-units.util';
 import { paystackChargeToMethodDetails } from './utils/paystack-payment-method.util';
-import { stripePaymentMethodToDetails } from './utils/stripe-payment-method.util';
+import {
+  stripeCryptoChargeDetails,
+  stripePaymentMethodToDetails,
+} from './utils/stripe-payment-method.util';
 import { SavedPaymentMethod } from './entities/saved-payment-method.entity';
 
 type MyazaSessionPayload = {
@@ -102,6 +106,11 @@ export class PaymentService {
           : this.isDisabled('PAYMENT_DISABLE_STRIPE')
             ? 'temporarily_disabled'
             : null,
+        /** Stablecoin checkout via Stripe (`stripePaymentMethodTypes: ['crypto']`, USD orders only). */
+        stablecoinAvailable:
+          stripeConfigured &&
+          !this.isDisabled('PAYMENT_DISABLE_STRIPE') &&
+          this.isStripeStablecoinEnabled(),
       },
       {
         provider: PaymentProvider.PAYPAL,
@@ -136,6 +145,37 @@ export class PaymentService {
     if (!method || !method.available) {
       throw new BadRequestException(
         `Payment method ${provider} is currently unavailable`,
+      );
+    }
+  }
+
+  private isStripeStablecoinEnabled(): boolean {
+    const raw = this.config
+      .get<string>('STRIPE_STABLECOIN_ENABLED')
+      ?.trim()
+      .toLowerCase();
+    return raw === '1' || raw === 'true';
+  }
+
+  /** Stripe stablecoin rules: feature enabled, USD presentment, ≤ 10,000 USD. */
+  private assertStripeStablecoinPayable(order: {
+    currency: string;
+    total: string;
+  }): void {
+    if (!this.isStripeStablecoinEnabled()) {
+      throw new BadRequestException(
+        'Stablecoin payments are currently unavailable',
+      );
+    }
+    if (order.currency.toUpperCase() !== 'USD') {
+      throw new BadRequestException(
+        'Stablecoin payments are only available for USD orders',
+      );
+    }
+    const total = parseFloat(order.total);
+    if (!Number.isFinite(total) || total > STRIPE_CRYPTO_MAX_USD) {
+      throw new BadRequestException(
+        `Stablecoin payments are limited to ${STRIPE_CRYPTO_MAX_USD.toLocaleString('en-US')} USD per transaction`,
       );
     }
   }
@@ -708,6 +748,9 @@ export class PaymentService {
     const pmTypes = normalizeStripePaymentMethodTypes(
       dto.stripePaymentMethodTypes,
     );
+    if (pmTypes?.includes('crypto')) {
+      this.assertStripeStablecoinPayable(order);
+    }
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
       success_url: successUrl,
@@ -721,7 +764,9 @@ export class PaymentService {
       line_items: lineItems,
     };
     if (pmTypes?.length) {
-      sessionParams.payment_method_types = pmTypes;
+      // `crypto` (stablecoins) postdates the stripe@17 type union; the API accepts it.
+      sessionParams.payment_method_types =
+        pmTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
     }
 
     const session = await stripe.checkout.sessions.create(sessionParams);
@@ -831,18 +876,26 @@ export class PaymentService {
         : session.payment_intent?.id;
 
     let pm: Stripe.PaymentMethod | null = null;
+    let latestCharge: Stripe.Charge | null = null;
     if (paymentIntentId) {
       const pi = await stripe.paymentIntents.retrieve(paymentIntentId, {
-        expand: ['payment_method'],
+        expand: ['payment_method', 'latest_charge'],
       });
       paymentIntentId = pi.id;
       pm =
         typeof pi.payment_method === 'string'
           ? await stripe.paymentMethods.retrieve(pi.payment_method)
           : pi.payment_method;
+      latestCharge =
+        pi.latest_charge && typeof pi.latest_charge !== 'string'
+          ? pi.latest_charge
+          : null;
     }
 
     const method = stripePaymentMethodToDetails(pm);
+    if (method && (pm?.type as string) === 'crypto') {
+      Object.assign(method, stripeCryptoChargeDetails(latestCharge));
+    }
 
     this.logger.log(
       `[payment] step=stripe_checkout_apply orderId=${orderId} sessionId=${session.id}`,

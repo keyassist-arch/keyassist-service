@@ -70,6 +70,11 @@ export class PaymentController {
                 nullable: true,
                 enum: ['not_configured', 'temporarily_disabled'],
               },
+              stablecoinAvailable: {
+                type: 'boolean',
+                description:
+                  "Stripe only: stablecoin checkout is enabled (pass stripePaymentMethodTypes: ['crypto'], USD orders ≤ 10,000)",
+              },
             },
           },
         },
@@ -200,9 +205,18 @@ export class PaymentController {
       throw new UnauthorizedException('Invalid Stripe webhook signature');
     }
     this.logger.log(`[payment] step=webhook_stripe type=${event.type}`);
-    if (event.type === 'checkout.session.completed') {
+    if (
+      event.type === 'checkout.session.completed' ||
+      // Delayed-settlement methods (bank debits, and possibly stablecoins) complete
+      // with payment_status=unpaid and confirm later via this event.
+      event.type === 'checkout.session.async_payment_succeeded'
+    ) {
       await this.paymentService.handleStripeCheckoutSessionCompleted(
         event.data.object,
+      );
+    } else if (event.type === 'checkout.session.async_payment_failed') {
+      this.logger.warn(
+        `[payment] step=webhook_stripe reason=async_payment_failed sessionId=${event.data.object.id} orderId=${event.data.object.metadata?.orderId ?? 'unknown'}`,
       );
     } else if (event.type === 'payment_intent.succeeded') {
       await this.paymentService.handleStripePaymentIntentSucceeded(
